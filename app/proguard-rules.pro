@@ -1,0 +1,3 @@
+-keep class com.llunaticsys.llunevie.model.** { *; }
+-keep class com.llunaticsys.llunevie.data.local.** { *; }
+-dontwarn org.jsoup.**

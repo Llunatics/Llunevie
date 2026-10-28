@@ -1,0 +1,1170 @@
+package com.llunaticsys.llunevie.ui.reader
+
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Matrix as AndroidMatrix
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.text.LineBreaker
+import android.os.Build
+import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.style.BackgroundColorSpan
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect as ComposeRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+object PageSnapshotBitmapRenderer {
+
+    suspend fun renderSingleTextPageBitmapAsync(
+        widthPx: Int,
+        heightPx: Int,
+        chapterTitle: String,
+        pageText: String,
+        pageNumberLabel: String,
+        bgColor: Color,
+        textColor: Color,
+        mutedColor: Color,
+        fontSizePx: Float,
+        lineSpacingMultiplier: Float,
+        marginPx: Int,
+        fontFamily: String = "Literata",
+        fontWeight: Int = 400,
+        textAlign: String = "left",
+        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
+        highlightBgMap: Map<String, Int> = emptyMap()
+    ): ImageBitmap = withContext(Dispatchers.Default) {
+        renderSingleTextPageBitmap(
+            widthPx = widthPx,
+            heightPx = heightPx,
+            chapterTitle = chapterTitle,
+            pageText = pageText,
+            pageNumberLabel = pageNumberLabel,
+            bgColor = bgColor,
+            textColor = textColor,
+            mutedColor = mutedColor,
+            fontSizePx = fontSizePx,
+            lineSpacingMultiplier = lineSpacingMultiplier,
+            marginPx = marginPx,
+            fontFamily = fontFamily,
+            fontWeight = fontWeight,
+            textAlign = textAlign,
+            highlights = highlights,
+            highlightBgMap = highlightBgMap
+        )
+    }
+
+    fun renderSingleTextPageBitmap(
+        widthPx: Int,
+        heightPx: Int,
+        chapterTitle: String,
+        pageText: String,
+        pageNumberLabel: String,
+        bgColor: Color,
+        textColor: Color,
+        mutedColor: Color,
+        fontSizePx: Float,
+        lineSpacingMultiplier: Float,
+        marginPx: Int,
+        fontFamily: String = "Literata",
+        fontWeight: Int = 400,
+        textAlign: String = "left",
+        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
+        highlightBgMap: Map<String, Int> = emptyMap()
+    ): ImageBitmap {
+        val w = widthPx.coerceIn(320, 1440)
+        val h = heightPx.coerceIn(420, 2400)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(bmp)
+        canvas.drawColor(bgColor.toArgb())
+
+        val tfStyle = if (fontWeight >= 600) Typeface.BOLD else Typeface.NORMAL
+        val baseTf = when {
+            fontFamily == "JetBrains Mono" -> Typeface.MONOSPACE
+            fontFamily in setOf("Plus Jakarta Sans", "Inter", "DM Sans", "Nunito") -> Typeface.SANS_SERIF
+            else -> Typeface.SERIF
+        }
+
+        val headerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = mutedColor.toArgb()
+            textSize = (fontSizePx * 0.56f).coerceAtLeast(22f)
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        }
+        val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = textColor.toArgb()
+            textSize = fontSizePx.coerceIn(24f, 76f)
+            typeface = Typeface.create(baseTf, tfStyle)
+        }
+
+        val pad = marginPx.coerceIn(24, w / 4)
+        val contentW = (w - pad * 2).coerceAtLeast(120)
+
+        canvas.drawText(chapterTitle.take(42).uppercase(), pad.toFloat(), pad + 28f, headerPaint)
+
+        val cleanText = pageText
+            .replace(Regex("\\[ILLUST:[^]]+]"), "")
+            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+            .trim()
+
+        val spannable = SpannableString(cleanText)
+        highlights.forEach { hl ->
+            val quote = hl.quoteText.trim()
+            if (quote.isNotBlank() && cleanText.contains(quote, ignoreCase = true)) {
+                val colorArgb = highlightBgMap[hl.colorKey] ?: 0x55D4A74A
+                var startIndex = 0
+                while (startIndex < cleanText.length) {
+                    val found = cleanText.indexOf(quote, startIndex, ignoreCase = true)
+                    if (found < 0) break
+                    spannable.setSpan(
+                        BackgroundColorSpan(colorArgb),
+                        found,
+                        found + quote.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    startIndex = found + quote.length
+                }
+            }
+        }
+
+        val align = when (textAlign.lowercase()) {
+            "center" -> Layout.Alignment.ALIGN_CENTER
+            else -> Layout.Alignment.ALIGN_NORMAL
+        }
+
+        val bodyLayoutBuilder = StaticLayout.Builder
+            .obtain(spannable, 0, spannable.length, bodyPaint, contentW)
+            .setAlignment(align)
+            .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
+            .setIncludePad(false)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
+            bodyLayoutBuilder.setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
+        }
+
+        val bodyLayout = bodyLayoutBuilder.build()
+        val bodyStartY = pad + 64f
+        val footerY = (h - pad / 2).toFloat()
+        val availableBodyH = (footerY - 20f - bodyStartY).coerceAtLeast(100f)
+
+        var fittedLines = bodyLayout.lineCount
+        for (line in 0 until bodyLayout.lineCount) {
+            if (bodyLayout.getLineBottom(line) > availableBodyH) {
+                fittedLines = line
+                break
+            }
+        }
+
+        canvas.save()
+        canvas.translate(pad.toFloat(), bodyStartY)
+        canvas.clipRect(0f, 0f, contentW.toFloat(), availableBodyH)
+
+        if (fittedLines in 1 until bodyLayout.lineCount) {
+            val endOffset = bodyLayout.getLineEnd(fittedLines - 1)
+            val subSpannable = spannable.subSequence(0, endOffset)
+            val fittedLayout = StaticLayout.Builder
+                .obtain(subSpannable, 0, subSpannable.length, bodyPaint, contentW)
+                .setAlignment(align)
+                .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
+                .setIncludePad(false)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
+                        setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
+                    }
+                }
+                .build()
+            fittedLayout.draw(canvas)
+        } else {
+            bodyLayout.draw(canvas)
+        }
+        canvas.restore()
+
+        canvas.drawText(pageNumberLabel, pad.toFloat(), footerY, headerPaint)
+
+        return bmp.asImageBitmap()
+    }
+
+    suspend fun renderTwoPageSpreadBitmapAsync(
+        widthPx: Int,
+        heightPx: Int,
+        leftTitle: String,
+        leftText: String,
+        leftPageNum: String,
+        rightTitle: String,
+        rightText: String,
+        rightPageNum: String,
+        leftPdfBitmap: Bitmap?,
+        rightPdfBitmap: Bitmap?,
+        bgColor: Color,
+        textColor: Color,
+        mutedColor: Color,
+        fontSizePx: Float,
+        lineSpacingMultiplier: Float,
+        fontFamily: String = "Literata",
+        fontWeight: Int = 400,
+        textAlign: String = "left",
+        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
+        highlightBgMap: Map<String, Int> = emptyMap()
+    ): ImageBitmap = withContext(Dispatchers.Default) {
+        renderTwoPageSpreadBitmap(
+            widthPx = widthPx,
+            heightPx = heightPx,
+            leftTitle = leftTitle,
+            leftText = leftText,
+            leftPageNum = leftPageNum,
+            rightTitle = rightTitle,
+            rightText = rightText,
+            rightPageNum = rightPageNum,
+            leftPdfBitmap = leftPdfBitmap,
+            rightPdfBitmap = rightPdfBitmap,
+            bgColor = bgColor,
+            textColor = textColor,
+            mutedColor = mutedColor,
+            fontSizePx = fontSizePx,
+            lineSpacingMultiplier = lineSpacingMultiplier,
+            fontFamily = fontFamily,
+            fontWeight = fontWeight,
+            textAlign = textAlign,
+            highlights = highlights,
+            highlightBgMap = highlightBgMap
+        )
+    }
+
+    fun renderTwoPageSpreadBitmap(
+        widthPx: Int,
+        heightPx: Int,
+        leftTitle: String,
+        leftText: String,
+        leftPageNum: String,
+        rightTitle: String,
+        rightText: String,
+        rightPageNum: String,
+        leftPdfBitmap: Bitmap?,
+        rightPdfBitmap: Bitmap?,
+        bgColor: Color,
+        textColor: Color,
+        mutedColor: Color,
+        fontSizePx: Float,
+        lineSpacingMultiplier: Float,
+        fontFamily: String = "Literata",
+        fontWeight: Int = 400,
+        textAlign: String = "left",
+        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
+        highlightBgMap: Map<String, Int> = emptyMap()
+    ): ImageBitmap {
+        val w = widthPx.coerceIn(640, 1920)
+        val h = heightPx.coerceIn(400, 1440)
+        val halfW = w / 2
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(bmp)
+        val isPdf = leftPdfBitmap != null || rightPdfBitmap != null
+        canvas.drawColor(if (isPdf) android.graphics.Color.WHITE else bgColor.toArgb())
+
+        val tfStyle = if (fontWeight >= 600) Typeface.BOLD else Typeface.NORMAL
+        val baseTf = when {
+            fontFamily == "JetBrains Mono" -> Typeface.MONOSPACE
+            fontFamily in setOf("Plus Jakarta Sans", "Inter", "DM Sans", "Nunito") -> Typeface.SANS_SERIF
+            else -> Typeface.SERIF
+        }
+
+        fun drawLeaf(
+            offsetX: Int,
+            title: String,
+            text: String,
+            pageNum: String,
+            pdfBmp: Bitmap?
+        ) {
+            if (pdfBmp != null && !pdfBmp.isRecycled) {
+                val dst = Rect(offsetX, 0, offsetX + halfW, h)
+                canvas.drawBitmap(pdfBmp, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
+                return
+            }
+            val pad = 36
+            val leafW = (halfW - pad * 2).coerceAtLeast(100)
+            val headerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = mutedColor.toArgb()
+                textSize = 22f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            }
+            val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = textColor.toArgb()
+                textSize = (fontSizePx * 0.84f).coerceIn(20f, 64f)
+                typeface = Typeface.create(baseTf, tfStyle)
+            }
+
+            canvas.drawText(title.take(32).uppercase(), (offsetX + pad).toFloat(), 40f, headerPaint)
+            val clean = text
+                .replace(Regex("\\[ILLUST:[^]]+]"), "")
+                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                .trim()
+
+            val spannable = SpannableString(clean)
+            highlights.forEach { hl ->
+                val quote = hl.quoteText.trim()
+                if (quote.isNotBlank() && clean.contains(quote, ignoreCase = true)) {
+                    val colorArgb = highlightBgMap[hl.colorKey] ?: 0x55D4A74A
+                    var startIndex = 0
+                    while (startIndex < clean.length) {
+                        val found = clean.indexOf(quote, startIndex, ignoreCase = true)
+                        if (found < 0) break
+                        spannable.setSpan(
+                            BackgroundColorSpan(colorArgb),
+                            found,
+                            found + quote.length,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        startIndex = found + quote.length
+                    }
+                }
+            }
+
+            val align = when (textAlign.lowercase()) {
+                "center" -> Layout.Alignment.ALIGN_CENTER
+                else -> Layout.Alignment.ALIGN_NORMAL
+            }
+
+            val builder = StaticLayout.Builder
+                .obtain(spannable, 0, spannable.length, bodyPaint, leafW)
+                .setAlignment(align)
+                .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
+                builder.setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
+            }
+
+            val fullLayout = builder.build()
+            val availableBodyH = (h - 24 - 16 - 68).toFloat()
+
+            var fittedLines = fullLayout.lineCount
+            for (line in 0 until fullLayout.lineCount) {
+                if (fullLayout.getLineBottom(line) > availableBodyH) {
+                    fittedLines = line
+                    break
+                }
+            }
+
+            canvas.save()
+            canvas.translate((offsetX + pad).toFloat(), 68f)
+            canvas.clipRect(0f, 0f, leafW.toFloat(), availableBodyH)
+
+            if (fittedLines in 1 until fullLayout.lineCount) {
+                val endOffset = fullLayout.getLineEnd(fittedLines - 1)
+                val subSpannable = spannable.subSequence(0, endOffset)
+                val fittedLayout = StaticLayout.Builder
+                    .obtain(subSpannable, 0, subSpannable.length, bodyPaint, leafW)
+                    .setAlignment(align)
+                    .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
+                    .apply {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
+                            setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
+                        }
+                    }
+                    .build()
+                fittedLayout.draw(canvas)
+            } else {
+                fullLayout.draw(canvas)
+            }
+            canvas.restore()
+
+            canvas.drawText(pageNum, (offsetX + pad).toFloat(), (h - 24).toFloat(), headerPaint)
+        }
+
+        drawLeaf(0, leftTitle, leftText, leftPageNum, leftPdfBitmap)
+        drawLeaf(halfW, rightTitle, rightText, rightPageNum, rightPdfBitmap)
+
+        val spinePaint = Paint().apply {
+            color = android.graphics.Color.argb(45, 0, 0, 0)
+            strokeWidth = 3f
+        }
+        canvas.drawLine(halfW.toFloat(), 0f, halfW.toFloat(), h.toFloat(), spinePaint)
+
+        return bmp.asImageBitmap()
+    }
+}
+
+fun computePageRect(
+    bitmap: ImageBitmap,
+    isPdfBook: Boolean,
+    isTwoPageSpread: Boolean,
+    canvasW: Float,
+    canvasH: Float
+): ComposeRect {
+    if (isPdfBook && !isTwoPageSpread) {
+        val bmpRatio = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+        val canvasRatio = canvasW / canvasH
+        val dstW: Float
+        val dstH: Float
+        if (bmpRatio > canvasRatio) {
+            dstW = canvasW
+            dstH = canvasW / bmpRatio
+        } else {
+            dstH = canvasH
+            dstW = canvasH * bmpRatio
+        }
+        val offsetX = (canvasW - dstW) / 2f
+        val offsetY = (canvasH - dstH) / 2f
+        return ComposeRect(offsetX, offsetY, offsetX + dstW, offsetY + dstH)
+    } else {
+        return ComposeRect(0f, 0f, canvasW, canvasH)
+    }
+}
+
+private fun DrawScope.drawPageBitmapFitted(
+    bitmap: ImageBitmap,
+    isPdfBook: Boolean,
+    isTwoPageSpread: Boolean
+) {
+    val canvasW = size.width.roundToInt().coerceAtLeast(1)
+    val canvasH = size.height.roundToInt().coerceAtLeast(1)
+    if (isPdfBook && !isTwoPageSpread) {
+        val bmpRatio = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+        val canvasRatio = canvasW.toFloat() / canvasH.toFloat()
+        val dstW: Int
+        val dstH: Int
+        if (bmpRatio > canvasRatio) {
+            dstW = canvasW
+            dstH = (canvasW / bmpRatio).roundToInt().coerceAtLeast(1)
+        } else {
+            dstH = canvasH
+            dstW = (canvasH * bmpRatio).roundToInt().coerceAtLeast(1)
+        }
+        val offsetX = (canvasW - dstW) / 2
+        val offsetY = (canvasH - dstH) / 2
+        drawImage(
+            image = bitmap,
+            dstOffset = IntOffset(offsetX, offsetY),
+            dstSize = IntSize(dstW, dstH),
+            filterQuality = FilterQuality.Medium
+        )
+    } else {
+        drawImage(
+            image = bitmap,
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(canvasW, canvasH),
+            filterQuality = FilterQuality.Medium
+        )
+    }
+}
+
+/**
+ * 1:1 Partitioned 3-Region Opaque Cylindrical Flipbook Engine (`CylindricalFlipbookCanvas`)
+ * Fixes:
+ * 1. PDF pages always keep a natural white paper background (`#FFFFFF`) and warm paper back-curl (`#F2EFE9`)
+ *    even when the app UI theme is Black or AMOLED.
+ * 2. Zero flicker/blink when completing a page turn: holds `committedTargetBitmap` while waiting for
+ *    `currentPageBitmap` to update, and resets `progressAnim` to `0f` in the exact frame `currentPageBitmap` updates!
+ */
+@Composable
+fun CylindricalFlipbookCanvas(
+    currentPageBitmap: ImageBitmap,
+    nextPageBitmap: ImageBitmap?,
+    prevPageBitmap: ImageBitmap?,
+    themeBgColor: Color,
+    backPaperColor: Color,
+    isPdfBook: Boolean = false,
+    isTwoPageSpread: Boolean = false,
+    externalTriggerDir: Int = 0,
+    onExternalTriggerConsumed: () -> Unit = {},
+    onPageTurnCommitted: (direction: Int) -> Unit,
+    onCenterTap: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val progressAnim = remember { Animatable(0f) }
+    var turnDir by remember { mutableIntStateOf(1) }
+    var cornerYNorm by remember { mutableFloatStateOf(0.76f) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    // Holds the destination bitmap at the end of a committed turn until currentPageBitmap updates,
+    // eliminating the 1-frame flash back to the previous page!
+    var pendingCommittedBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // For PDF books, the paper surface is always crisp white (#FFFFFF) and the curling paper back is warm white (#F2EFE9),
+    // never black paper. Only EPUB/TXT adapts paper color to the theme!
+    val effectivePageBgColor = if (isPdfBook) Color.White else themeBgColor
+    val effectiveBackPaperColor = if (isPdfBook) Color(0xFFF2EFE9) else backPaperColor
+
+    val paperBleedFilter = remember {
+        val cm = ColorMatrix().apply { setToSaturation(0.35f) }
+        ColorFilter.colorMatrix(cm)
+    }
+
+    // As soon as currentPageBitmap updates after a page turn commit, clear pendingCommittedBitmap and reset progressAnim to 0f atomically
+    LaunchedEffect(currentPageBitmap) {
+        if (pendingCommittedBitmap != null) {
+            pendingCommittedBitmap = null
+            progressAnim.snapTo(0f)
+        }
+    }
+
+    suspend fun animateCommitTurn(dir: Int, destBmp: ImageBitmap?, durationMs: Int = 380) {
+        progressAnim.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(
+                durationMillis = durationMs,
+                easing = CubicBezierEasing(0.18f, 0.88f, 0.24f, 1f)
+            )
+        )
+        pendingCommittedBitmap = destBmp
+        onPageTurnCommitted(dir)
+    }
+
+    LaunchedEffect(externalTriggerDir) {
+        if (externalTriggerDir != 0 && !progressAnim.isRunning) {
+            val destBmp = if (externalTriggerDir > 0) nextPageBitmap else prevPageBitmap
+            if (destBmp != null) {
+                turnDir = externalTriggerDir
+                cornerYNorm = 0.78f
+                progressAnim.snapTo(0.01f)
+                animateCommitTurn(externalTriggerDir, destBmp, 380)
+            } else {
+                onPageTurnCommitted(externalTriggerDir)
+            }
+            onExternalTriggerConsumed()
+        }
+    }
+
+    Canvas(
+        modifier = modifier
+            .fillMaxSize()
+            .pointerInput(currentPageBitmap, nextPageBitmap, prevPageBitmap) {
+                detectTapGestures { offset ->
+                    if (progressAnim.isRunning || pendingCommittedBitmap != null) return@detectTapGestures
+                    val w = size.width.toFloat().coerceAtLeast(1f)
+                    val relX = offset.x / w
+                    if (relX >= 0.76f && nextPageBitmap != null) {
+                        turnDir = 1
+                        cornerYNorm = 0.78f
+                        scope.launch {
+                            progressAnim.snapTo(0.01f)
+                            animateCommitTurn(1, nextPageBitmap, 380)
+                        }
+                    } else if (relX <= 0.24f && prevPageBitmap != null) {
+                        turnDir = -1
+                        cornerYNorm = 0.78f
+                        scope.launch {
+                            progressAnim.snapTo(0.01f)
+                            animateCommitTurn(-1, prevPageBitmap, 380)
+                        }
+                    } else {
+                        onCenterTap()
+                    }
+                }
+            }
+            .pointerInput(currentPageBitmap, nextPageBitmap, prevPageBitmap) {
+                val velocityTracker = VelocityTracker()
+                var dragStartX = 0f
+                detectDragGestures(
+                    onDragStart = { startOffset ->
+                        if (progressAnim.isRunning) {
+                            scope.launch {
+                                progressAnim.snapTo(0f)
+                            }
+                        }
+                        pendingCommittedBitmap = null
+                        velocityTracker.resetTracking()
+                        dragStartX = startOffset.x
+                        cornerYNorm = (startOffset.y / size.height.toFloat().coerceAtLeast(1f)).coerceIn(0.05f, 0.95f)
+                        isDragging = false
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        val w = size.width.toFloat().coerceAtLeast(1f)
+                        val h = size.height.toFloat().coerceAtLeast(1f)
+                        val totalDx = change.position.x - dragStartX
+
+                        if (!isDragging) {
+                            if (abs(totalDx) < 6f) return@detectDragGestures
+                            val candidateDir = if (totalDx < 0f) 1 else -1
+                            if (candidateDir > 0 && nextPageBitmap == null) return@detectDragGestures
+                            if (candidateDir < 0 && prevPageBitmap == null) return@detectDragGestures
+                            turnDir = candidateDir
+                            isDragging = true
+                        }
+
+                        val signedDelta = if (turnDir > 0) (dragStartX - change.position.x) else (change.position.x - dragStartX)
+                        val liveP = (signedDelta / (w * 0.82f)).coerceIn(0.01f, 0.985f)
+                        val liveY = (change.position.y / h).coerceIn(0.05f, 0.95f)
+                        cornerYNorm = cornerYNorm * 0.3f + liveY * 0.7f
+                        scope.launch { progressAnim.snapTo(liveP) }
+                    },
+                    onDragEnd = {
+                        if (!isDragging) return@detectDragGestures
+                        isDragging = false
+                        val velX = velocityTracker.calculateVelocity().x
+                        val speedInDir = if (turnDir > 0) -velX else velX
+                        val curP = progressAnim.value
+                        val shouldCommit = curP >= 0.30f || (curP >= 0.05f && speedInDir > 380f)
+                        val destBmp = if (turnDir > 0) nextPageBitmap else prevPageBitmap
+                        val flingDuration = if (speedInDir > 900f) 220 else if (speedInDir > 500f) 300 else 380
+
+                        scope.launch {
+                            if (shouldCommit && destBmp != null) {
+                                animateCommitTurn(turnDir, destBmp, flingDuration)
+                            } else {
+                                progressAnim.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        scope.launch { progressAnim.animateTo(0f) }
+                    }
+                )
+            }
+    ) {
+        val w = size.width
+        val h = size.height
+
+        // If a page turn just committed and we are waiting for currentPageBitmap to swap, draw the committed bitmap seamlessly!
+        val heldBitmap = pendingCommittedBitmap
+        if (heldBitmap != null) {
+            val pageRect = computePageRect(heldBitmap, isPdfBook, isTwoPageSpread, w, h)
+            drawRect(color = effectivePageBgColor, size = size)
+            clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
+                drawPageBitmapFitted(heldBitmap, isPdfBook, isTwoPageSpread)
+                if (isTwoPageSpread) {
+                    val spineX = (pageRect.left + pageRect.right) / 2f
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.22f),
+                                Color.White.copy(alpha = 0.10f),
+                                Color.Transparent
+                            ),
+                            startX = spineX - 24f,
+                            endX = spineX + 24f
+                        ),
+                        topLeft = Offset(spineX - 24f, pageRect.top),
+                        size = Size(48f, pageRect.height)
+                    )
+                }
+            }
+            return@Canvas
+        }
+
+        val p = progressAnim.value.coerceIn(0f, 1f)
+        val pageRect = computePageRect(currentPageBitmap, isPdfBook, isTwoPageSpread, w, h)
+
+        if (p <= 0.002f) {
+            drawRect(color = effectivePageBgColor, size = size)
+            clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
+                drawPageBitmapFitted(currentPageBitmap, isPdfBook, isTwoPageSpread)
+                if (isTwoPageSpread) {
+                    val spineX = (pageRect.left + pageRect.right) / 2f
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.22f),
+                                Color.White.copy(alpha = 0.10f),
+                                Color.Transparent
+                            ),
+                            startX = spineX - 24f,
+                            endX = spineX + 24f
+                        ),
+                        topLeft = Offset(spineX - 24f, pageRect.top),
+                        size = Size(48f, pageRect.height)
+                    )
+                }
+            }
+            return@Canvas
+        }
+
+        drawRect(color = effectivePageBgColor, size = size)
+
+        val destBitmap = if (turnDir > 0) nextPageBitmap else prevPageBitmap
+        val bell = sin(p * PI.toFloat())
+
+        // Strict Page-Frame Clipping: page turn effect is strictly bounded to pageRect
+        clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
+            if (isTwoPageSpread) {
+                val spineX = (pageRect.left + pageRect.right) / 2f
+                val halfW = pageRect.width * 0.5f
+                val pageH = pageRect.height
+
+                if (turnDir > 0) {
+                    // Turn next spread: right leaf turns from right to spine
+                    val foldX = pageRect.right - halfW * p
+                    val leadX = pageRect.right - pageRect.width * p
+
+                    // 1. Static left page
+                    val leftPath = Path().apply {
+                        moveTo(pageRect.left, pageRect.top)
+                        lineTo(spineX, pageRect.top)
+                        lineTo(spineX, pageRect.bottom)
+                        lineTo(pageRect.left, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(leftPath) {
+                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, true)
+                    }
+
+                    // 2. Uncovered right page of destination spread (from foldX to right)
+                    val rightNextPath = Path().apply {
+                        moveTo(foldX, pageRect.top)
+                        lineTo(pageRect.right, pageRect.top)
+                        lineTo(pageRect.right, pageRect.bottom)
+                        lineTo(foldX, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(rightNextPath) {
+                        if (destBitmap != null) {
+                            drawPageBitmapFitted(destBitmap, isPdfBook, true)
+                        }
+                        // Subtle crease shadow
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Black.copy(alpha = 0.20f * bell), Color.Transparent),
+                                startX = foldX,
+                                endX = min(pageRect.right, foldX + 22.dp.toPx())
+                            ),
+                            topLeft = Offset(foldX, pageRect.top),
+                            size = Size(min(pageRect.right - foldX, 22.dp.toPx()), pageH)
+                        )
+                    }
+
+                    // 3. Static spine shadow before drawing turning leaf
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.24f),
+                                Color.White.copy(alpha = 0.08f),
+                                Color.Transparent
+                            ),
+                            startX = spineX - 22f,
+                            endX = spineX + 22f
+                        ),
+                        topLeft = Offset(spineX - 22f, pageRect.top),
+                        size = Size(44f, pageH)
+                    )
+
+                    // 4. Turning leaf (leadX .. foldX) with 100% solid opaque paper
+                    val leafLeft = max(pageRect.left, leadX)
+                    val leafRight = min(pageRect.right, foldX)
+                    if (leafRight > leafLeft) {
+                        val leafPath = Path().apply {
+                            moveTo(leafLeft, pageRect.top)
+                            lineTo(leafRight, pageRect.top)
+                            lineTo(leafRight, pageRect.bottom)
+                            lineTo(leafLeft, pageRect.bottom)
+                            close()
+                        }
+                        clipPath(leafPath) {
+                            drawRect(
+                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
+                                topLeft = Offset(leafLeft, pageRect.top),
+                                size = Size(leafRight - leafLeft, pageH)
+                            )
+                            if (destBitmap != null) {
+                                drawImage(
+                                    image = destBitmap,
+                                    srcOffset = IntOffset(0, 0),
+                                    srcSize = IntSize(destBitmap.width / 2, destBitmap.height),
+                                    dstOffset = IntOffset(leadX.roundToInt(), pageRect.top.roundToInt()),
+                                    dstSize = IntSize(halfW.roundToInt(), pageH.roundToInt()),
+                                    alpha = 1f
+                                )
+                            }
+                            // Soft planar shadow near foldX
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.16f * bell)),
+                                    startX = max(leafLeft, leafRight - 18.dp.toPx()),
+                                    endX = leafRight
+                                ),
+                                topLeft = Offset(max(leafLeft, leafRight - 18.dp.toPx()), pageRect.top),
+                                size = Size(min(leafRight - leafLeft, 18.dp.toPx()), pageH)
+                            )
+                        }
+                        // Crisp paper edge at leadX
+                        if (leadX in pageRect.left..pageRect.right) {
+                            drawLine(
+                                color = Color.Black.copy(alpha = 0.20f),
+                                start = Offset(leadX, pageRect.top),
+                                end = Offset(leadX, pageRect.bottom),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                    }
+                } else {
+                    // Turn prev spread: left leaf turns from left to right
+                    val foldX = pageRect.left + halfW * p
+                    val leadX = pageRect.left + pageRect.width * p
+
+                    // 1. Static right page
+                    val rightPath = Path().apply {
+                        moveTo(spineX, pageRect.top)
+                        lineTo(pageRect.right, pageRect.top)
+                        lineTo(pageRect.right, pageRect.bottom)
+                        lineTo(spineX, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(rightPath) {
+                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, true)
+                    }
+
+                    // 2. Uncovered left page of destination spread (from left to foldX)
+                    val leftNextPath = Path().apply {
+                        moveTo(pageRect.left, pageRect.top)
+                        lineTo(foldX, pageRect.top)
+                        lineTo(foldX, pageRect.bottom)
+                        lineTo(pageRect.left, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(leftNextPath) {
+                        if (destBitmap != null) {
+                            drawPageBitmapFitted(destBitmap, isPdfBook, true)
+                        }
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.20f * bell)),
+                                startX = max(pageRect.left, foldX - 22.dp.toPx()),
+                                endX = foldX
+                            ),
+                            topLeft = Offset(max(pageRect.left, foldX - 22.dp.toPx()), pageRect.top),
+                            size = Size(min(foldX - pageRect.left, 22.dp.toPx()), pageH)
+                        )
+                    }
+
+                    // 3. Static spine shadow before drawing turning leaf
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.24f),
+                                Color.White.copy(alpha = 0.08f),
+                                Color.Transparent
+                            ),
+                            startX = spineX - 22f,
+                            endX = spineX + 22f
+                        ),
+                        topLeft = Offset(spineX - 22f, pageRect.top),
+                        size = Size(44f, pageH)
+                    )
+
+                    // 4. Turning leaf (foldX .. leadX) with 100% solid opaque paper
+                    val leafLeft = max(pageRect.left, foldX)
+                    val leafRight = min(pageRect.right, leadX)
+                    if (leafRight > leafLeft) {
+                        val leafPath = Path().apply {
+                            moveTo(leafLeft, pageRect.top)
+                            lineTo(leafRight, pageRect.top)
+                            lineTo(leafRight, pageRect.bottom)
+                            lineTo(leafLeft, pageRect.bottom)
+                            close()
+                        }
+                        clipPath(leafPath) {
+                            drawRect(
+                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
+                                topLeft = Offset(leafLeft, pageRect.top),
+                                size = Size(leafRight - leafLeft, pageH)
+                            )
+                            if (destBitmap != null) {
+                                drawImage(
+                                    image = destBitmap,
+                                    srcOffset = IntOffset(destBitmap.width / 2, 0),
+                                    srcSize = IntSize(destBitmap.width / 2, destBitmap.height),
+                                    dstOffset = IntOffset((leadX - halfW).roundToInt(), pageRect.top.roundToInt()),
+                                    dstSize = IntSize(halfW.roundToInt(), pageH.roundToInt()),
+                                    alpha = 1f
+                                )
+                            }
+                            // Soft planar shadow near foldX
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(Color.Black.copy(alpha = 0.16f * bell), Color.Transparent),
+                                    startX = leafLeft,
+                                    endX = min(leafRight, leafLeft + 18.dp.toPx())
+                                ),
+                                topLeft = Offset(leafLeft, pageRect.top),
+                                size = Size(min(leafRight - leafLeft, 18.dp.toPx()), pageH)
+                            )
+                        }
+                        // Crisp paper edge at leadX
+                        if (leadX in pageRect.left..pageRect.right) {
+                            drawLine(
+                                color = Color.Black.copy(alpha = 0.20f),
+                                start = Offset(leadX, pageRect.top),
+                                end = Offset(leadX, pageRect.bottom),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Single-Page Mode: Flat Planar Diagonal Crease Page Turn
+                val slantPx = (cornerYNorm - 0.5f).coerceIn(-0.45f, 0.45f) * 0.22f * bell * pageRect.width
+
+                if (turnDir > 0) {
+                    // Turn Next: fold line moves from right (pageRect.right) to left (pageRect.left)
+                    val foldMidX = pageRect.left + pageRect.width * (1f - p)
+                    val foldTopX = (foldMidX - slantPx).coerceIn(pageRect.left, pageRect.right)
+                    val foldBotX = (foldMidX + slantPx).coerceIn(pageRect.left, pageRect.right)
+
+                    val flapW = min(p * pageRect.width * 0.50f, pageRect.width * 0.28f * bell).coerceAtLeast(1f)
+                    val leadTopX = (foldTopX - flapW).coerceIn(pageRect.left, pageRect.right)
+                    val leadBotX = (foldBotX - flapW).coerceIn(pageRect.left, pageRect.right)
+
+                    // 1. Stationary part of current page (from pageRect.left to fold line)
+                    val curPath = Path().apply {
+                        moveTo(pageRect.left, pageRect.top)
+                        lineTo(foldTopX, pageRect.top)
+                        lineTo(foldBotX, pageRect.bottom)
+                        lineTo(pageRect.left, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(curPath) {
+                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
+                    }
+
+                    // Soft linear shadow cast by leading edge onto current page
+                    val shadowMin = min(leadTopX, leadBotX)
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.16f * bell)),
+                            startX = max(pageRect.left, shadowMin - 18.dp.toPx()),
+                            endX = shadowMin
+                        ),
+                        topLeft = Offset(max(pageRect.left, shadowMin - 18.dp.toPx()), pageRect.top),
+                        size = Size(min(shadowMin - pageRect.left, 18.dp.toPx()), pageRect.height)
+                    )
+
+                    // 2. Uncovered destination page underneath (from fold line to pageRect.right)
+                    val destPath = Path().apply {
+                        moveTo(foldTopX, pageRect.top)
+                        lineTo(pageRect.right, pageRect.top)
+                        lineTo(pageRect.right, pageRect.bottom)
+                        lineTo(foldBotX, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(destPath) {
+                        if (destBitmap != null) {
+                            drawPageBitmapFitted(destBitmap, isPdfBook, false)
+                        }
+                        // Subtle crease shadow on newly revealed page to the right of fold line
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Black.copy(alpha = 0.20f * bell), Color.Transparent),
+                                startX = min(foldTopX, foldBotX),
+                                endX = min(pageRect.right, max(foldTopX, foldBotX) + 22.dp.toPx())
+                            ),
+                            topLeft = Offset(min(foldTopX, foldBotX), pageRect.top),
+                            size = Size(min(pageRect.right - min(foldTopX, foldBotX), 22.dp.toPx()), pageRect.height)
+                        )
+                    }
+
+                    // 3. Folded back-of-page planar polygon
+                    val flapPath = Path().apply {
+                        moveTo(leadTopX, pageRect.top)
+                        lineTo(foldTopX, pageRect.top)
+                        lineTo(foldBotX, pageRect.bottom)
+                        lineTo(leadBotX, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(flapPath) {
+                        drawRect(
+                            color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
+                            topLeft = Offset(pageRect.left, pageRect.top),
+                            size = Size(pageRect.width, pageRect.height)
+                        )
+                        // Geometric reflection across crease line with subtle paper bleed
+                        drawIntoCanvas { c ->
+                            c.save()
+                            val m = AndroidMatrix().apply {
+                                postScale(-1f, 1f, foldMidX, pageRect.top + pageRect.height * 0.5f)
+                            }
+                            c.nativeCanvas.concat(m)
+                            drawImage(
+                                image = currentPageBitmap,
+                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
+                                dstSize = IntSize(pageRect.width.roundToInt().coerceAtLeast(1), pageRect.height.roundToInt().coerceAtLeast(1)),
+                                alpha = 0.14f,
+                                colorFilter = paperBleedFilter
+                            )
+                            c.restore()
+                        }
+                    }
+
+                    // Thin 1.dp crisp paper edge stroke along (leadTopX, top) -> (leadBotX, bottom)
+                    drawLine(
+                        color = Color.Black.copy(alpha = 0.22f * bell),
+                        start = Offset(leadTopX, pageRect.top),
+                        end = Offset(leadBotX, pageRect.bottom),
+                        strokeWidth = 1.dp.toPx()
+                    )
+
+                    // Crisp crease line
+                    drawLine(
+                        color = Color.Black.copy(alpha = 0.15f * bell),
+                        start = Offset(foldTopX, pageRect.top),
+                        end = Offset(foldBotX, pageRect.bottom),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                } else {
+                    // Turn Prev: fold line moves from left (pageRect.left) to right (pageRect.right)
+                    val foldMidX = pageRect.left + pageRect.width * p
+                    val foldTopX = (foldMidX + slantPx).coerceIn(pageRect.left, pageRect.right)
+                    val foldBotX = (foldMidX - slantPx).coerceIn(pageRect.left, pageRect.right)
+
+                    val flapW = min((1f - p) * pageRect.width * 0.50f, pageRect.width * 0.28f * bell).coerceAtLeast(1f)
+                    val leadTopX = (foldTopX + flapW).coerceIn(pageRect.left, pageRect.right)
+                    val leadBotX = (foldBotX + flapW).coerceIn(pageRect.left, pageRect.right)
+
+                    // 1. Uncovered destination page underneath (from pageRect.left to fold line)
+                    val destPath = Path().apply {
+                        moveTo(pageRect.left, pageRect.top)
+                        lineTo(foldTopX, pageRect.top)
+                        lineTo(foldBotX, pageRect.bottom)
+                        lineTo(pageRect.left, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(destPath) {
+                        if (destBitmap != null) {
+                            drawPageBitmapFitted(destBitmap, isPdfBook, false)
+                        }
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.20f * bell)),
+                                startX = max(pageRect.left, min(foldTopX, foldBotX) - 22.dp.toPx()),
+                                endX = max(foldTopX, foldBotX)
+                            ),
+                            topLeft = Offset(max(pageRect.left, min(foldTopX, foldBotX) - 22.dp.toPx()), pageRect.top),
+                            size = Size(min(max(foldTopX, foldBotX) - pageRect.left, 22.dp.toPx()), pageRect.height)
+                        )
+                    }
+
+                    // 2. Stationary part of current page (from fold line to pageRect.right)
+                    val curPath = Path().apply {
+                        moveTo(foldTopX, pageRect.top)
+                        lineTo(pageRect.right, pageRect.top)
+                        lineTo(pageRect.right, pageRect.bottom)
+                        lineTo(foldBotX, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(curPath) {
+                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
+                    }
+
+                    // Soft linear shadow cast by leading edge onto current page
+                    val shadowMax = max(leadTopX, leadBotX)
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(Color.Black.copy(alpha = 0.16f * bell), Color.Transparent),
+                            startX = shadowMax,
+                            endX = min(pageRect.right, shadowMax + 18.dp.toPx())
+                        ),
+                        topLeft = Offset(shadowMax, pageRect.top),
+                        size = Size(min(pageRect.right - shadowMax, 18.dp.toPx()), pageRect.height)
+                    )
+
+                    // 3. Folded back-of-page planar polygon
+                    val flapPath = Path().apply {
+                        moveTo(foldTopX, pageRect.top)
+                        lineTo(leadTopX, pageRect.top)
+                        lineTo(leadBotX, pageRect.bottom)
+                        lineTo(foldBotX, pageRect.bottom)
+                        close()
+                    }
+                    clipPath(flapPath) {
+                        drawRect(
+                            color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
+                            topLeft = Offset(pageRect.left, pageRect.top),
+                            size = Size(pageRect.width, pageRect.height)
+                        )
+                        drawIntoCanvas { c ->
+                            c.save()
+                            val m = AndroidMatrix().apply {
+                                postScale(-1f, 1f, foldMidX, pageRect.top + pageRect.height * 0.5f)
+                            }
+                            c.nativeCanvas.concat(m)
+                            drawImage(
+                                image = currentPageBitmap,
+                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
+                                dstSize = IntSize(pageRect.width.roundToInt().coerceAtLeast(1), pageRect.height.roundToInt().coerceAtLeast(1)),
+                                alpha = 0.14f,
+                                colorFilter = paperBleedFilter
+                            )
+                            c.restore()
+                        }
+                    }
+
+                    // Thin 1.dp crisp paper edge stroke along (leadTopX, top) -> (leadBotX, bottom)
+                    drawLine(
+                        color = Color.Black.copy(alpha = 0.22f * bell),
+                        start = Offset(leadTopX, pageRect.top),
+                        end = Offset(leadBotX, pageRect.bottom),
+                        strokeWidth = 1.dp.toPx()
+                    )
+
+                    // Crisp crease line
+                    drawLine(
+                        color = Color.Black.copy(alpha = 0.15f * bell),
+                        start = Offset(foldTopX, pageRect.top),
+                        end = Offset(foldBotX, pageRect.bottom),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+            }
+        }
+    }
+}
