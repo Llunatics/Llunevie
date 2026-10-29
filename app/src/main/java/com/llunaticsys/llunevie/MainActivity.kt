@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import com.llunaticsys.llunevie.model.AppThemeMode
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
@@ -24,6 +25,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -151,9 +153,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val systemDark = isSystemInDarkTheme()
+            val effectiveTheme = if (prefs.followDeviceTheme) {
+                if (systemDark) AppThemeMode.BLACK else AppThemeMode.WHITE
+            } else {
+                prefs.appTheme
+            }
+
             LlunevieTheme(
-                themeMode = prefs.appTheme,
-                glassDesign = prefs.glassDesign,
+                themeMode = effectiveTheme,
+                glassDesign = false,
                 amoledBlack = prefs.amoledBlack
             ) {
                 val palette = LocalLluneviePalette.current
@@ -313,6 +322,7 @@ private fun LlunevieMainContainer(
                     highlightsCount = allHighlights.size,
                     onSetTheme = { viewModel.setTheme(it) },
                     onToggleGlass = { viewModel.toggleGlassDesign() },
+                    onToggleFollowDeviceTheme = { viewModel.setFollowDeviceTheme(it) },
                     onToggleAmoled = { viewModel.toggleAmoledBlack() },
                     onSetLanguage = { viewModel.setLanguage(it) },
                     onSetUserName = { viewModel.setUserName(it) },

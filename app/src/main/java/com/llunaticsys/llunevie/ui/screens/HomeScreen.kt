@@ -2,6 +2,7 @@ package com.llunaticsys.llunevie.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -44,6 +47,8 @@ import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.data.local.DailyReadingLogEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.ui.components.BookCoverCard
+import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
+import kotlin.math.roundToInt
 import com.llunaticsys.llunevie.ui.components.LlunevieAppLogoSvg
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
@@ -216,94 +221,98 @@ fun HomeScreen(
                 contentPadding = PaddingValues(vertical = 2.dp)
             ) {
                 items(onTheGoBooks, key = { it.id }) { book ->
-                    Surface(
-                        onClick = { onOpenBook(book.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = palette.bgCard,
-                        border = BorderStroke(1.dp, palette.borderSoft),
+                    Row(
                         modifier = Modifier
-                            .width(236.dp)
-                            .height(88.dp)
+                            .width(238.dp)
+                            .height(92.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(palette.bgCard)
+                            .border(1.dp, palette.borderSoft, RoundedCornerShape(16.dp))
+                            .clickable { onOpenBook(book.id) }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
+                        // Book Cover (50x72dp)
+                        BookCoverCard(
+                            book = book,
+                            showTitleInsideFallback = false,
+                            importProgress = importingBooksProgress[book.id],
                             modifier = Modifier
-                                .fillMaxSize()
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                .width(50.dp)
+                                .height(72.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        // Right Content Column — DO NOT use Arrangement.SpaceBetween!
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            BookCoverCard(
-                                book = book,
-                                showTitleInsideFallback = false,
-                                importProgress = importingBooksProgress[book.id],
-                                modifier = Modifier
-                                    .width(50.dp)
-                                    .height(72.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
-                                verticalArrangement = Arrangement.Center
+                            // 1. Top Metadata Row: Collection Tag + Percentage
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = book.displayCollectionTag(strings.isEn).uppercase(),
-                                        color = palette.textMuted,
-                                        fontSize = 9.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        letterSpacing = 0.8.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    Text(
-                                        text = "${book.progress}%",
-                                        color = palette.textMuted,
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(3.dp))
                                 Text(
-                                    text = book.title,
-                                    color = palette.textMain,
-                                    fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(1.dp))
-                                Text(
-                                    text = book.displayAuthor(strings.isEn),
+                                    text = book.displayCollectionTag(strings.isEn).uppercase(),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 0.7.sp,
                                     color = palette.textMuted,
-                                    fontSize = 11.sp,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
                                 )
-                                Spacer(modifier = Modifier.height(7.dp))
+                                Text(
+                                    text = "${(book.readingProgress * 100).roundToInt()}%",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textMuted,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            // 2. Book Title & Author tightly stacked (0.dp / 1.dp gap!)
+                            Text(
+                                text = sanitizeBookOrChapterText(book.title),
+                                fontSize = 14.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Serif,
+                                color = palette.textMain,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                            )
+                            Spacer(modifier = Modifier.height(1.dp))
+                            Text(
+                                text = book.displayAuthor(strings.isEn),
+                                fontSize = 11.sp,
+                                lineHeight = 13.sp,
+                                color = palette.textMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            // 3. Minimalist Horizontal Black/Dark Progress Bar at the bottom of the card!
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.textMain.copy(alpha = 0.12f))
+                            ) {
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(3.5.dp)
+                                        .fillMaxWidth(book.readingProgress.coerceIn(0.04f, 1f))
+                                        .fillMaxHeight()
                                         .clip(CircleShape)
-                                        .background(palette.textMain.copy(alpha = 0.10f))
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth((book.progress / 100f).coerceIn(0.02f, 1f))
-                                            .fillMaxHeight()
-                                            .clip(CircleShape)
-                                            .background(palette.accentDark)
-                                    )
-                                }
+                                        .background(palette.textMain)
+                                )
                             }
                         }
                     }

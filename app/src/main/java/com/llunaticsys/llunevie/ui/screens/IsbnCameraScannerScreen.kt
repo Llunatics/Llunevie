@@ -26,6 +26,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,16 +37,22 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -268,11 +275,12 @@ fun IsbnCameraScannerScreen(
             drawPath(mask, color = Color.Black.copy(alpha = 0.48f))
         }
 
-        // 2. Top Camera Overlay Chrome (`#closeFullScannerBtn`, Mode Switcher Pill, `#cameraTorchBtn`)
+        // 2. Top Camera Overlay Chrome (statusBarsPadding(), Theme-Adaptive Switcher & Buttons)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .align(Alignment.TopCenter),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -280,66 +288,68 @@ fun IsbnCameraScannerScreen(
             Surface(
                 onClick = onClose,
                 shape = CircleShape,
-                color = Color.Black.copy(alpha = 0.55f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                color = palette.bgSurface.copy(alpha = 0.92f),
+                border = BorderStroke(1.dp, palette.borderSoft),
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.CLOSE_X,
-                        tint = Color.White,
+                        tint = palette.textMain,
                         modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // Symmetrical 216x38dp mode switcher pill (padding = 3.dp)
+            // Theme-adaptive 40dp capsule switcher
+            val isBatchMode = uiState.cameraMode == "batch"
             Surface(
-                shape = CircleShape,
-                color = Color.Black.copy(alpha = 0.55f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(50),
+                color = palette.bgSurface.copy(alpha = 0.92f),
+                border = BorderStroke(1.dp, palette.borderSoft),
                 modifier = Modifier
-                    .width(216.dp)
-                    .height(38.dp)
+                    .height(40.dp)
+                    .widthIn(min = 210.dp)
             ) {
                 Row(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxHeight()
                         .padding(3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val isIsbn = uiState.cameraMode == "isbn"
                     Surface(
                         onClick = { onSetCameraMode("isbn") },
-                        shape = CircleShape,
-                        color = if (isIsbn) Color.White else Color.Transparent,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
+                        shape = RoundedCornerShape(50),
+                        color = if (!isBatchMode) palette.textMain else Color.Transparent,
+                        modifier = Modifier.fillMaxHeight()
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        ) {
                             Text(
                                 text = strings.tabIsbn,
-                                color = if (isIsbn) Color(0xFF141518) else Color.White.copy(alpha = 0.85f),
+                                color = if (!isBatchMode) palette.bgApp else palette.textMuted,
                                 fontSize = 11.5.sp,
-                                fontWeight = if (isIsbn) FontWeight.SemiBold else FontWeight.Medium
+                                fontWeight = if (!isBatchMode) FontWeight.SemiBold else FontWeight.Medium
                             )
                         }
                     }
                     Surface(
                         onClick = { onSetCameraMode("batch") },
-                        shape = CircleShape,
-                        color = if (!isIsbn) Color.White else Color.Transparent,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
+                        shape = RoundedCornerShape(50),
+                        color = if (isBatchMode) palette.textMain else Color.Transparent,
+                        modifier = Modifier.fillMaxHeight()
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        ) {
                             Text(
                                 text = strings.tabBatch,
-                                color = if (!isIsbn) Color(0xFF141518) else Color.White.copy(alpha = 0.85f),
+                                color = if (isBatchMode) palette.bgApp else palette.textMuted,
                                 fontSize = 11.5.sp,
-                                fontWeight = if (!isIsbn) FontWeight.SemiBold else FontWeight.Medium
+                                fontWeight = if (isBatchMode) FontWeight.SemiBold else FontWeight.Medium
                             )
                         }
                     }
@@ -349,17 +359,17 @@ fun IsbnCameraScannerScreen(
             Surface(
                 onClick = onToggleTorch,
                 shape = CircleShape,
-                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B) else Color.Black.copy(alpha = 0.55f),
+                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B) else palette.bgSurface.copy(alpha = 0.92f),
                 border = BorderStroke(
                     1.dp,
-                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D) else Color.White.copy(alpha = 0.15f)
+                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D) else palette.borderSoft
                 ),
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.TORCH_BOLT,
-                        tint = if (uiState.cameraTorchEnabled) Color(0xFF141518) else Color.White,
+                        tint = if (uiState.cameraTorchEnabled) Color(0xFF141518) else palette.textMain,
                         modifier = Modifier.size(17.dp),
                         strokeWidthDp = 1.8f
                     )
@@ -523,243 +533,280 @@ fun IsbnCameraScannerScreen(
             )
         }
 
-        // 4. Bottom Camera Controls Sheet (RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-        Surface(
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = palette.sheetBg,
-            border = BorderStroke(1.dp, palette.borderSoft),
-            shadowElevation = 24.dp,
+        // 4. Floating Rounded Bottom Console Card (Unclipped, navigationBarsPadding().imePadding())
+        val isBatchMode = uiState.cameraMode == "batch"
+        val batchScannedBooks = uiState.batchScanQueue
+        val isEn = strings.isEn
+
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
                 .align(Alignment.BottomCenter)
+                .fillMaxWidth()
                 .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(palette.bgSurface)
+                .border(1.dp, palette.borderSoft, RoundedCornerShape(24.dp))
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+            // Top Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .width(40.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(palette.textMain.copy(alpha = 0.2f))
-                )
-
-                if (uiState.cameraMode == "isbn") {
-                    // Integrated Search Bar (monospace input + circular search button inside the right edge)
-                    Surface(
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(start = 16.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                if (manualIsbnText.isEmpty()) {
-                                    Text(
-                                        text = if (strings.isId) "Arahkan kamera atau ketik ISBN..." else "Aim camera or type ISBN...",
-                                        color = palette.textMuted,
-                                        fontSize = 12.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                                BasicTextField(
-                                    value = manualIsbnText,
-                                    onValueChange = { manualIsbnText = it },
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        color = palette.textMain,
-                                        fontSize = 12.5.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    ),
-                                    cursorBrush = SolidColor(palette.textMain),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                            Surface(
-                                onClick = { onIsbnDetected(manualIsbnText) },
-                                shape = CircleShape,
-                                color = palette.accentDark,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    PrototypeSvgIcon(
-                                        type = PrototypeIconType.SEARCH,
-                                        tint = palette.bgApp,
-                                        modifier = Modifier.size(15.dp),
-                                        strokeWidthDp = 1.8f
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    uiState.lastScannedCandidate?.let { item ->
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = palette.bgCard,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(44.dp)
-                                        .height(64.dp)
-                                        .shadow(4.dp, RoundedCornerShape(8.dp))
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(item.coverBgHex))
-                                ) {
-                                    if (!item.coverUrl.isNullOrBlank()) {
-                                        AsyncImage(
-                                            model = item.coverUrl,
-                                            contentDescription = item.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.title,
-                                        color = palette.textMain,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${item.author} · ${item.year}",
-                                        color = palette.textMuted,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Surface(
-                                    onClick = { onSaveSingleCandidate(item) },
-                                    shape = CircleShape,
-                                    color = palette.accentDark
-                                ) {
-                                    Text(
-                                        text = if (strings.isId) "Simpan" else "Save",
-                                        color = palette.bgApp,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Batch Scan Panel (`#cameraBatchScanPanel`)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = if (strings.isId) "TERDETEKSI OTOMATIS" else "AUTO-DETECTED",
-                                color = palette.textMuted,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = 1.sp
-                            )
-                            Text(
-                                text = "${uiState.batchScanQueue.size} ${if (strings.isId) "Buku" else "Books"}",
-                                color = palette.textMain,
-                                fontSize = 18.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                        Surface(
-                            onClick = onClearBatchQueue,
-                            shape = CircleShape,
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft)
-                        ) {
-                            Text(
-                                text = if (strings.isId) "Bersihkan" else "Clear",
-                                color = palette.textMain,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-
-                    if (uiState.batchScanQueue.isNotEmpty()) {
-                        LazyColumn(
-                            modifier = Modifier.height(140.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(uiState.batchScanQueue, key = { it.id }) { b ->
-                                Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = palette.bgCard,
-                                    border = BorderStroke(1.dp, palette.borderSoft),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = b.title,
-                                                color = palette.textMain,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = "${b.author} · ${b.year}",
-                                                color = palette.textMuted,
-                                                fontSize = 11.sp,
-                                                maxLines = 1
-                                            )
-                                        }
-                                        Text(
-                                            text = "✕",
-                                            color = palette.textMuted,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier
-                                                .clickable { onRemoveBatchItem(b.id) }
-                                                .padding(horizontal = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Surface(
-                        onClick = { onCommitBatchQueue(defaultShelf) },
-                        shape = CircleShape,
-                        color = palette.accentDark,
-                        modifier = Modifier.fillMaxWidth()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(palette.bgCard)
+                            .border(1.dp, palette.borderSoft, RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (strings.isId) "Simpan Semua Buku" else "Save All Books",
-                            color = palette.bgApp,
-                            fontSize = 12.sp,
+                            text = if (isBatchMode) "≡" else "#",
+                            color = palette.textMain,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = if (isBatchMode) {
+                                if (isEn) "Batch ISBN Queue" else "Antrean Scan Massal"
+                            } else {
+                                if (isEn) "Manual ISBN Lookup" else "Cari ISBN Manual"
+                            },
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 12.dp)
+                            color = palette.textMain
+                        )
+                        Text(
+                            text = if (isBatchMode) {
+                                if (isEn) "${batchScannedBooks.size} books ready to save" else "${batchScannedBooks.size} buku siap disimpan"
+                            } else {
+                                if (isEn) "Scan barcode or enter 10/13-digit ISBN" else "Arahkan kamera atau ketik 10/13 digit ISBN"
+                            },
+                            fontSize = 11.sp,
+                            color = palette.textMuted
+                        )
+                    }
+                }
+                if (isBatchMode && batchScannedBooks.isNotEmpty()) {
+                    Surface(
+                        onClick = { onCommitBatchQueue(defaultShelf) },
+                        shape = RoundedCornerShape(50),
+                        color = palette.textMain,
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text(
+                            text = if (isEn) "Save All (${batchScannedBooks.size})" else "Simpan (${batchScannedBooks.size})",
+                            color = palette.bgApp,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        )
+                    }
+                }
+            }
+
+            // Batch Queue Preview Strip (when isBatchMode)
+            if (isBatchMode) {
+                Spacer(modifier = Modifier.height(10.dp))
+                if (batchScannedBooks.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(palette.bgCard)
+                            .border(1.dp, palette.borderSoft, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (isEn) "Scanned books will appear here automatically" else "Buku yang di-scan akan muncul di sini",
+                            color = palette.textMuted,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                } else {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(batchScannedBooks, key = { it.id }) { bookItem ->
+                            Row(
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(palette.bgCard)
+                                    .border(1.dp, palette.borderSoft, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!bookItem.coverUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = bookItem.coverUrl,
+                                        contentDescription = bookItem.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(width = 24.dp, height = 34.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                    )
+                                }
+                                Column(modifier = Modifier.widthIn(max = 120.dp)) {
+                                    Text(
+                                        text = bookItem.title,
+                                        color = palette.textMain,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = bookItem.author,
+                                        color = palette.textMuted,
+                                        fontSize = 9.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = "✕",
+                                    color = palette.textMuted,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier
+                                        .clickable { onRemoveBatchItem(bookItem.id) }
+                                        .padding(4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scanned Single Candidate Preview
+            if (!isBatchMode && uiState.lastScannedCandidate != null) {
+                val item = uiState.lastScannedCandidate!!
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(palette.bgCard)
+                        .border(1.dp, palette.borderSoft, RoundedCornerShape(14.dp))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (!item.coverUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = item.coverUrl,
+                            contentDescription = item.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(width = 36.dp, height = 50.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.title,
+                            color = palette.textMain,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${item.author} · ${item.year}",
+                            color = palette.textMuted,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        onClick = { onSaveSingleCandidate(item) },
+                        shape = RoundedCornerShape(50),
+                        color = palette.textMain
+                    ) {
+                        Text(
+                            text = if (isEn) "Save" else "Simpan",
+                            color = palette.bgApp,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Manual ISBN Input Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(palette.bgCard)
+                    .border(1.dp, palette.borderSoft, RoundedCornerShape(14.dp))
+                    .padding(start = 14.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "#",
+                    color = palette.textMuted,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Box(modifier = Modifier.weight(1f)) {
+                    if (manualIsbnText.isEmpty()) {
+                        Text(
+                            text = if (isEn) "Type 13-digit ISBN..." else "Ketik 13 digit ISBN...",
+                            color = palette.textMuted,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    BasicTextField(
+                        value = manualIsbnText,
+                        onValueChange = { manualIsbnText = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            color = palette.textMain,
+                            fontSize = 12.5.sp,
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        cursorBrush = SolidColor(palette.textMain),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Surface(
+                    onClick = { onIsbnDetected(manualIsbnText) },
+                    shape = CircleShape,
+                    color = palette.textMain,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "→",
+                            color = palette.bgApp,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

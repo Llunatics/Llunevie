@@ -22,6 +22,7 @@ private val Context.llunevieDataStore: DataStore<Preferences> by preferencesData
 data class UserPreferencesState(
     val lang: String = "id",
     val appTheme: AppThemeMode = AppThemeMode.PAPER,
+    val followDeviceTheme: Boolean = false,
     val glassDesign: Boolean = false,
     val amoledBlack: Boolean = false,
     val userName: String = "",
@@ -54,6 +55,7 @@ class UserPreferencesRepository(private val context: Context) {
     private object Keys {
         val LANG = stringPreferencesKey("lang")
         val APP_THEME = stringPreferencesKey("app_theme")
+        val FOLLOW_DEVICE_THEME = booleanPreferencesKey("follow_device_theme")
         val GLASS_DESIGN = booleanPreferencesKey("glass_design")
         val AMOLED_BLACK = booleanPreferencesKey("amoled_black")
         val USER_NAME = stringPreferencesKey("user_name")
@@ -87,7 +89,8 @@ class UserPreferencesRepository(private val context: Context) {
         UserPreferencesState(
             lang = prefs[Keys.LANG] ?: "id",
             appTheme = theme,
-            glassDesign = prefs[Keys.GLASS_DESIGN] ?: false,
+            followDeviceTheme = prefs[Keys.FOLLOW_DEVICE_THEME] ?: false,
+            glassDesign = false,
             amoledBlack = if (theme == AppThemeMode.BLACK) rawAmoled else false,
             userName = prefs[Keys.USER_NAME] ?: "",
             userPhotoPath = prefs[Keys.USER_PHOTO],
@@ -118,15 +121,22 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setTheme(theme: AppThemeMode) {
         context.llunevieDataStore.edit { prefs ->
             prefs[Keys.APP_THEME] = theme.key
+            prefs[Keys.FOLLOW_DEVICE_THEME] = false
             if (theme != AppThemeMode.BLACK) {
                 prefs[Keys.AMOLED_BLACK] = false
             }
         }
     }
 
+    suspend fun setFollowDeviceTheme(enabled: Boolean) {
+        context.llunevieDataStore.edit { prefs ->
+            prefs[Keys.FOLLOW_DEVICE_THEME] = enabled
+        }
+    }
+
     suspend fun setGlassDesign(enabled: Boolean) {
         context.llunevieDataStore.edit { prefs ->
-            prefs[Keys.GLASS_DESIGN] = enabled
+            prefs[Keys.GLASS_DESIGN] = false
         }
     }
 

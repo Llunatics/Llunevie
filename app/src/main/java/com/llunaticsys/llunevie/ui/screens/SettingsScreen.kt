@@ -86,7 +86,8 @@ fun SettingsScreen(
     booksCount: Int,
     highlightsCount: Int,
     onSetTheme: (AppThemeMode) -> Unit,
-    onToggleGlass: () -> Unit,
+    onToggleGlass: () -> Unit = {},
+    onToggleFollowDeviceTheme: (Boolean) -> Unit = {},
     onToggleAmoled: () -> Unit,
     onSetLanguage: (String) -> Unit,
     onSetUserName: (String) -> Unit,
@@ -273,7 +274,7 @@ fun SettingsScreen(
                 }
                 HorizontalDivider(color = palette.borderSoft)
 
-                // Glass Design Toggle
+                // Follow Device Theme Toggle
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -282,13 +283,26 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text(text = strings.glassToggleLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = if (strings.isEn) "Follow Device Theme" else "Ikuti Tema Perangkat",
+                            color = palette.textMain,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = strings.glassToggleSub, color = palette.textMuted, fontSize = 11.5.sp, lineHeight = 17.sp)
+                        Text(
+                            text = if (strings.isEn) "Automatically switch between White and Black theme based on phone dark mode"
+                                else "Otomatis gunakan tema Putih saat mode terang dan Hitam saat mode gelap",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
                     }
                     ModernSwitch(
-                        checked = prefs.glassDesign,
-                        onCheckedChange = { onToggleGlass() }
+                        checked = prefs.followDeviceTheme,
+                        onCheckedChange = {
+                            onToggleFollowDeviceTheme(it)
+                        }
                     )
                 }
                 HorizontalDivider(color = palette.borderSoft)

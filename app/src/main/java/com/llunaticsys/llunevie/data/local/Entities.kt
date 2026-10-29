@@ -39,6 +39,9 @@ data class BookEntity(
     val weightGrams: Float = 300f,
     val createdAtMillis: Long = System.currentTimeMillis()
 ) {
+    val readingProgress: Float
+        get() = (progress / 100f).coerceIn(0f, 1f)
+
     fun displayAuthor(isEn: Boolean): String {
         val a = author.trim()
         val isGeneric = a.isEmpty() || a.equals("Dokumen PDF", true) || a.equals("PDF Document", true) ||
