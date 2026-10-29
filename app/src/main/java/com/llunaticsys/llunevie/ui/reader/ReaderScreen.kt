@@ -1,8 +1,12 @@
 package com.llunaticsys.llunevie.ui.reader
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.platform.LocalConfiguration
+import com.llunaticsys.llunevie.LlunevieViewModel
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
@@ -101,6 +105,8 @@ import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -125,6 +131,7 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -142,7 +149,6 @@ import androidx.compose.ui.text.googlefonts.Font
 import com.llunaticsys.llunevie.R
 import com.llunaticsys.llunevie.ui.components.ClassicGlassSegmentedControl
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -198,8 +204,18 @@ private val fontFamiliesCache = mutableMapOf<String, FontFamily>()
 fun getReaderFontFamily(context: Context? = null, name: String, fontWeight: Int = 400): FontFamily {
     val key = "$name:$fontWeight"
     return fontFamiliesCache.getOrPut(key) {
-        val tf = PageSnapshotBitmapRenderer.getSystemTypeface(name, fontWeight, context)
-        FontFamily(tf)
+        val assetPath = PageSnapshotBitmapRenderer.getFontAssetPath(name)
+        if (context != null && assetPath != null) {
+            runCatching {
+                FontFamily(androidx.compose.ui.text.font.Font(assetManager = context.assets, path = assetPath))
+            }.getOrNull() ?: runCatching {
+                val tf = PageSnapshotBitmapRenderer.getSystemTypeface(name, fontWeight, context)
+                FontFamily(tf)
+            }.getOrDefault(FontFamily.Default)
+        } else {
+            val tf = PageSnapshotBitmapRenderer.getSystemTypeface(name, fontWeight, context)
+            FontFamily(tf)
+        }
     }
 }
 
@@ -241,6 +257,7 @@ fun ReaderScreen(
         pageMargin: Int?,
         paraIndent: Boolean?
     ) -> Unit,
+    viewModel: LlunevieViewModel? = null,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
@@ -302,35 +319,39 @@ fun ReaderScreen(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.ARROW_LEFT,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
 
-                    // Compact single-line Title Pill (`#readerTitlePill`: max-w-[210px] px-4 py-1.5 rounded-full text-[12px])
+                    // Compact single-line Title Pill (`#readerTitlePill`: max-w-[200px] height=30.dp, px-3.5, rounded-full, text-[11.5px])
                     Surface(
                         onClick = { onToggleTocDrawer(true) },
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.widthIn(max = 216.dp)
+                        modifier = Modifier
+                            .height(30.dp)
+                            .widthIn(max = 200.dp)
                     ) {
-                        Text(
-                            text = book.title,
-                            color = palette.textMain,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = book.title,
+                                color = palette.textMain,
+                                fontSize = 11.5.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            )
+                        }
                     }
 
                     Surface(
@@ -338,13 +359,13 @@ fun ReaderScreen(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             PrototypeSvgIcon(
                                 type = if (bookHighlights.isNotEmpty()) PrototypeIconType.BOOKMARK_FILLED else PrototypeIconType.BOOKMARK_OUTLINE,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
@@ -457,14 +478,23 @@ fun ReaderScreen(
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
                             ) {
                                 value = if (isSpread) {
-                                    val nrTriple = getPageAtGlobalZero(curZero + 1)
+                                    val leftZero = (curZero / 2) * 2
+                                    val rightZero = leftZero + 1
+                                    val leftTriple = getPageAtGlobalZero(leftZero)
+                                    val rightTriple = getPageAtGlobalZero(rightZero)
+                                    val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
+                                    val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
                                     renderTwoPageSpreadSnapshot(
                                         textMeasurer = textMeasurer,
                                         widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
                                         heightPx = stageH,
                                         density = density,
-                                        leftText = currentPageRaw,
-                                        rightText = nrTriple?.third.orEmpty(),
+                                        leftPageIndex = leftZero,
+                                        rightPageIndex = rightZero,
+                                        leftHeader = leftCh?.title.orEmpty(),
+                                        rightHeader = rightCh?.title.orEmpty(),
+                                        leftText = leftTriple?.third.orEmpty().ifBlank { currentPageRaw },
+                                        rightText = rightTriple?.third.orEmpty(),
                                         leftPdfBitmap = curLeftPdfBmp,
                                         rightPdfBitmap = curRightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
@@ -502,14 +532,23 @@ fun ReaderScreen(
                             ) {
                                 value = if (nextTriple == null) null
                                 else if (isSpread) {
-                                    val nrTriple = getPageAtGlobalZero(curZero + step + 1)
+                                    val leftZero = curZero + step
+                                    val rightZero = leftZero + 1
+                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
+                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
+                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
+                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
                                     renderTwoPageSpreadSnapshot(
                                         textMeasurer = textMeasurer,
                                         widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
                                         heightPx = stageH,
                                         density = density,
-                                        leftText = nextTriple.third,
-                                        rightText = nrTriple?.third.orEmpty(),
+                                        leftPageIndex = leftZero,
+                                        rightPageIndex = rightZero,
+                                        leftHeader = leftCh?.title.orEmpty(),
+                                        rightHeader = rightCh?.title.orEmpty(),
+                                        leftText = leftTripleSpread?.third.orEmpty(),
+                                        rightText = rightTripleSpread?.third.orEmpty(),
                                         leftPdfBitmap = nextLeftPdfBmp,
                                         rightPdfBitmap = nextRightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
@@ -547,14 +586,23 @@ fun ReaderScreen(
                             ) {
                                 value = if (prevTriple == null) null
                                 else if (isSpread) {
-                                    val prTriple = getPageAtGlobalZero(curZero - step + 1)
+                                    val leftZero = curZero - step
+                                    val rightZero = leftZero + 1
+                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
+                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
+                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
+                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
                                     renderTwoPageSpreadSnapshot(
                                         textMeasurer = textMeasurer,
                                         widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
                                         heightPx = stageH,
                                         density = density,
-                                        leftText = prevTriple.third,
-                                        rightText = prTriple?.third.orEmpty(),
+                                        leftPageIndex = leftZero,
+                                        rightPageIndex = rightZero,
+                                        leftHeader = leftCh?.title.orEmpty(),
+                                        rightHeader = rightCh?.title.orEmpty(),
+                                        leftText = leftTripleSpread?.third.orEmpty(),
+                                        rightText = rightTripleSpread?.third.orEmpty(),
                                         leftPdfBitmap = prevLeftPdfBmp,
                                         rightPdfBitmap = prevRightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
@@ -1123,6 +1171,15 @@ fun ReaderScreen(
                                         }
                                     }
                                 } else if (isPdfBook) {
+                                    if (viewModel != null) {
+                                        PdfPageItemContent(
+                                            bookId = book.id,
+                                            filePath = book.localFilePath!!,
+                                            pageIndex = pageZero,
+                                            viewModel = viewModel,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
                                         val pdfRatio = if (curLeftPdfBmp != null && curLeftPdfBmp!!.height > 0) {
                                             curLeftPdfBmp!!.width.toFloat() / curLeftPdfBmp!!.height.toFloat()
                                         } else {
@@ -1152,7 +1209,8 @@ fun ReaderScreen(
                                                 }
                                             }
                                         }
-                                    } else {
+                                    }
+                                } else {
                                         val pageTriple = getPageAtGlobalZero(pageZero)
                                         val ch = pageTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
                                         val pText = pageTriple?.third.orEmpty().ifBlank { if (pageZero == curZero) currentPageRaw else "" }
@@ -1388,7 +1446,7 @@ fun ReaderScreen(
             }
 
             // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
-            if (!uiState.readerFullView) {
+            if (!uiState.readerFullView && !isSpread) {
                 val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
                 val pageIndicatorLabel = when (prefs.readingFlowMode) {
                     ReadingFlowMode.WEBTOON -> {
@@ -1578,6 +1636,118 @@ fun ReaderScreen(
                                 text = "Aa",
                                 color = palette.textMain,
                                 fontSize = 14.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Left Vertical Page Bar in 2-Page Spread Mode (width = 40.dp capsule at CenterStart)
+        if (!uiState.readerFullView && isSpread) {
+            val leftPage = ((metrics.currentGlobalPage - 1) / 2) * 2
+            val rightPage = (leftPage + 1).coerceAtMost(metrics.totalBookPages - 1)
+            var showVerticalScrubber by remember { mutableStateOf(false) }
+
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = palette.bgSurface.copy(alpha = 0.95f),
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp)
+                    .width(40.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // 1. Chapters & Illustrations button (32.dp circle)
+                    Surface(
+                        onClick = { onToggleTocDrawer(true) },
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.TOC_LIST,
+                                tint = palette.textMain,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+
+                    // 2. Previous Spread button (28.dp circle)
+                    Surface(
+                        onClick = {
+                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                                externalFlipTrigger = -1
+                            } else {
+                                onTurnPage(-1)
+                            }
+                        },
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("⌃", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // 3. Compact Page Indicator / Vertical Scrubber
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { showVerticalScrubber = !showVerticalScrubber }
+                            .padding(horizontal = 2.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${leftPage + 1}-${rightPage + 1}\n/${metrics.totalBookPages}",
+                            color = palette.textMuted,
+                            fontSize = 8.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 11.sp
+                        )
+                    }
+
+                    // 4. Next Spread button (28.dp circle)
+                    Surface(
+                        onClick = {
+                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                                externalFlipTrigger = 1
+                            } else {
+                                onTurnPage(1)
+                            }
+                        },
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("⌄", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // 5. Aa Reader Settings button (32.dp circle)
+                    Surface(
+                        onClick = { onToggleTypeSheet(!uiState.showReaderTypeSheet, null) },
+                        shape = CircleShape,
+                        color = Color.Transparent,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Aa",
+                                color = palette.textMain,
+                                fontSize = 12.sp,
                                 fontFamily = FontFamily.Serif,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -2182,6 +2352,7 @@ fun ReaderScreen(
             }
         }
 
+        val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
         // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
         if (uiState.showReaderTypeSheet) {
@@ -2195,24 +2366,32 @@ fun ReaderScreen(
                     ) { onToggleTypeSheet(false, null) }
             ) {
                 Surface(
-                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    shape = if (isSpread || isLandscape) RoundedCornerShape(22.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                     color = palette.sheetBg,
                     border = BorderStroke(1.dp, palette.borderSoft),
                     shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .heightIn(max = 520.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
+                    modifier = if (isSpread || isLandscape) {
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 16.dp)
+                            .widthIn(max = 320.dp)
+                            .fillMaxWidth(0.40f)
+                            .heightIn(max = 360.dp)
+                    } else {
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .heightIn(max = 480.dp)
+                    }.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 20.dp, vertical = 16.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
                         // Top Tab Switcher (TEKS / TEMA / ALUR) + Close Button (✕)
                         Row(
@@ -2237,24 +2416,24 @@ fun ReaderScreen(
                                 items = availableTabs,
                                 selectedItem = effectiveTab,
                                 onItemSelected = { onToggleTypeSheet(true, it) },
-                                height = 36.dp,
+                                height = 32.dp,
                                 modifier = Modifier.weight(1f)
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Surface(
                                 onClick = { onToggleTypeSheet(false, null) },
                                 shape = CircleShape,
                                 color = palette.bgSurface,
                                 border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(28.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Text("✕", color = palette.textMain, fontSize = 12.sp)
+                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         val currentTabKey = if (isPdfBook && uiState.activeReaderSheetTab == "text") "turn" else uiState.activeReaderSheetTab
 
@@ -2262,7 +2441,7 @@ fun ReaderScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             when (currentTabKey) {
                                 // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
@@ -2352,30 +2531,45 @@ fun ReaderScreen(
                                             letterSpacing = 1.sp,
                                             modifier = Modifier.padding(bottom = 8.dp)
                                         )
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            CURATED_READER_FONTS.forEach { (famKey, famDisplay) ->
-                                                val selected = prefs.fontFamily == famKey
-                                                Surface(
-                                                    onClick = { onUpdateTypography(famKey, null, null, null, null, null, null, null, null, null) },
-                                                    shape = CircleShape,
-                                                    color = if (selected) palette.textMain else palette.bgSurface,
-                                                    border = BorderStroke(1.dp, if (selected) palette.textMain else palette.borderSoft)
+                                        val readerFontContext = LocalContext.current
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            CURATED_READER_FONTS.chunked(3).forEach { rowFonts ->
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
-                                                    Text(
-                                                        text = famDisplay,
-                                                        color = if (selected) palette.bgApp else palette.textMain,
-                                                        fontSize = 12.sp,
-                                                        fontFamily = when {
-                                                            famKey == "JetBrains Mono" -> FontFamily.Monospace
-                                                            SANS_FONTS.contains(famKey) -> FontFamily.SansSerif
-                                                            else -> FontFamily.Serif
-                                                        },
-                                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                                    )
+                                                    rowFonts.forEach { (famKey, famDisplay) ->
+                                                        val selected = prefs.fontFamily == famKey
+                                                        val chipFontFamily = remember(famKey) { getReaderFontFamily(readerFontContext, famKey) }
+                                                        Surface(
+                                                            onClick = { onUpdateTypography(famKey, null, null, null, null, null, null, null, null, null) },
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            color = if (selected) palette.textPrimary else palette.bgSurface,
+                                                            border = BorderStroke(1.dp, if (selected) palette.textPrimary else palette.borderSoft),
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .height(32.dp)
+                                                                .clip(RoundedCornerShape(8.dp))
+                                                        ) {
+                                                            Box(contentAlignment = Alignment.Center) {
+                                                                Text(
+                                                                    text = famDisplay,
+                                                                    color = if (selected) palette.bgApp else palette.textPrimary,
+                                                                    fontSize = 11.sp,
+                                                                    fontFamily = chipFontFamily,
+                                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    textAlign = TextAlign.Center
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    if (rowFonts.size < 3) {
+                                                        repeat(3 - rowFonts.size) {
+                                                            Spacer(modifier = Modifier.weight(1f))
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -2629,52 +2823,51 @@ fun ReaderScreen(
                                                       ReadingFlowMode.SPREAD -> PrototypeIconType.FULL_COVER
                                                   }
 
-                                                  Surface(
-                                                      onClick = { onSetReadingFlowMode(mode) },
-                                                      shape = RoundedCornerShape(14.dp),
-                                                      color = cardBg,
-                                                      border = BorderStroke(1.dp, cardBorder),
-                                                      shadowElevation = if (selected) 2.dp else 0.dp,
-                                                      modifier = Modifier
-                                                          .weight(1f)
-                                                          .height(60.dp)
-                                                  ) {
-                                                      Row(
-                                                          modifier = Modifier
-                                                              .fillMaxSize()
-                                                              .padding(horizontal = 12.dp, vertical = 8.dp),
-                                                          verticalAlignment = Alignment.CenterVertically,
-                                                          horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                      ) {
-                                                          PrototypeSvgIcon(
-                                                              type = modeIcon,
-                                                              tint = titleColor,
-                                                              modifier = Modifier.size(16.dp),
-                                                              strokeWidthDp = 1.8f
-                                                          )
-                                                          Column(
-                                                              modifier = Modifier.weight(1f),
-                                                              verticalArrangement = Arrangement.Center
-                                                          ) {
-                                                              Text(
-                                                                  text = mode.localizedLabel(prefs.lang),
-                                                                  color = titleColor,
-                                                                  fontSize = 12.sp,
-                                                                  fontWeight = FontWeight.SemiBold,
-                                                                  maxLines = 1,
-                                                                  overflow = TextOverflow.Ellipsis
-                                                              )
-                                                              Spacer(modifier = Modifier.height(2.dp))
-                                                              Text(
-                                                                  text = mode.localizedDesc(prefs.lang),
-                                                                  color = subtitleColor,
-                                                                  fontSize = 10.sp,
-                                                                  maxLines = 1,
-                                                                  overflow = TextOverflow.Ellipsis
-                                                              )
-                                                          }
-                                                      }
-                                                  }
+                                                   Surface(
+                                                       onClick = { onSetReadingFlowMode(mode) },
+                                                       shape = RoundedCornerShape(12.dp),
+                                                       color = cardBg,
+                                                       border = BorderStroke(1.dp, cardBorder),
+                                                       shadowElevation = if (selected) 2.dp else 0.dp,
+                                                       modifier = Modifier
+                                                           .weight(1f)
+                                                           .height(48.dp)
+                                                   ) {
+                                                       Row(
+                                                           modifier = Modifier
+                                                               .fillMaxSize()
+                                                               .padding(horizontal = 8.dp, vertical = 6.dp),
+                                                           verticalAlignment = Alignment.CenterVertically,
+                                                           horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                       ) {
+                                                           PrototypeSvgIcon(
+                                                               type = modeIcon,
+                                                               tint = titleColor,
+                                                               modifier = Modifier.size(15.dp),
+                                                               strokeWidthDp = 1.8f
+                                                           )
+                                                           Column(
+                                                               modifier = Modifier.weight(1f),
+                                                               verticalArrangement = Arrangement.Center
+                                                           ) {
+                                                               Text(
+                                                                   text = mode.localizedLabel(prefs.lang),
+                                                                   color = titleColor,
+                                                                   fontSize = 11.5.sp,
+                                                                   fontWeight = FontWeight.SemiBold,
+                                                                   maxLines = 1,
+                                                                   overflow = TextOverflow.Ellipsis
+                                                               )
+                                                               Text(
+                                                                   text = mode.localizedDesc(prefs.lang),
+                                                                   color = subtitleColor,
+                                                                   fontSize = 9.5.sp,
+                                                                   maxLines = 1,
+                                                                   overflow = TextOverflow.Ellipsis
+                                                               )
+                                                           }
+                                                       }
+                                                   }
                                               }
                                           }
                                       }
@@ -2720,7 +2913,7 @@ fun ReaderScreen(
                     shadowElevation = 24.dp,
                     modifier = Modifier
                         .fillMaxHeight()
-                        .fillMaxWidth(0.82f)
+                        .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.82f)
                         .widthIn(max = 300.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -2731,7 +2924,7 @@ fun ReaderScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .navigationBarsPadding()
-                            .padding(horizontal = 20.dp, vertical = 20.dp),
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -2783,6 +2976,41 @@ fun ReaderScreen(
                             Spacer(modifier = Modifier.height(12.dp))
 
                             val allIllusts = uiState.activeBookIllustrations
+                            val pdfIndexingProgress = uiState.pdfIndexingState[book.id]
+
+                            if (pdfIndexingProgress != null) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 10.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(palette.bgCard)
+                                        .border(1.dp, palette.borderSoft, RoundedCornerShape(12.dp))
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = palette.textPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = if (strings.isEn) "Indexing chapters & illustrations..." else "Mengindeks daftar bab & ilustrasi...",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = palette.textPrimary
+                                        )
+                                        Text(
+                                            text = "${pdfIndexingProgress}%",
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = palette.textSecondary
+                                        )
+                                    }
+                                }
+                            }
 
                             LazyColumn(
                                 modifier = Modifier.weight(1f),
@@ -2982,8 +3210,8 @@ fun ReaderScreen(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .fillMaxHeight()
-                        .fillMaxWidth(0.84f)
-                        .widthIn(max = 310.dp)
+                        .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.84f)
+                        .widthIn(max = 300.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -2993,7 +3221,7 @@ fun ReaderScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .navigationBarsPadding()
-                            .padding(20.dp)
+                            .padding(14.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -3714,20 +3942,6 @@ private fun InteractiveTextPageContent(
     val textParagraphs = remember(rawParagraphs) {
         rawParagraphs.filter { !it.startsWith("[ILLUST:") }
     }
-    val fullPageText = remember(textParagraphs, prefs.paraIndent) {
-        if (prefs.paraIndent) {
-            textParagraphs.joinToString("\n\n") { "\u2003\u2003$it" }
-        } else {
-            textParagraphs.joinToString("\n\n")
-        }
-    }
-
-    var selStart by remember(pageText) { mutableIntStateOf(-1) }
-    var selEnd by remember(pageText) { mutableIntStateOf(-1) }
-    var activeDraggingHandle by remember { mutableStateOf<Int?>(null) } // 0 = start handle, 1 = end handle
-    var selectedHighlightId by remember(pageText) { mutableStateOf<String?>(null) }
-    val hasActiveSelection = selStart >= 0 && selEnd > selStart && selEnd <= fullPageText.length
-    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
     val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
         "justify" -> TextAlign.Justify
@@ -3743,26 +3957,60 @@ private fun InteractiveTextPageContent(
         else -> FontWeight.Normal
     }
 
-    val pageTextStyle = TextStyle(
-        color = palette.textMain,
-        fontSize = (prefs.fontSizeSp * fontScale).sp,
-        lineHeight = (prefs.fontSizeSp * fontScale * prefs.lineHeightMultiplier).sp,
-        letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp * fontScale).sp,
-        fontFamily = resolvedFontFamily,
-        fontWeight = resolvedFontWeight,
-        textAlign = resolvedTextAlign,
-        platformStyle = PlatformTextStyle(includeFontPadding = false)
-    )
+    val lineHeightSp = (prefs.fontSizeSp * fontScale * prefs.lineHeightMultiplier).sp
+    val paraGapSp = (prefs.fontSizeSp * fontScale * prefs.paraSpacingEm.coerceIn(0.2f, 2.5f) * 0.85f).sp
+    val wordExtraSp = (prefs.wordSpacingPx * 0.28f).sp
+    val indentSpec = if (prefs.paraIndent) {
+        TextIndent(firstLine = (prefs.fontSizeSp * fontScale * 1.6f).sp)
+    } else {
+        TextIndent.None
+    }
 
-    // Build unified AnnotatedString with pastel highlights (only for this page & exact indices!)
-    val annotatedString = remember(fullPageText, bookHighlights, currentChapterIndex, currentPageInChapter, palette) {
+    // Build unified AnnotatedString with ParagraphStyle, word spacing, indent, and pastel highlights
+    val annotatedString = remember(
+        textParagraphs, prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.paraIndent,
+        prefs.pageMargin, prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+        fontScale, prefs.fontWeight, prefs.textAlign, prefs.fontFamily, bookHighlights,
+        currentChapterIndex, currentPageInChapter, palette
+    ) {
         buildAnnotatedString {
-            append(fullPageText)
+            textParagraphs.forEachIndexed { idx, rawPara ->
+                val cleanPara = sanitizeBookOrChapterText(rawPara)
+                val paraStart = length
+                withStyle(
+                    ParagraphStyle(
+                        textAlign = resolvedTextAlign,
+                        lineHeight = lineHeightSp,
+                        textIndent = indentSpec
+                    )
+                ) {
+                    append(cleanPara)
+                }
+                val paraEnd = length
+
+                if (prefs.wordSpacingPx > 0) {
+                    for (cIdx in paraStart until paraEnd) {
+                        if (cleanPara[cIdx - paraStart] == ' ') {
+                            addStyle(SpanStyle(letterSpacing = wordExtraSp), cIdx, cIdx + 1)
+                        }
+                    }
+                }
+
+                if (idx < textParagraphs.lastIndex) {
+                    withStyle(ParagraphStyle(lineHeight = paraGapSp)) {
+                        withStyle(SpanStyle(fontSize = paraGapSp)) {
+                            append("\n")
+                        }
+                    }
+                }
+            }
+
+            val fullText = toAnnotatedString().text
             bookHighlights.filter { hl ->
                 hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter
             }.forEach { hl ->
-                if (hl.startCharIndex in 0 until fullPageText.length &&
-                    hl.endCharIndex in (hl.startCharIndex + 1)..fullPageText.length) {
+                if (hl.startCharIndex in 0 until fullText.length &&
+                    hl.endCharIndex in (hl.startCharIndex + 1)..fullText.length) {
                     val colorKey = HighlightColorKey.fromKey(hl.colorKey)
                     addStyle(
                         SpanStyle(
@@ -3775,7 +4023,7 @@ private fun InteractiveTextPageContent(
                 } else {
                     val quote = hl.quoteText.trim()
                     if (quote.isNotBlank()) {
-                        val found = fullPageText.indexOf(quote, ignoreCase = true)
+                        val found = fullText.indexOf(quote, ignoreCase = true)
                         if (found >= 0) {
                             val colorKey = HighlightColorKey.fromKey(hl.colorKey)
                             addStyle(
@@ -3793,6 +4041,24 @@ private fun InteractiveTextPageContent(
         }
     }
 
+    val fullPageText = annotatedString.text
+
+    var selStart by remember(pageText) { mutableIntStateOf(-1) }
+    var selEnd by remember(pageText) { mutableIntStateOf(-1) }
+    var activeDraggingHandle by remember { mutableStateOf<Int?>(null) } // 0 = start handle, 1 = end handle
+    var selectedHighlightId by remember(pageText) { mutableStateOf<String?>(null) }
+    val hasActiveSelection = selStart >= 0 && selEnd > selStart && selEnd <= fullPageText.length
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    val pageTextStyle = TextStyle(
+        color = palette.textMain,
+        fontSize = (prefs.fontSizeSp * fontScale).sp,
+        letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp * fontScale).sp,
+        fontFamily = resolvedFontFamily,
+        fontWeight = resolvedFontWeight,
+        platformStyle = PlatformTextStyle(includeFontPadding = false)
+    )
+
     val layout = textLayoutResult
     val startBox = remember(layout, selStart, fullPageText.length) {
         if (layout != null && selStart in 0 until fullPageText.length) {
@@ -3804,8 +4070,19 @@ private fun InteractiveTextPageContent(
             layout.getBoundingBox(selEnd - 1)
         } else Rect.Zero
     }
-    val padX = with(density) { 22.dp.toPx() }
-    val padTop = with(density) { 20.dp.toPx() }
+    val horizontalMarginDp = when (prefs.pageMargin) {
+        0 -> 12.dp
+        2 -> 36.dp
+        else -> 22.dp
+    }
+    val verticalMarginDp = when (prefs.pageMargin) {
+        0 -> 12.dp
+        2 -> 26.dp
+        else -> 18.dp
+    }
+
+    val padX = with(density) { horizontalMarginDp.toPx() }
+    val padTop = with(density) { verticalMarginDp.toPx() }
 
     LaunchedEffect(hasActiveSelection, layout, selStart, selEnd) {
         if (hasActiveSelection && layout != null && fullPageText.isNotEmpty()) {
@@ -3832,7 +4109,7 @@ private fun InteractiveTextPageContent(
 
     Box(
         modifier = outerScrollModifier
-            .padding(start = 22.dp, end = 22.dp, top = 20.dp, bottom = 24.dp)
+            .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = verticalMarginDp, bottom = verticalMarginDp + 4.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             if (showChapterHeader && chapterTitle.isNotBlank()) {
@@ -3887,16 +4164,29 @@ private fun InteractiveTextPageContent(
 
             // Deterministic Single-Text Selection Canvas
             Box(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = annotatedString,
-                    style = pageTextStyle,
-                    onTextLayout = { textLayoutResult = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .drawWithContent {
-                            drawContent()
-                            val l = textLayoutResult
-                            if (hasActiveSelection && l != null && fullPageText.isNotEmpty()) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val availHeightPx = with(density) { maxHeight.toPx() }
+                    Text(
+                        text = annotatedString,
+                        style = pageTextStyle,
+                        onTextLayout = { textLayoutResult = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .drawWithContent {
+                                val l = textLayoutResult
+                                if (l != null && availHeightPx > 0f && l.size.height > availHeightPx) {
+                                    val lastCompleteLine = (0 until l.lineCount)
+                                        .lastOrNull { l.getLineBottom(it) <= availHeightPx + 2f }
+                                        ?: (l.lineCount - 1)
+                                    val safeClipBottom = l.getLineBottom(lastCompleteLine)
+                                    clipRect(0f, 0f, size.width, safeClipBottom) {
+                                        this@drawWithContent.drawContent()
+                                    }
+                                } else {
+                                    drawContent()
+                                }
+
+                                if (hasActiveSelection && l != null && fullPageText.isNotEmpty()) {
                                 val safeStart = selStart.coerceIn(0, fullPageText.lastIndex)
                                 val safeEnd = (selEnd - 1).coerceIn(safeStart, fullPageText.lastIndex)
 
@@ -4052,6 +4342,7 @@ private fun InteractiveTextPageContent(
                             )
                         }
                 )
+                }
             }
         }
 
@@ -4176,6 +4467,41 @@ private fun InteractiveTextPageContent(
     }
 }
 
+@Composable
+fun PdfPageItemContent(
+    bookId: String,
+    filePath: String,
+    pageIndex: Int,
+    viewModel: LlunevieViewModel,
+    modifier: Modifier = Modifier
+) {
+    // Initialize synchronously from LRU cache so cached pages render on Frame 0 with ZERO null blink!
+    var pageBitmap by remember(bookId, pageIndex) {
+        mutableStateOf(viewModel.getCachedPdfBitmap(bookId, pageIndex))
+    }
+    LaunchedEffect(bookId, filePath, pageIndex) {
+        if (pageBitmap == null) {
+            pageBitmap = viewModel.loadPdfPageBitmap(bookId, filePath, pageIndex)
+        }
+        // Prefetch neighbors so Slide and Fade already have pageIndex ± 1 in cache!
+        viewModel.prefetchPdfNeighbors(bookId, filePath, pageIndex)
+    }
+    Box(
+        modifier = modifier.fillMaxSize().background(Color.White),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = pageBitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "Page ${pageIndex + 1}",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
 private fun renderEpubPageSnapshot(
     textMeasurer: TextMeasurer,
     widthPx: Int,
@@ -4290,6 +4616,10 @@ private fun renderTwoPageSpreadSnapshot(
     widthPx: Int,
     heightPx: Int,
     density: Density,
+    leftPageIndex: Int,
+    rightPageIndex: Int,
+    leftHeader: String,
+    rightHeader: String,
     leftText: String,
     rightText: String,
     leftPdfBitmap: Bitmap?,
@@ -4321,12 +4651,52 @@ private fun renderTwoPageSpreadSnapshot(
             strokeWidth = with(density) { 1.dp.toPx() }
         )
 
-        val colPadStart = with(density) { 18.dp.toPx() }
-        val colPadEnd = with(density) { 14.dp.toPx() }
-        val colPadTop = with(density) { 16.dp.toPx() }
-        val colInnerW = (halfW - colPadStart - colPadEnd).roundToInt().coerceAtLeast(100)
+        val colPadHoriz = with(density) { 14.dp.toPx() }
+        val headerH = with(density) { 22.dp.toPx() }
+        val footerH = with(density) { 20.dp.toPx() }
+        val colInnerW = (halfW - colPadHoriz * 2).roundToInt().coerceAtLeast(100)
+        val colInnerH = (size.height - headerH - footerH - 12f).coerceAtLeast(100f)
 
-        // Left Page
+        val headerStyle = TextStyle(
+            color = palette.textMuted,
+            fontSize = with(density) { 8.5.sp },
+            fontFamily = FontFamily.Monospace,
+            platformStyle = PlatformTextStyle(includeFontPadding = false)
+        )
+
+        // Left Header & Footer
+        if (leftHeader.isNotBlank()) {
+            val hLayout = textMeasurer.measure(
+                text = AnnotatedString(leftHeader.take(32).uppercase()),
+                style = headerStyle,
+                constraints = Constraints(maxWidth = colInnerW)
+            )
+            drawText(hLayout, topLeft = Offset(colPadHoriz, 6f))
+        }
+        val leftPageNum = textMeasurer.measure(
+            text = AnnotatedString("${leftPageIndex + 1}"),
+            style = headerStyle,
+            constraints = Constraints(maxWidth = colInnerW)
+        )
+        drawText(leftPageNum, topLeft = Offset(colPadHoriz, size.height - footerH))
+
+        // Right Header & Footer
+        if (rightHeader.isNotBlank()) {
+            val rhLayout = textMeasurer.measure(
+                text = AnnotatedString(rightHeader.take(32).uppercase()),
+                style = headerStyle,
+                constraints = Constraints(maxWidth = colInnerW)
+            )
+            drawText(rhLayout, topLeft = Offset(halfW + colPadHoriz, 6f))
+        }
+        val rightPageNum = textMeasurer.measure(
+            text = AnnotatedString("${rightPageIndex + 1}"),
+            style = headerStyle,
+            constraints = Constraints(maxWidth = colInnerW)
+        )
+        drawText(rightPageNum, topLeft = Offset(size.width - colPadHoriz - rightPageNum.size.width, size.height - footerH))
+
+        // Left Page Content
         if (leftPdfBitmap != null) {
             val scale = minOf(halfW / leftPdfBitmap.width.toFloat(), size.height / leftPdfBitmap.height.toFloat())
             val dstW = leftPdfBitmap.width * scale
@@ -4344,10 +4714,14 @@ private fun renderTwoPageSpreadSnapshot(
                 style = pageTextStyle,
                 constraints = Constraints(maxWidth = colInnerW)
             )
-            drawText(leftLayout, topLeft = Offset(colPadStart, colPadTop))
+            val lastLine = (0 until leftLayout.lineCount).lastOrNull { leftLayout.getLineBottom(it) <= colInnerH + 2f } ?: (leftLayout.lineCount - 1)
+            val clipB = leftLayout.getLineBottom(lastLine)
+            clipRect(colPadHoriz, headerH + 6f, colPadHoriz + colInnerW, headerH + 6f + clipB) {
+                drawText(leftLayout, topLeft = Offset(colPadHoriz, headerH + 6f))
+            }
         }
 
-        // Right Page
+        // Right Page Content
         if (rightPdfBitmap != null) {
             val scale = minOf(halfW / rightPdfBitmap.width.toFloat(), size.height / rightPdfBitmap.height.toFloat())
             val dstW = rightPdfBitmap.width * scale
@@ -4365,7 +4739,11 @@ private fun renderTwoPageSpreadSnapshot(
                 style = pageTextStyle,
                 constraints = Constraints(maxWidth = colInnerW)
             )
-            drawText(rightLayout, topLeft = Offset(halfW + colPadEnd, colPadTop))
+            val lastLine = (0 until rightLayout.lineCount).lastOrNull { rightLayout.getLineBottom(it) <= colInnerH + 2f } ?: (rightLayout.lineCount - 1)
+            val clipB = rightLayout.getLineBottom(lastLine)
+            clipRect(halfW + colPadHoriz, headerH + 6f, halfW + colPadHoriz + colInnerW, headerH + 6f + clipB) {
+                drawText(rightLayout, topLeft = Offset(halfW + colPadHoriz, headerH + 6f))
+            }
         }
     }
     return bitmap

@@ -304,7 +304,8 @@ private fun LlunevieMainContainer(
                     onCloseEditModal = { viewModel.closeEditBookModal() },
                     onSaveEditedBook = { viewModel.saveEditedBook(it) },
                     onShowDeleteConfirm = { viewModel.setShowDeleteConfirmDialog(it) },
-                    onConfirmDeleteSelected = { viewModel.confirmDeleteSelectedBooks() }
+                    onConfirmDeleteSelected = { viewModel.confirmDeleteSelectedBooks() },
+                    onUpdateSpineColor = { id, hex -> viewModel.updateBookSpineColor(id, hex) }
                 )
 
                 MainNavTab.STATS -> StatsScreen(
@@ -353,6 +354,7 @@ private fun LlunevieMainContainer(
                             bookHighlights = bookHighlights,
                             strings = strings,
                             metrics = metrics,
+                            viewModel = viewModel,
                             getPageAtGlobalZero = { gIdx ->
                                 viewModel.getPageContentAtGlobalZeroIndex(uiState.activeBookChapters, gIdx)
                             },
@@ -455,7 +457,9 @@ private fun LlunevieMainContainer(
                 onSaveSingleCandidate = { viewModel.promptChooseShelfForCandidate(it) },
                 onRemoveBatchItem = { viewModel.removeBatchItem(it) },
                 onClearBatchQueue = { viewModel.clearBatchScanQueue() },
-                onCommitBatchQueue = { viewModel.commitBatchScanToShelf(it) }
+                onCommitBatchQueue = { viewModel.commitBatchScanToShelf(it) },
+                onCommitBatchFiltered = { viewModel.commitResolvedBatchOnly(it) },
+                onFillDetailsManually = { viewModel.saveResolvedBatchAndOpenManual(prefs.libShelf.ifBlank { "eReader" }, it) }
             )
         }
 

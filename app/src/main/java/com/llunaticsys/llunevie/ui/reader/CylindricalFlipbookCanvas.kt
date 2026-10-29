@@ -52,6 +52,8 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,20 +75,33 @@ object PageSnapshotBitmapRenderer {
 
     private val typefaceCache = mutableMapOf<String, Typeface>()
 
+    fun getFontAssetPath(fontFamily: String): String? {
+        return when (fontFamily) {
+            "Literata" -> "fonts/Literata-Regular.ttf"
+            "EB Garamond" -> "fonts/EBGaramond-Regular.ttf"
+            "Source Serif 4" -> "fonts/SourceSerif4-Regular.ttf"
+            "Newsreader" -> "fonts/Newsreader-Regular.ttf"
+            "Lora" -> "fonts/Lora-Regular.ttf"
+            "Merriweather" -> "fonts/Merriweather-Regular.ttf"
+            "Crimson Pro" -> "fonts/CrimsonPro-Regular.ttf"
+            "Playfair Display" -> "fonts/PlayfairDisplay-Regular.ttf"
+            "PT Serif" -> "fonts/PTSerif-Regular.ttf"
+            "Bitter" -> "fonts/Bitter-Regular.ttf"
+            "Plus Jakarta Sans" -> "fonts/PlusJakartaSans-Regular.ttf"
+            "Inter" -> "fonts/Inter-Regular.ttf"
+            "DM Sans" -> "fonts/DMSans-Regular.ttf"
+            "Nunito" -> "fonts/Nunito-Regular.ttf"
+            "JetBrains Mono" -> "fonts/JetBrainsMono-Regular.ttf"
+            else -> null
+        }
+    }
+
     fun getSystemTypeface(fontFamily: String, fontWeight: Int, context: Context? = null): Typeface {
         val key = "$fontFamily:$fontWeight"
         typefaceCache[key]?.let { return it }
 
         val style = if (fontWeight >= 600) Typeface.BOLD else Typeface.NORMAL
-        val assetPath = when (fontFamily) {
-            "Literata" -> "fonts/literata.ttf"
-            "EB Garamond" -> "fonts/eb_garamond.ttf"
-            "Source Serif 4" -> "fonts/source_serif.ttf"
-            "Plus Jakarta Sans" -> "fonts/plus_jakarta_sans.ttf"
-            "Inter" -> "fonts/inter.ttf"
-            "JetBrains Mono" -> "fonts/jetbrains_mono.ttf"
-            else -> null
-        }
+        val assetPath = getFontAssetPath(fontFamily)
 
         val fromAsset = if (context != null && assetPath != null) {
             runCatching { Typeface.createFromAsset(context.assets, assetPath) }.getOrNull()
@@ -880,26 +895,46 @@ fun CylindricalFlipbookCanvas(
                     val r1Right = min(pageRect.right, leadX)
                     if (r1Right > pageRect.left) {
                         clipRect(pageRect.left, pageRect.top, r1Right, pageRect.bottom) {
-                            drawPageBitmapFitted(currentPageBitmap, isPdfBook, true)
+                            drawImage(
+                                image = currentPageBitmap,
+                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
+                                dstSize = IntSize(pageRect.width.roundToInt(), pageH.roundToInt())
+                            )
                         }
+                    }
+
+                    // Soft left cast shadow on Region 1: (leadX - 14.dp .. leadX)
+                    val shadowLeft = max(pageRect.left, leadX - 14.dp.toPx())
+                    if (leadX > shadowLeft) {
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.12f * bell)),
+                                startX = shadowLeft,
+                                endX = leadX
+                            ),
+                            topLeft = Offset(shadowLeft, pageRect.top),
+                            size = Size(leadX - shadowLeft, pageH)
+                        )
                     }
 
                     // 2. Region 2 (foldX .. pageRect.right): Draw nextPageBitmap (full spread)
                     val r2Left = max(pageRect.left, foldX)
-                    if (pageRect.right > r2Left) {
+                    if (pageRect.right > r2Left && destBitmap != null) {
                         clipRect(r2Left, pageRect.top, pageRect.right, pageRect.bottom) {
-                            if (destBitmap != null) {
-                                drawPageBitmapFitted(destBitmap, isPdfBook, true)
-                            }
-                            // Soft crease shadow to the right of foldX
+                            drawImage(
+                                image = destBitmap,
+                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
+                                dstSize = IntSize(pageRect.width.roundToInt(), pageH.roundToInt())
+                            )
+                            // Soft crease shadow (width = 16.dp, Black(alpha = 0.14f) -> Transparent) from foldX to foldX + 16.dp
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(Color.Black.copy(alpha = 0.20f * bell), Color.Transparent),
+                                    colors = listOf(Color.Black.copy(alpha = 0.14f), Color.Transparent),
                                     startX = r2Left,
-                                    endX = min(pageRect.right, r2Left + 20.dp.toPx())
+                                    endX = min(pageRect.right, r2Left + 16.dp.toPx())
                                 ),
                                 topLeft = Offset(r2Left, pageRect.top),
-                                size = Size(min(pageRect.right - r2Left, 20.dp.toPx()), pageH)
+                                size = Size(min(pageRect.right - r2Left, 16.dp.toPx()), pageH)
                             )
                         }
                     }
@@ -920,13 +955,13 @@ fun CylindricalFlipbookCanvas(
                         size = Size(44f, pageH)
                     )
 
-                    // 3. Region 3 (leadX .. foldX): Turning Leaf with 100% solid opaque paper fill
+                    // 3. Region 3 (leadX .. foldX — The Turning Sheet Back / New Left Page):
                     val leafLeft = max(pageRect.left, leadX)
                     val leafRight = min(pageRect.right, foldX)
                     if (leafRight > leafLeft) {
                         clipRect(leafLeft, pageRect.top, leafRight, pageRect.bottom) {
                             drawRect(
-                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectivePageBgColor,
+                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
                                 topLeft = Offset(leafLeft, pageRect.top),
                                 size = Size(leafRight - leafLeft, pageH),
                                 alpha = 1f
@@ -941,23 +976,32 @@ fun CylindricalFlipbookCanvas(
                                     alpha = 1f
                                 )
                             }
-                            // Soft planar shadow near foldX
+                            // Subtle 3D paper-curl gradient across [leadX, foldX]
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.16f * bell)),
-                                    startX = max(leafLeft, leafRight - 18.dp.toPx()),
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.06f)),
+                                    startX = leafLeft,
                                     endX = leafRight
                                 ),
-                                topLeft = Offset(max(leafLeft, leafRight - 18.dp.toPx()), pageRect.top),
-                                size = Size(min(leafRight - leafLeft, 18.dp.toPx()), pageH)
+                                topLeft = Offset(leafLeft, pageRect.top),
+                                size = Size(leafRight - leafLeft, pageH)
                             )
                         }
-                        // Crisp 1.dp paper edge at leadX
+                        // Crisp 1.dp paper edge line at leadX
                         if (leadX in pageRect.left..pageRect.right) {
                             drawLine(
-                                color = Color.Black.copy(alpha = 0.22f * bell),
+                                color = Color.Black.copy(alpha = 0.15f),
                                 start = Offset(leadX, pageRect.top),
                                 end = Offset(leadX, pageRect.bottom),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                        // Crisp 1.dp fold crease line at foldX
+                        if (foldX in pageRect.left..pageRect.right) {
+                            drawLine(
+                                color = Color.Black.copy(alpha = 0.12f),
+                                start = Offset(foldX, pageRect.top),
+                                end = Offset(foldX, pageRect.bottom),
                                 strokeWidth = 1.dp.toPx()
                             )
                         }
@@ -971,25 +1015,46 @@ fun CylindricalFlipbookCanvas(
                     val r1Left = max(pageRect.left, leadX)
                     if (pageRect.right > r1Left) {
                         clipRect(r1Left, pageRect.top, pageRect.right, pageRect.bottom) {
-                            drawPageBitmapFitted(currentPageBitmap, isPdfBook, true)
+                            drawImage(
+                                image = currentPageBitmap,
+                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
+                                dstSize = IntSize(pageRect.width.roundToInt(), pageH.roundToInt())
+                            )
                         }
+                    }
+
+                    // Soft right cast shadow on Region 1: (leadX .. leadX + 14.dp)
+                    val shadowRight = min(pageRect.right, leadX + 14.dp.toPx())
+                    if (shadowRight > leadX) {
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(Color.Black.copy(alpha = 0.12f * bell), Color.Transparent),
+                                startX = leadX,
+                                endX = shadowRight
+                            ),
+                            topLeft = Offset(leadX, pageRect.top),
+                            size = Size(shadowRight - leadX, pageH)
+                        )
                     }
 
                     // 2. Region 2 (pageRect.left .. foldX): Draw prevPageBitmap (full spread)
                     val r2Right = min(pageRect.right, foldX)
-                    if (r2Right > pageRect.left) {
+                    if (r2Right > pageRect.left && destBitmap != null) {
                         clipRect(pageRect.left, pageRect.top, r2Right, pageRect.bottom) {
-                            if (destBitmap != null) {
-                                drawPageBitmapFitted(destBitmap, isPdfBook, true)
-                            }
+                            drawImage(
+                                image = destBitmap,
+                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
+                                dstSize = IntSize(pageRect.width.roundToInt(), pageH.roundToInt())
+                            )
+                            // Soft crease shadow to the left of foldX
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.20f * bell)),
-                                    startX = max(pageRect.left, r2Right - 20.dp.toPx()),
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.14f)),
+                                    startX = max(pageRect.left, r2Right - 16.dp.toPx()),
                                     endX = r2Right
                                 ),
-                                topLeft = Offset(max(pageRect.left, r2Right - 20.dp.toPx()), pageRect.top),
-                                size = Size(min(r2Right - pageRect.left, 20.dp.toPx()), pageH)
+                                topLeft = Offset(max(pageRect.left, r2Right - 16.dp.toPx()), pageRect.top),
+                                size = Size(min(r2Right - pageRect.left, 16.dp.toPx()), pageH)
                             )
                         }
                     }
@@ -1010,13 +1075,13 @@ fun CylindricalFlipbookCanvas(
                         size = Size(44f, pageH)
                     )
 
-                    // 3. Region 3 (foldX .. leadX): Turning Leaf with 100% solid opaque paper fill
+                    // 3. Region 3 (foldX .. leadX — The Turning Sheet Back / New Right Page):
                     val leafLeft = max(pageRect.left, foldX)
                     val leafRight = min(pageRect.right, leadX)
                     if (leafRight > leafLeft) {
                         clipRect(leafLeft, pageRect.top, leafRight, pageRect.bottom) {
                             drawRect(
-                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectivePageBgColor,
+                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
                                 topLeft = Offset(leafLeft, pageRect.top),
                                 size = Size(leafRight - leafLeft, pageH),
                                 alpha = 1f
@@ -1031,23 +1096,32 @@ fun CylindricalFlipbookCanvas(
                                     alpha = 1f
                                 )
                             }
-                            // Soft planar shadow near foldX
+                            // Subtle 3D paper-curl gradient across [foldX, leadX]
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(Color.Black.copy(alpha = 0.16f * bell), Color.Transparent),
+                                    colors = listOf(Color.Black.copy(alpha = 0.06f), Color.Transparent),
                                     startX = leafLeft,
-                                    endX = min(leafRight, leafLeft + 18.dp.toPx())
+                                    endX = leafRight
                                 ),
                                 topLeft = Offset(leafLeft, pageRect.top),
-                                size = Size(min(leafRight - leafLeft, 18.dp.toPx()), pageH)
+                                size = Size(leafRight - leafLeft, pageH)
                             )
                         }
-                        // Crisp 1.dp paper edge at leadX
+                        // Crisp 1.dp paper edge line at leadX
                         if (leadX in pageRect.left..pageRect.right) {
                             drawLine(
-                                color = Color.Black.copy(alpha = 0.22f * bell),
+                                color = Color.Black.copy(alpha = 0.15f),
                                 start = Offset(leadX, pageRect.top),
                                 end = Offset(leadX, pageRect.bottom),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                        // Crisp 1.dp fold crease line at foldX
+                        if (foldX in pageRect.left..pageRect.right) {
+                            drawLine(
+                                color = Color.Black.copy(alpha = 0.12f),
+                                start = Offset(foldX, pageRect.top),
+                                end = Offset(foldX, pageRect.bottom),
                                 strokeWidth = 1.dp.toPx()
                             )
                         }
@@ -1133,20 +1207,21 @@ fun CylindricalFlipbookCanvas(
                         // 1. Fill 100% solid opaque back paper color to prevent bleedthrough
                         drawPath(flapPath, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
 
-                        // 2. Exact clockwise reflection transform around fTop with subtle 0.06f bleed
-                        withTransform({
-                            translate(left = fTop.x, top = fTop.y)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
-                            scale(scaleX = -1f, scaleY = 1f, pivot = Offset.Zero)
-                            rotate(degrees = thetaDeg, pivot = Offset.Zero)
-                            translate(left = -fTop.x, top = -fTop.y)
-                        }) {
-                            drawImage(
-                                image = currentPageBitmap,
-                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
-                                dstSize = IntSize(pageRect.width.roundToInt(), pageRect.height.roundToInt()),
-                                alpha = 0.06f
-                            )
+                        // 2. Exact single rotate(-2f * thetaDeg) + scale(-1f, 1f) transform around fTop
+                        drawIntoCanvas { canvas ->
+                            val nc = canvas.nativeCanvas
+                            nc.save()
+                            nc.translate(fTop.x, fTop.y)
+                            nc.rotate(-2f * thetaDeg)
+                            nc.scale(-1f, 1f)
+                            nc.translate(-fTop.x, -fTop.y)
+
+                            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                                alpha = (0.09f * 255).roundToInt()
+                            }
+                            val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                            nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
+                            nc.restore()
                         }
                     }
 
@@ -1241,19 +1316,21 @@ fun CylindricalFlipbookCanvas(
                         // 1. Fill 100% solid opaque back paper color to prevent bleedthrough
                         drawPath(flapPath, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
 
-                        withTransform({
-                            translate(left = fTop.x, top = fTop.y)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
-                            scale(scaleX = -1f, scaleY = 1f, pivot = Offset.Zero)
-                            rotate(degrees = thetaDeg, pivot = Offset.Zero)
-                            translate(left = -fTop.x, top = -fTop.y)
-                        }) {
-                            drawImage(
-                                image = currentPageBitmap,
-                                dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
-                                dstSize = IntSize(pageRect.width.roundToInt(), pageRect.height.roundToInt()),
-                                alpha = 0.06f
-                            )
+                        // 2. Exact single rotate(-2f * thetaDeg) + scale(-1f, 1f) transform around fTop
+                        drawIntoCanvas { canvas ->
+                            val nc = canvas.nativeCanvas
+                            nc.save()
+                            nc.translate(fTop.x, fTop.y)
+                            nc.rotate(-2f * thetaDeg)
+                            nc.scale(-1f, 1f)
+                            nc.translate(-fTop.x, -fTop.y)
+
+                            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                                alpha = (0.09f * 255).roundToInt()
+                            }
+                            val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                            nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
+                            nc.restore()
                         }
                     }
 
