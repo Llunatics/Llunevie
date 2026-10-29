@@ -1,6 +1,8 @@
 package com.llunaticsys.llunevie
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.util.LruCache
 import android.database.Cursor
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -25,7 +27,15 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import android.graphics.drawable.BitmapDrawable
 import com.llunaticsys.llunevie.model.AppThemeMode
+import com.llunaticsys.llunevie.model.BatchLookupStatus
 import com.llunaticsys.llunevie.model.BookChapter
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
+import java.net.URL
+import java.net.HttpURLConnection
+import java.io.File
+import java.io.FileOutputStream
+import android.graphics.BitmapFactory
 import com.llunaticsys.llunevie.model.BookIllustration
 import com.llunaticsys.llunevie.model.CatalogBookCandidate
 import com.llunaticsys.llunevie.model.HighlightColorKey
@@ -51,8 +61,6 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -103,6 +111,8 @@ data class LlunevieUiState(
     val lastScannedCandidate: CatalogBookCandidate? = null,
     val isLookingUpIsbn: Boolean = false,
     val batchScanQueue: List<CatalogBookCandidate> = emptyList(),
+    val manualBookPrefillIsbn: String? = null,
+    val pdfIndexingState: Map<String, Int?> = emptyMap(),
     val importingBooksProgress: Map<String, Int> = emptyMap(),
     val toastMessage: String? = null
 ) {
@@ -156,6 +166,43 @@ class LlunevieViewModel(
     private val _uiState = MutableStateFlow(LlunevieUiState())
     val uiState: StateFlow<LlunevieUiState> = _uiState.asStateFlow()
 
+    private val pdfBitmapCache = object : LruCache<String, Bitmap>(32) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+    private val _pdfIndexingState = MutableStateFlow<Map<String, Int?>>(emptyMap())
+    val pdfIndexingState: StateFlow<Map<String, Int?>> = _pdfIndexingState.asStateFlow()
+
+    fun getCachedPdfBitmap(bookId: String, pageIndex: Int): Bitmap? {
+        val bmp = pdfBitmapCache.get("$bookId:$pageIndex")
+        if (bmp != null && !bmp.isRecycled) return bmp
+        return null
+    }
+
+    suspend fun loadPdfPageBitmap(bookId: String, filePath: String, pageIndex: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val key = "$bookId:$pageIndex"
+        pdfBitmapCache.get(key)?.let { if (!it.isRecycled) return@withContext it }
+        val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex, 1080)
+        if (bmp != null) {
+            pdfBitmapCache.put(key, bmp)
+        }
+        bmp
+    }
+
+    fun prefetchPdfNeighbors(bookId: String, filePath: String, pageIndex: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (pageIndex > 0 && pdfBitmapCache.get("$bookId:${pageIndex - 1}") == null) {
+                val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex - 1, 1080)
+                if (bmp != null) pdfBitmapCache.put("$bookId:${pageIndex - 1}", bmp)
+            }
+            val book = books.value.find { it.id == bookId }
+            val total = book?.pagesCount ?: 9999
+            if (pageIndex + 1 < total && pdfBitmapCache.get("$bookId:${pageIndex + 1}") == null) {
+                val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex + 1, 1080)
+                if (bmp != null) pdfBitmapCache.put("$bookId:${pageIndex + 1}", bmp)
+            }
+        }
+    }
+
     private var searchJob: Job? = null
     private var toastJob: Job? = null
     private var readingTimerJob: Job? = null
@@ -167,10 +214,19 @@ class LlunevieViewModel(
             runCatching {
                 val all = dao.getAllBooks()
                 all.forEach { b ->
-                    val rawShelf = b.shelf.trim()
-                    if (rawShelf.isEmpty() || rawShelf.equals("All", true) || rawShelf.equals("Semua", true)) {
-                        val fixed = if (b.format.equals("Physical", true) || b.format.equals("Fisik", true)) "Koleksi Fisik" else "eReader"
-                        dao.updateBook(b.copy(shelf = fixed))
+                    val t = b.title.trim()
+                    if (t.startsWith("Searching ISBN", ignoreCase = true) ||
+                        t.startsWith("Mencari ISBN", ignoreCase = true) ||
+                        t.startsWith("ISBN Not Found", ignoreCase = true) ||
+                        t.startsWith("ISBN Tidak Ditemukan", ignoreCase = true)
+                    ) {
+                        dao.deleteBooksByIds(listOf(b.id))
+                    } else {
+                        val rawShelf = b.shelf.trim()
+                        if (rawShelf.isEmpty() || rawShelf.equals("All", true) || rawShelf.equals("Semua", true)) {
+                            val fixed = if (b.format.equals("Physical", true) || b.format.equals("Fisik", true)) "Koleksi Fisik" else "eReader"
+                            dao.updateBook(b.copy(shelf = fixed))
+                        }
                     }
                 }
             }
@@ -658,26 +714,7 @@ class LlunevieViewModel(
                     }
 
                     // Launch background smart scanner for chapter headings & illustrations
-                    viewModelScope.launch(Dispatchers.Default) {
-                        PdfNativeRenderer.scanPdfChaptersAndIllustrationsAsync(
-                            context = appContext,
-                            bookId = bookId,
-                            pdfFile = pdfFile,
-                            totalPages = actualPageCount,
-                            defaultTitle = book.title,
-                            isEn = isEn
-                        ) { updatedChapters, updatedIllusts ->
-                            dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), updatedChapters)
-                            if (_uiState.value.activeBookId == bookId) {
-                                val liveChs = updatedChapters.map { ce ->
-                                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
-                                    BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
-                                }
-                                _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
-                            }
-                        }
-                    }
+                    indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                 }
             } else if (parsedChapters.isEmpty()) {
                 parsedChapters.addAll(buildStructuredChaptersFromSynopsis(book))
@@ -704,6 +741,49 @@ class LlunevieViewModel(
                     showReaderTocDrawer = false,
                     showReaderNotesDrawer = false
                 )
+            }
+        }
+    }
+
+    fun indexPdfChaptersAndIllustrations(book: BookEntity) {
+        val filePath = book.localFilePath ?: return
+        val pdfFile = File(filePath)
+        if (!pdfFile.exists()) return
+
+        viewModelScope.launch(Dispatchers.Default) {
+            val actualPageCount = runCatching {
+                android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    android.graphics.pdf.PdfRenderer(pfd).use { it.pageCount }
+                }
+            }.getOrDefault(book.pagesCount)
+
+            val isEn = preferences.value.lang == "en"
+            _pdfIndexingState.update { it + (book.id to 0) }
+            _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 0)) }
+
+            PdfNativeRenderer.scanPdfChaptersAndIllustrationsAsync(
+                context = appContext,
+                bookId = book.id,
+                pdfFile = pdfFile,
+                totalPages = actualPageCount,
+                defaultTitle = book.title,
+                isEn = isEn,
+                onProgress = { pct ->
+                    _pdfIndexingState.update { it + (book.id to pct) }
+                    _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
+                }
+            ) { updatedChapters, updatedIllusts ->
+                dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), updatedChapters)
+                if (_uiState.value.activeBookId == book.id) {
+                    val liveChs = updatedChapters.map { ce ->
+                        val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                        val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                        BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
+                    }
+                    _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
+                }
+                _pdfIndexingState.update { it - book.id }
+                _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState - book.id) }
             }
         }
     }
@@ -1014,6 +1094,7 @@ class LlunevieViewModel(
                             }
                         )
                         dao.saveBookWithChapters(bundle.book, bundle.chapters)
+                        indexPdfChaptersAndIllustrations(bundle.book)
                         showToast(
                             if (isId) "\"${bundle.book.title}\" ditambahkan ke pustaka"
                             else "\"${bundle.book.title}\" added to library"
@@ -1171,8 +1252,9 @@ class LlunevieViewModel(
             isbn = clean,
             category = "Novel",
             coverUrl = null,
-            coverBgHex = 0xFF2A2824L,
-            synopsis = "Buku dengan nomor ISBN $clean."
+            coverBgHex = 0xFF1E3A5FL,
+            synopsis = "Buku dengan nomor ISBN $clean.",
+            status = BatchLookupStatus.SEARCHING
         )
 
         // 0ms instant insertion into batch queue
@@ -1193,27 +1275,39 @@ class LlunevieViewModel(
 
         fun onCandidateMatched(candidate: CatalogBookCandidate) {
             viewModelScope.launch {
+                var finalCandidate = candidate.copy(status = BatchLookupStatus.FOUND)
+                if (!candidate.coverUrl.isNullOrBlank()) {
+                    val downloaded = downloadCoverAndExtractSpine(candidate.coverUrl, clean)
+                    if (downloaded != null) {
+                        val (localPath, spineHex) = downloaded
+                        finalCandidate = finalCandidate.copy(
+                            coverUrl = localPath,
+                            coverBgHex = spineHex
+                        )
+                    }
+                }
+
                 val shouldUpdate: Boolean
                 synchronized(syncLock) {
                     val prev = bestCandidate
                     shouldUpdate = prev == null ||
-                        (!candidate.coverUrl.isNullOrBlank() && prev.coverUrl.isNullOrBlank()) ||
-                        (candidate.synopsis.length > prev.synopsis.length && !candidate.synopsis.startsWith("Buku dengan nomor"))
+                        (!finalCandidate.coverUrl.isNullOrBlank() && prev.coverUrl.isNullOrBlank()) ||
+                        (finalCandidate.synopsis.length > prev.synopsis.length && !finalCandidate.synopsis.startsWith("Buku dengan nomor"))
                     if (shouldUpdate) {
-                        bestCandidate = candidate
+                        bestCandidate = finalCandidate
                     }
                 }
                 if (shouldUpdate) {
                     _uiState.update { cur ->
                         val updatedBatch = if (isBatch) {
                             cur.batchScanQueue.map { item ->
-                                if (item.isbn == clean) candidate else item
+                                if (item.isbn == clean) finalCandidate else item
                             }
                         } else cur.batchScanQueue
 
                         cur.copy(
                             isLookingUpIsbn = false,
-                            lastScannedCandidate = if (cur.lastScannedCandidate?.isbn == clean || cur.lastScannedCandidate == null) candidate else cur.lastScannedCandidate,
+                            lastScannedCandidate = if (cur.lastScannedCandidate?.isbn == clean || cur.lastScannedCandidate == null) finalCandidate else cur.lastScannedCandidate,
                             batchScanQueue = updatedBatch
                         )
                     }
@@ -1222,27 +1316,124 @@ class LlunevieViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val jobs = listOf(
-                launch {
-                    val list = runCatching { apiRepo.searchGoogleBooks("isbn:$clean", "") }.getOrDefault(emptyList())
-                    list.firstOrNull()?.let { onCandidateMatched(it) }
-                },
-                launch {
-                    val list = runCatching { apiRepo.searchOpenLibrary(clean, isIsbn = true) }.getOrDefault(emptyList())
-                    list.firstOrNull()?.let { onCandidateMatched(it) }
-                },
-                launch {
-                    val list = runCatching { apiRepo.searchGramedia(clean) }.getOrDefault(emptyList())
-                    list.firstOrNull()?.let { onCandidateMatched(it) }
-                },
-                launch {
-                    val list = runCatching { apiRepo.searchGoodreadsAutocomplete(clean) }.getOrDefault(emptyList())
-                    list.firstOrNull()?.let { onCandidateMatched(it) }
+            withTimeoutOrNull(8_000L) {
+                val jobs = listOf(
+                    launch {
+                        val list = runCatching { apiRepo.searchGoogleBooks("isbn:$clean", "") }.getOrDefault(emptyList())
+                        list.firstOrNull()?.let { onCandidateMatched(it) }
+                    },
+                    launch {
+                        val list = runCatching { apiRepo.searchOpenLibrary(clean, isIsbn = true) }.getOrDefault(emptyList())
+                        list.firstOrNull()?.let { onCandidateMatched(it) }
+                    },
+                    launch {
+                        val list = runCatching { apiRepo.searchGramedia(clean) }.getOrDefault(emptyList())
+                        list.firstOrNull()?.let { onCandidateMatched(it) }
+                    },
+                    launch {
+                        val list = runCatching { apiRepo.searchGoodreadsAutocomplete(clean) }.getOrDefault(emptyList())
+                        list.firstOrNull()?.let { onCandidateMatched(it) }
+                    }
+                )
+                jobs.joinAll()
+            }
+
+            val candidate = bestCandidate
+            if (candidate == null || candidate.status != BatchLookupStatus.FOUND) {
+                val notFoundCandidate = CatalogBookCandidate(
+                    id = fallbackCandidate.id,
+                    title = if (isEn) "ISBN Not Found" else "ISBN Tidak Ditemukan",
+                    author = clean,
+                    year = currentYear,
+                    pages = 0,
+                    rating = "—",
+                    edition = "—",
+                    publisher = "—",
+                    lang = if (isEn) "en" else "id",
+                    isbn = clean,
+                    category = "—",
+                    coverUrl = null,
+                    coverBgHex = 0xFF1E3A5FL,
+                    synopsis = "",
+                    status = BatchLookupStatus.NOT_FOUND
+                )
+                _uiState.update { cur ->
+                    val updatedBatch = if (isBatch) {
+                        cur.batchScanQueue.map { item ->
+                            if (item.isbn == clean) notFoundCandidate else item
+                        }
+                    } else cur.batchScanQueue
+                    cur.copy(
+                        isLookingUpIsbn = false,
+                        lastScannedCandidate = if (cur.lastScannedCandidate?.isbn == clean || cur.lastScannedCandidate == null) notFoundCandidate else cur.lastScannedCandidate,
+                        batchScanQueue = updatedBatch
+                    )
                 }
-            )
-            jobs.joinAll()
-            _uiState.update { it.copy(isLookingUpIsbn = false) }
+            } else {
+                _uiState.update { it.copy(isLookingUpIsbn = false) }
+            }
         }
+    }
+
+    suspend fun downloadCoverAndExtractSpine(coverUrl: String, isbn: String): Pair<String, Long>? = withContext(Dispatchers.IO) {
+        runCatching {
+            val coversDir = File(appContext.filesDir, "covers").apply { mkdirs() }
+            val targetFile = File(coversDir, "isbn_${isbn}.jpg")
+            val url = URL(coverUrl)
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5000
+                readTimeout = 7000
+                instanceFollowRedirects = true
+            }
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                val bmp = BitmapFactory.decodeFile(targetFile.absolutePath)
+                if (bmp != null) {
+                    val spineColor = SpineColorExtractor.extractDominantSpineHex(bmp)
+                    bmp.recycle()
+                    Pair(targetFile.absolutePath, spineColor)
+                } else {
+                    Pair(targetFile.absolutePath, 0xFF1E3A5FL)
+                }
+            } else null
+        }.getOrNull()
+    }
+
+    fun updateBookSpineColor(bookId: String, extractedHex: Long) {
+        viewModelScope.launch {
+            val all = dao.getAllBooks()
+            val book = all.find { it.id == bookId }
+            if (book != null && book.spineColorHex != extractedHex) {
+                dao.updateBook(book.copy(spineColorHex = extractedHex))
+            }
+        }
+    }
+
+    fun openManualEntryWithIsbn(prefillIsbn: String) {
+        _uiState.update {
+            it.copy(
+                showFullCameraScanner = false,
+                showAddBookSheet = true,
+                addModalTab = "manual",
+                manualBookPrefillIsbn = prefillIsbn
+            )
+        }
+    }
+
+    fun commitResolvedBatchOnly(shelfName: String) {
+        _uiState.update { cur ->
+            cur.copy(batchScanQueue = cur.batchScanQueue.filter { it.status == BatchLookupStatus.FOUND })
+        }
+        commitBatchScanToShelf(shelfName)
+    }
+
+    fun saveResolvedBatchAndOpenManual(shelfName: String, prefillIsbn: String) {
+        commitResolvedBatchOnly(shelfName)
+        openManualEntryWithIsbn(prefillIsbn)
     }
 
     fun setCameraMode(mode: String) {
@@ -1274,7 +1465,13 @@ class LlunevieViewModel(
     }
 
     fun commitBatchScanToShelf(shelfName: String) {
-        val queue = _uiState.value.batchScanQueue
+        val queue = _uiState.value.batchScanQueue.filter { c ->
+            c.status == BatchLookupStatus.FOUND &&
+            !c.title.startsWith("Searching ISBN", ignoreCase = true) &&
+            !c.title.startsWith("Mencari ISBN", ignoreCase = true) &&
+            !c.title.startsWith("ISBN Not Found", ignoreCase = true) &&
+            !c.title.startsWith("ISBN Tidak Ditemukan", ignoreCase = true)
+        }
         if (queue.isEmpty()) return
         val canonicalShelf = canonicalShelfKey(shelfName)
         viewModelScope.launch {

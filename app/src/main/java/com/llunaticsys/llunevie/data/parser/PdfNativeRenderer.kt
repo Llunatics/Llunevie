@@ -1081,6 +1081,107 @@ object PdfNativeRenderer {
         return candidates
     }
 
+    fun inflatePdfStream(compressed: ByteArray): ByteArray? {
+        return runCatching {
+            val inflater = java.util.zip.Inflater(false)
+            inflater.setInput(compressed)
+            val baos = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            while (!inflater.finished()) {
+                val count = inflater.inflate(buf)
+                if (count <= 0) break
+                baos.write(buf, 0, count)
+            }
+            inflater.end()
+            baos.toByteArray()
+        }.getOrNull() ?: runCatching {
+            val inflater = java.util.zip.Inflater(true)
+            inflater.setInput(compressed)
+            val baos = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            while (!inflater.finished()) {
+                val count = inflater.inflate(buf)
+                if (count <= 0) break
+                baos.write(buf, 0, count)
+            }
+            inflater.end()
+            baos.toByteArray()
+        }.getOrNull()
+    }
+
+    fun extractBookmarksFromTableOfContentsPage(pdfFile: File, totalPages: Int): List<PdfBookmark> {
+        val result = mutableListOf<PdfBookmark>()
+        runCatching {
+            val bytes = pdfFile.readBytes()
+            val contentStr = String(bytes, Charsets.ISO_8859_1)
+            val tocRegex = Regex("""(?i)\b(table of contents|contents|daftar isi|isi buku)\b""")
+            val tocLineRegex = Regex("""^\s*(?:(?:chapter|bab|bagian|part)\s+[0-9IVXLCDM]+[:.\s\-–—]*)?([A-Za-z0-9][A-Za-z0-9\s'’:,;&\-–—()]{2,70}?)\s*(?:[.\u2026_\s]{2,}|\t+)\s*(\d{1,4})\s*$""", RegexOption.IGNORE_CASE)
+
+            val streamRegex = Regex("""stream\r?\n([\s\S]*?)\r?\nendstream""")
+            val streams = streamRegex.findAll(contentStr).mapNotNull { m ->
+                val rawBytes = m.groupValues[1].toByteArray(Charsets.ISO_8859_1)
+                val inflated = inflatePdfStream(rawBytes) ?: rawBytes
+                String(inflated, Charsets.ISO_8859_1)
+            }.toList()
+
+            for (streamText in streams.take(35)) {
+                if (tocRegex.containsMatchIn(streamText) || streamText.lines().count { tocLineRegex.containsMatchIn(it) } >= 3) {
+                    val entries = mutableListOf<Pair<String, Int>>()
+                    for (line in streamText.lines()) {
+                        val m = tocLineRegex.find(line.trim()) ?: continue
+                        val rawTitle = m.groupValues[1].trim()
+                        val printedPage = m.groupValues[2].toIntOrNull() ?: continue
+                        entries.add(rawTitle to printedPage)
+                    }
+
+                    if (entries.isNotEmpty()) {
+                        val minPrinted = entries.minOf { it.second }
+                        val offset = if (minPrinted > 0 && minPrinted < 15) (minPrinted + 4).coerceAtMost(totalPages / 4) else 0
+                        for ((title, pNum) in entries) {
+                            val targetZero = (pNum - 1 + offset).coerceIn(0, totalPages - 1)
+                            result.add(PdfBookmark(title, targetZero))
+                        }
+                        if (result.isNotEmpty()) break
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    fun deduplicateChapters(
+        rawChapters: List<PdfBookmark>,
+        totalPages: Int,
+        defaultTitle: String
+    ): List<PdfBookmark> {
+        val noiseWords = setOf("contents", "tableofcontents", "daftarisi", "isibuku", "copyright", "hakcipta", "cover", "sampul")
+        val seenKeys = mutableSetOf<String>()
+        val seenPages = mutableSetOf<Int>()
+        val result = mutableListOf<PdfBookmark>()
+
+        for (ch in rawChapters) {
+            val clean = sanitizeBookOrChapterText(ch.title).trim()
+            if (clean.length < 2) continue
+            if (clean.all { it.isDigit() || it.isWhitespace() || it == '.' }) continue
+            val normKey = clean.lowercase().replace(Regex("[^a-z0-9]"), "")
+            if (normKey in noiseWords) continue
+            if (normKey.isEmpty()) continue
+            if (seenKeys.contains(normKey)) continue
+            val page = ch.startPageZero.coerceIn(0, totalPages - 1)
+            if (seenPages.contains(page)) continue
+
+            seenKeys.add(normKey)
+            seenPages.add(page)
+            result.add(PdfBookmark(clean, page))
+        }
+
+        result.sortBy { it.startPageZero }
+        if (result.isNotEmpty() && result.first().startPageZero > 0) {
+            result.add(0, PdfBookmark(sanitizeBookOrChapterText(normalizeBookTitle(defaultTitle)), 0))
+        }
+        return result
+    }
+
     suspend fun scanPdfChaptersAndIllustrationsAsync(
         context: Context,
         bookId: String,
@@ -1088,6 +1189,7 @@ object PdfNativeRenderer {
         totalPages: Int,
         defaultTitle: String,
         isEn: Boolean,
+        onProgress: suspend (Int) -> Unit = {},
         onUpdated: suspend (List<BookChapterEntity>, List<BookIllustration>) -> Unit
     ) = withContext(Dispatchers.Default) {
         if (!pdfFile.exists() || totalPages <= 0) return@withContext
@@ -1096,71 +1198,68 @@ object PdfNativeRenderer {
         val detectedChapters = mutableListOf<PdfBookmark>()
         val detectedIllusts = mutableListOf<BookIllustration>()
 
+        onProgress(5)
         val existingOutline = extractPdfBookmarksFromPdfFile(pdfFile, totalPages, defaultTitle)
-        if (existingOutline.isNotEmpty()) {
-            detectedChapters.addAll(existingOutline)
-        }
+        detectedChapters.addAll(existingOutline)
 
-        // Fast PDF byte-stream pre-filter: find candidate pages without rendering
-        val candidatePages = scanCandidateIllustrationPagesFromPdfStream(pdfFile, totalPages)
-            .filter { it in 1 until totalPages }
-            .take(12) // Cap candidate illustrations to at most 12 pages to avoid CPU churn
+        onProgress(15)
+        val tocBookmarks = extractBookmarksFromTableOfContentsPage(pdfFile, totalPages)
+        detectedChapters.addAll(tocBookmarks)
 
-        if (candidatePages.isNotEmpty()) {
-            runCatching {
-                ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                    PdfRenderer(pfd).use { renderer ->
-                        for (pIdx in candidatePages) {
-                            if (pIdx >= renderer.pageCount) continue
-                            renderer.openPage(pIdx).use { page ->
-                                val thumbW = 360
-                                val thumbH = (page.height.toFloat() / page.width.toFloat() * thumbW).toInt().coerceIn(360, 600)
-                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
-                                val smallCanvas = Canvas(smallBmp)
-                                smallCanvas.drawColor(Color.WHITE)
-                                page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        onProgress(25)
+        val finalBookmarks = deduplicateChapters(detectedChapters, totalPages, defaultTitle)
 
-                                if (isTrueIllustrationPageBitmap(smallBmp)) {
-                                    val illustFile = File(coversDir, "${bookId}_illust_p${pIdx + 1}.jpg")
-                                    if (!illustFile.exists()) {
-                                        val hiW = 540
-                                        val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
-                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.ARGB_8888)
-                                        val hiCanvas = Canvas(hiBmp)
-                                        hiCanvas.drawColor(Color.WHITE)
-                                        page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                        FileOutputStream(illustFile).use { out ->
-                                            hiBmp.compress(Bitmap.CompressFormat.JPEG, 88, out)
-                                        }
-                                        hiBmp.recycle()
+        // Throttled Illustration Scanning with delay(12)
+        runCatching {
+            ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                PdfRenderer(pfd).use { renderer ->
+                    val pageCount = renderer.pageCount
+                    val step = if (pageCount <= 60) 1 else (pageCount / 60).coerceAtLeast(1)
+                    val pagesToInspect = (1 until minOf(totalPages, pageCount) step step).toList()
+
+                    for ((idx, pIdx) in pagesToInspect.withIndex()) {
+                        kotlinx.coroutines.delay(12L)
+                        renderer.openPage(pIdx).use { page ->
+                            val thumbW = 320
+                            val thumbH = 450
+                            val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
+                            val smallCanvas = Canvas(smallBmp)
+                            smallCanvas.drawColor(Color.WHITE)
+                            page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+
+                            if (isTrueIllustrationPageBitmap(smallBmp)) {
+                                val illustFile = File(coversDir, "${bookId}_illust_p${pIdx + 1}.jpg")
+                                if (!illustFile.exists()) {
+                                    FileOutputStream(illustFile).use { out ->
+                                        smallBmp.compress(Bitmap.CompressFormat.JPEG, 88, out)
                                     }
-                                    val caption = if (isEn) "Illustration — Page ${pIdx + 1}" else "Ilustrasi — Hal ${pIdx + 1}"
-                                    detectedIllusts.add(
-                                        BookIllustration(
-                                            uriOrPath = illustFile.absolutePath,
-                                            caption = caption,
-                                            pageIndexInBook = pIdx
-                                        )
-                                    )
                                 }
-                                smallBmp.recycle()
+                                val caption = if (isEn) "Illustration — Page ${pIdx + 1}" else "Ilustrasi — Hal ${pIdx + 1}"
+                                detectedIllusts.add(
+                                    BookIllustration(
+                                        uriOrPath = illustFile.absolutePath,
+                                        caption = caption,
+                                        pageIndexInBook = pIdx
+                                    )
+                                )
                             }
+                            smallBmp.recycle()
                         }
+                        val pct = 25 + ((idx + 1) * 70 / pagesToInspect.size.coerceAtLeast(1))
+                        onProgress(pct)
                     }
                 }
             }
         }
 
-        val finalChapters = if (detectedChapters.isNotEmpty()) {
-            val sorted = detectedChapters.distinctBy { it.startPageZero }.sortedBy { it.startPageZero }.toMutableList()
-            if (sorted.first().startPageZero > 0) {
-                sorted.add(0, PdfBookmark(sanitizeBookOrChapterText(normalizeBookTitle(defaultTitle)), 0))
-            }
+        onProgress(100)
+
+        val finalChapters = if (finalBookmarks.isNotEmpty()) {
             val result = mutableListOf<BookChapterEntity>()
-            for (i in sorted.indices) {
-                val bm = sorted[i]
+            for (i in finalBookmarks.indices) {
+                val bm = finalBookmarks[i]
                 val sIdx = bm.startPageZero
-                val eIdx = if (i + 1 < sorted.size) sorted[i + 1].startPageZero.coerceIn(sIdx + 1, totalPages) else totalPages
+                val eIdx = if (i + 1 < finalBookmarks.size) finalBookmarks[i + 1].startPageZero.coerceIn(sIdx + 1, totalPages) else totalPages
                 val pagesArr = JSONArray()
                 for (p in sIdx until eIdx) {
                     val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p || it.caption.contains(" ${p + 1}") }
