@@ -13,7 +13,7 @@ import androidx.room.RoomDatabase
         DailyReadingLogEntity::class,
         ShelfEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class LlunevieDatabase : RoomDatabase() {

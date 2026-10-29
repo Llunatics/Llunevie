@@ -135,7 +135,9 @@ data class HighlightNoteEntity(
     val quoteText: String,
     val noteText: String,
     val colorKey: String,
-    val createdAtMillis: Long = System.currentTimeMillis()
+    val createdAtMillis: Long = System.currentTimeMillis(),
+    val startCharIndex: Int = -1,
+    val endCharIndex: Int = -1
 )
 
 @Entity(tableName = "daily_reading_logs")
