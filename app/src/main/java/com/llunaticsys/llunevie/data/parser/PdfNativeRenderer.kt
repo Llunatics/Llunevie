@@ -8,14 +8,11 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
-import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.llunaticsys.llunevie.data.local.BookChapterEntity
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.model.BookIllustration
 import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
+import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,11 +33,9 @@ object PdfNativeRenderer {
 
     private val renderMutex = Mutex()
 
-    // High-speed in-memory Bitmap LRU Cache (up to ~32MB) for zero-lag PDF scrolling & page turns
-    private val pageBitmapCache = object : LruCache<String, Bitmap>(32 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap): Int {
-            return (value.allocationByteCount / 1024).coerceAtLeast(1)
-        }
+    // High-speed in-memory Bitmap LRU Cache capped to at most 12 page bitmaps
+    private val pageBitmapCache = object : LruCache<String, Bitmap>(12) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
     }
 
     private val aspectRatioCache = mutableMapOf<String, Float>()
@@ -298,45 +293,48 @@ object PdfNativeRenderer {
             extractedIllustrations.add(BookIllustration(uriOrPath = coverFilePath, caption = "Cover (Hal 1)"))
         }
 
-        // Fast & thorough scan for illustrations: test low-res thumbnail first for speed
-        val maxPagesToScan = minOf(totalPages, 300)
-        runCatching {
-            ParcelFileDescriptor.open(destPdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    val testBmp = Bitmap.createBitmap(180, 240, Bitmap.Config.ARGB_8888)
-                    val testCanvas = Canvas(testBmp)
+        // Use PDF stream pre-filter: test only candidate pages (capped to 12)
+        val candidatePages = scanCandidateIllustrationPagesFromPdfStream(destPdfFile, totalPages).take(12)
+        if (candidatePages.isNotEmpty()) {
+            runCatching {
+                ParcelFileDescriptor.open(destPdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        for (pIdx in candidatePages) {
+                            if (pIdx >= renderer.pageCount) continue
+                            renderer.openPage(pIdx).use { page ->
+                                val thumbW = 360
+                                val thumbH = (page.height.toFloat() / page.width.toFloat() * thumbW).toInt().coerceIn(360, 600)
+                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.RGB_565)
+                                val smallCanvas = Canvas(smallBmp)
+                                smallCanvas.drawColor(Color.WHITE)
+                                page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
-                    for (pIdx in 1 until maxPagesToScan) {
-                        renderer.openPage(pIdx).use { page ->
-                            testCanvas.drawColor(Color.WHITE)
-                            page.render(testBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-
-                            if (isIllustrationOrArtworkPage(testBmp, pIdx)) {
-                                val rawW = page.width.coerceAtLeast(1)
-                                val rawH = page.height.coerceAtLeast(1)
-                                val hiW = 720
-                                val hiH = (rawH * (hiW.toFloat() / rawW)).toInt().coerceIn(480, 1600)
-                                val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.ARGB_8888)
-                                val hiCanvas = Canvas(hiBmp)
-                                hiCanvas.drawColor(Color.WHITE)
-                                page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-
-                                val illustFile = File(coversDir, "illust_p${pIdx + 1}.jpg")
-                                FileOutputStream(illustFile).use { out ->
-                                    hiBmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
-                                }
-                                hiBmp.recycle()
-
-                                extractedIllustrations.add(
-                                    BookIllustration(
-                                        uriOrPath = illustFile.absolutePath,
-                                        caption = "Ilustrasi (Hal ${pIdx + 1})"
+                                if (isTrueIllustrationPageBitmap(smallBmp)) {
+                                    val illustFile = File(coversDir, "illust_p${pIdx + 1}.jpg")
+                                    if (!illustFile.exists()) {
+                                        val hiW = 540
+                                        val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
+                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.RGB_565)
+                                        val hiCanvas = Canvas(hiBmp)
+                                        hiCanvas.drawColor(Color.WHITE)
+                                        page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                        FileOutputStream(illustFile).use { out ->
+                                            hiBmp.compress(Bitmap.CompressFormat.JPEG, 88, out)
+                                        }
+                                        hiBmp.recycle()
+                                    }
+                                    extractedIllustrations.add(
+                                        BookIllustration(
+                                            uriOrPath = illustFile.absolutePath,
+                                            caption = "Ilustrasi (Hal ${pIdx + 1})",
+                                            pageIndexInBook = pIdx
+                                        )
                                     )
-                                )
+                                }
+                                smallBmp.recycle()
                             }
                         }
                     }
-                    testBmp.recycle()
                 }
             }
         }
@@ -430,7 +428,7 @@ object PdfNativeRenderer {
                     }.getOrDefault("")
                 } else ""
 
-                val clean = normalizeBookTitle(parsed.trim())
+                val clean = sanitizeBookOrChapterText(normalizeBookTitle(parsed.trim()))
                 if (clean.length in 3..80 &&
                     !clean.contains("Microsoft Word", true) &&
                     !clean.contains("Acrobat", true) &&
@@ -468,7 +466,7 @@ object PdfNativeRenderer {
         val chapters = mutableListOf<BookChapterEntity>()
         if (sortedBookmarks.isNotEmpty()) {
             if (sortedBookmarks.first().startPageZero > 0) {
-                sortedBookmarks.add(0, PdfBookmark(normalizeBookTitle(defaultTitle), 0))
+                sortedBookmarks.add(0, PdfBookmark(sanitizeBookOrChapterText(normalizeBookTitle(defaultTitle)), 0))
             }
             for (i in sortedBookmarks.indices) {
                 val bm = sortedBookmarks[i]
@@ -566,7 +564,8 @@ object PdfNativeRenderer {
         targetWidthPx: Int = 960
     ): Bitmap? = withContext(Dispatchers.IO) {
         if (pageIndex < 0) return@withContext null
-        val widthBucket = ((targetWidthPx.coerceIn(360, 1280) / 120) * 120).coerceAtLeast(360)
+        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
+        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
         val cacheKey = "$pdfFilePath:$pageIndex:$widthBucket"
         pageBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return@withContext cached
@@ -587,10 +586,10 @@ object PdfNativeRenderer {
                             val rawW = page.width.coerceAtLeast(1)
                             val rawH = page.height.coerceAtLeast(1)
                             aspectRatioCache[pdfFilePath] = (rawW.toFloat() / rawH.toFloat()).coerceIn(0.45f, 1.6f)
-                            val scale = (widthBucket.toFloat() / rawW.toFloat()).coerceIn(0.85f, 2.2f)
-                            val bmpW = (rawW * scale).toInt().coerceIn(240, 1440)
-                            val bmpH = (rawH * scale).toInt().coerceIn(320, 2160)
-                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                            val scale = (widthBucket.toFloat() / rawW.toFloat()).coerceIn(0.75f, 2.0f)
+                            val bmpW = (rawW * scale).toInt().coerceIn(240, 1080)
+                            val bmpH = (rawH * scale).toInt().coerceIn(320, 1920)
+                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.RGB_565)
                             val canvas = Canvas(bitmap)
                             // Always fill PDF page background with pure white paper (#FFFFFF)
                             canvas.drawColor(Color.WHITE)
@@ -691,7 +690,7 @@ object PdfNativeRenderer {
                     }.getOrDefault("")
                 } else ""
 
-                val clean = normalizeBookTitle(parsed.trim())
+                val clean = sanitizeBookOrChapterText(normalizeBookTitle(parsed.trim()))
                 if (clean.length in 3..80 &&
                     !clean.contains("Microsoft Word", true) &&
                     !clean.contains("Acrobat", true) &&
@@ -721,11 +720,14 @@ object PdfNativeRenderer {
         return detectedBookmarks.distinctBy { it.startPageZero }.sortedBy { it.startPageZero }
     }
 
-    fun isTrueIllustrationPage(bmp: Bitmap): Boolean {
+    fun isTrueIllustrationPage(bmp: Bitmap): Boolean = isTrueIllustrationPageBitmap(bmp)
+
+    fun isTrueIllustrationPageBitmap(bmp: Bitmap): Boolean {
         val w = bmp.width
         val h = bmp.height
         if (w < 40 || h < 40) return false
 
+        // Compute page border background luminance
         val borderLums = mutableListOf<Int>()
         for (x in 0 until w step 4) {
             val pTop = bmp.getPixel(x, 0)
@@ -744,128 +746,313 @@ object PdfNativeRenderer {
 
         val yStart = (h * 0.08f).toInt()
         val yEnd = (h * 0.92f).toInt()
-        val rowInkRatio = FloatArray(h)
-        var totalInkPixels = 0
+        val leftXStart = (w * 0.08f).toInt()
+        val leftXEnd = (w * 0.48f).toInt()
+        val rightXStart = (w * 0.52f).toInt()
+        val rightXEnd = (w * 0.92f).toInt()
 
+        val leftEdgeEnergy = FloatArray(h)
+        val rightEdgeEnergy = FloatArray(h)
+        val isRowOscillating = BooleanArray(h)
+
+        // Compute horizontal gradient edge energy row by row for left and right columns
         for (y in yStart..yEnd) {
-            var inkInRow = 0
-            val sampleStepX = 2
-            var sampledCols = 0
-            for (x in (w * 0.08f).toInt()..(w * 0.92f).toInt() step sampleStepX) {
-                val c = bmp.getPixel(x, y)
-                val lum = (Color.red(c) * 299 + Color.green(c) * 587 + Color.blue(c) * 114) / 1000
-                if (abs(lum - paperLum) > 28) {
-                    inkInRow++
-                    totalInkPixels++
-                }
-                sampledCols++
+            var leftGradSum = 0f
+            var leftCols = 0
+            for (x in leftXStart until leftXEnd step 2) {
+                val p1 = bmp.getPixel(x, y)
+                val p2 = bmp.getPixel(x + 1, y)
+                val l1 = (Color.red(p1) * 299 + Color.green(p1) * 587 + Color.blue(p1) * 114) / 1000
+                val l2 = (Color.red(p2) * 299 + Color.green(p2) * 587 + Color.blue(p2) * 114) / 1000
+                leftGradSum += abs(l2 - l1)
+                leftCols++
             }
-            rowInkRatio[y] = if (sampledCols > 0) inkInRow.toFloat() / sampledCols else 0f
+            leftEdgeEnergy[y] = if (leftCols > 0) leftGradSum / leftCols else 0f
+
+            var rightGradSum = 0f
+            var rightCols = 0
+            for (x in rightXStart until rightXEnd step 2) {
+                val p1 = bmp.getPixel(x, y)
+                val p2 = bmp.getPixel(x + 1, y)
+                val l1 = (Color.red(p1) * 299 + Color.green(p1) * 587 + Color.blue(p1) * 114) / 1000
+                val l2 = (Color.red(p2) * 299 + Color.green(p2) * 587 + Color.blue(p2) * 114) / 1000
+                rightGradSum += abs(l2 - l1)
+                rightCols++
+            }
+            rightEdgeEnergy[y] = if (rightCols > 0) rightGradSum / rightCols else 0f
         }
 
-        var textLineCount = 0
-        var inPeak = false
-        var peakHeight = 0
+        // Count oscillating text-line peaks in left and right columns
+        var leftTextLines = 0
+        var inLeftPeak = false
+        var leftPeakStart = 0
         for (y in yStart..yEnd) {
-            val ratio = rowInkRatio[y]
-            if (ratio in 0.06f..0.48f) {
-                inPeak = true
-                peakHeight++
-            } else if (ratio < 0.015f) {
-                if (inPeak && peakHeight in 2..12) {
-                    textLineCount++
+            val e = leftEdgeEnergy[y]
+            if (e > 16f) {
+                if (!inLeftPeak) {
+                    inLeftPeak = true
+                    leftPeakStart = y
                 }
-                inPeak = false
-                peakHeight = 0
-            } else {
-                inPeak = false
-                peakHeight = 0
+            } else if (e < 7f && inLeftPeak) {
+                val dur = y - leftPeakStart
+                if (dur in 3..20) {
+                    leftTextLines++
+                    for (k in leftPeakStart..y) isRowOscillating[k] = true
+                }
+                inLeftPeak = false
             }
         }
-        if (inPeak && peakHeight in 2..12) textLineCount++
 
-        val gridCols = 16
-        val gridRows = 24
-        val isArtCell = Array(gridRows) { BooleanArray(gridCols) }
-        val cellW = ((w * 0.84f) / gridCols).toInt().coerceAtLeast(1)
-        val cellH = ((h * 0.84f) / gridRows).toInt().coerceAtLeast(1)
-        val xBase = (w * 0.08f).toInt()
-        val yBase = (h * 0.08f).toInt()
+        var rightTextLines = 0
+        var inRightPeak = false
+        var rightPeakStart = 0
+        for (y in yStart..yEnd) {
+            val e = rightEdgeEnergy[y]
+            if (e > 16f) {
+                if (!inRightPeak) {
+                    inRightPeak = true
+                    rightPeakStart = y
+                }
+            } else if (e < 7f && inRightPeak) {
+                val dur = y - rightPeakStart
+                if (dur in 3..20) {
+                    rightTextLines++
+                    for (k in rightPeakStart..y) isRowOscillating[k] = true
+                }
+                inRightPeak = false
+            }
+        }
+
+        // Immediate full-text rejection rules:
+        // Rule 1A: Two-column dense text page (e.g. Page 21, 23, 25, 223, 241, 451, 457, 461)
+        if (leftTextLines >= 14 && rightTextLines >= 14) return false
+
+        // Rule 1B: Dense single- or two-column text page with >= 24 text lines and < 30% free vertical space
+        val totalTextLines = leftTextLines + rightTextLines
+        var oscillatingRows = 0
+        for (y in yStart..yEnd) {
+            if (isRowOscillating[y]) oscillatingRows++
+        }
+        val totalVerticalSpan = (yEnd - yStart).coerceAtLeast(1)
+        val freeVerticalRatio = 1f - (oscillatingRows.toFloat() / totalVerticalSpan)
+        if (totalTextLines >= 24 && freeVerticalRatio < 0.30f) return false
+        if (totalTextLines >= 18 && freeVerticalRatio < 0.20f) return false
+
+        // Rule 2 — Require a contiguous non-text artwork region covering >= 22% of page area
+        // Mask out oscillating text paragraphs
+        val isTextParagraphRow = BooleanArray(h)
+        for (y in yStart..(yEnd - 55)) {
+            var peaksInWin = 0
+            for (k in y..(y + 55)) {
+                if (leftEdgeEnergy[k] > 16f || rightEdgeEnergy[k] > 16f) peaksInWin++
+            }
+            if (peaksInWin >= 6) {
+                for (k in y..(y + 55)) isTextParagraphRow[k] = true
+            }
+        }
+
+        // Check remaining non-text area for contiguous artwork region
+        val gridCols = 18
+        val gridRows = 25
+        val cellW = (w / gridCols).coerceAtLeast(1)
+        val cellH = (h / gridRows).coerceAtLeast(1)
+        val isArtGrid = Array(gridRows) { BooleanArray(gridCols) }
         val hsv = FloatArray(3)
 
-        var totalArtCells = 0
         for (r in 0 until gridRows) {
-            for (c in 0 until gridCols) {
-                val cxStart = xBase + c * cellW
-                val cyStart = yBase + r * cellH
-                var satSum = 0f
-                var valSum = 0f
-                var midToneCount = 0
-                var darkCount = 0
-                var sampled = 0
+            val cyStart = r * cellH
+            val cyEnd = (cyStart + cellH).coerceAtMost(h)
+            val isTextRow = (cyStart until cyEnd).any { isTextParagraphRow[it] }
+            if (isTextRow) continue
 
-                for (py in cyStart until (cyStart + cellH).coerceAtMost(h) step 2) {
-                    for (px in cxStart until (cxStart + cellW).coerceAtMost(w) step 2) {
-                        val pixel = bmp.getPixel(px, py)
-                        Color.colorToHSV(pixel, hsv)
-                        satSum += hsv[1]
-                        valSum += hsv[2]
-                        val lum = (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
+            for (c in 0 until gridCols) {
+                val cxStart = c * cellW
+                val cxEnd = (cxStart + cellW).coerceAtMost(w)
+                var diffPixels = 0
+                var saturatedPixels = 0
+                var totalSampled = 0
+
+                for (py in cyStart until cyEnd step 3) {
+                    for (px in cxStart until cxEnd step 3) {
+                        totalSampled++
+                        val pix = bmp.getPixel(px, py)
+                        val lum = (Color.red(pix) * 299 + Color.green(pix) * 587 + Color.blue(pix) * 114) / 1000
                         val diff = abs(lum - paperLum)
-                        if (diff in 25..165) midToneCount++
-                        if (diff > 165) darkCount++
-                        sampled++
+                        if (diff > 32) diffPixels++
+                        Color.colorToHSV(pix, hsv)
+                        if (hsv[1] > 0.18f && diff > 20) saturatedPixels++
                     }
                 }
 
-                if (sampled > 0) {
-                    val meanSat = satSum / sampled
-                    val meanVal = valSum / sampled
-                    val isColorArt = meanSat > 0.14f && meanVal in 0.12f..0.95f
-                    val isMidToneArt = (midToneCount.toFloat() / sampled) >= 0.22f
-                    val isDarkArt = (darkCount.toFloat() / sampled) >= 0.38f
-
-                    if (isColorArt || isMidToneArt || isDarkArt) {
-                        isArtCell[r][c] = true
-                        totalArtCells++
+                if (totalSampled > 0) {
+                    val diffRatio = diffPixels.toFloat() / totalSampled
+                    val satRatio = saturatedPixels.toFloat() / totalSampled
+                    if (diffRatio >= 0.35f || satRatio >= 0.28f) {
+                        isArtGrid[r][c] = true
                     }
                 }
             }
         }
 
+        // Find largest contiguous 2D bounding box of artwork cells
         val visited = Array(gridRows) { BooleanArray(gridCols) }
-        var largestCluster = 0
+        var maxBoxAreaCells = 0
+
         for (r in 0 until gridRows) {
             for (c in 0 until gridCols) {
-                if (isArtCell[r][c] && !visited[r][c]) {
-                    var size = 0
+                if (isArtGrid[r][c] && !visited[r][c]) {
+                    var minR = r
+                    var maxR = r
+                    var minC = c
+                    var maxC = c
+                    var count = 0
                     val q = ArrayDeque<Pair<Int, Int>>()
                     q.add(r to c)
                     visited[r][c] = true
+
                     while (q.isNotEmpty()) {
                         val (cr, cc) = q.removeFirst()
-                        size++
-                        val neighbors = listOf(
-                            cr - 1 to cc, cr + 1 to cc, cr to cc - 1, cr to cc + 1
-                        )
+                        count++
+                        if (cr < minR) minR = cr
+                        if (cr > maxR) maxR = cr
+                        if (cc < minC) minC = cc
+                        if (cc > maxC) maxC = cc
+
+                        val neighbors = listOf(cr - 1 to cc, cr + 1 to cc, cr to cc - 1, cr to cc + 1)
                         for ((nr, nc) in neighbors) {
-                            if (nr in 0 until gridRows && nc in 0 until gridCols && isArtCell[nr][nc] && !visited[nr][nc]) {
+                            if (nr in 0 until gridRows && nc in 0 until gridCols && isArtGrid[nr][nc] && !visited[nr][nc]) {
                                 visited[nr][nc] = true
                                 q.add(nr to nc)
                             }
                         }
                     }
-                    if (size > largestCluster) largestCluster = size
+
+                    val boxW = (maxC - minC + 1).toFloat() / gridCols
+                    val boxH = (maxR - minR + 1).toFloat() / gridRows
+                    val boxArea = boxW * boxH
+                    val cellRatio = count.toFloat() / (gridRows * gridCols)
+
+                    if (boxArea >= 0.22f && boxW >= 0.35f && boxH >= 0.24f && cellRatio >= 0.14f) {
+                        return true
+                    }
+                    if (count > maxBoxAreaCells) maxBoxAreaCells = count
                 }
             }
         }
 
-        if (textLineCount >= 15 && largestCluster < 55) return false
-        val totalSampledPixels = (yEnd - yStart) * (w * 0.84f / 2)
-        val inkRatio = if (totalSampledPixels > 0) totalInkPixels.toFloat() / totalSampledPixels else 0f
-        if (inkRatio < 0.08f && totalArtCells < 20) return false
+        return false
+    }
 
-        return largestCluster >= 55 || (largestCluster >= 38 && textLineCount <= 10)
+    /**
+     * PDF Stream Pre-Filter:
+     * Scans the PDF byte stream without rendering pages. Counts occurrences of /XObject /Image references.
+     * Any image referenced on >= 4 pages is a repeating parchment background or header decoration.
+     * Returns 0-based page indices of candidate illustration pages (pages with non-repeating image XObjects).
+     */
+    fun scanCandidateIllustrationPagesFromPdfStream(pdfFile: File, totalPages: Int): List<Int> {
+        val candidates = mutableListOf<Int>()
+        runCatching {
+            val bytes = pdfFile.readBytes()
+            val contentStr = String(bytes, Charsets.ISO_8859_1)
+
+            val objBodies = mutableMapOf<Int, String>()
+            val objRegex = Regex("""(\d+)\s+0\s+obj\b([\s\S]*?)\bendobj\b""")
+            for (m in objRegex.findAll(contentStr)) {
+                val id = m.groupValues[1].toIntOrNull()
+                if (id != null) objBodies[id] = m.groupValues[2]
+            }
+
+            // Find ordered page object IDs
+            var pagesRootId: Int? = null
+            for ((id, body) in objBodies) {
+                if (body.contains("/Type") && body.contains("/Catalog")) {
+                    val rootPagesMatch = Regex("""/Pages\s+(\d+)\s+0\s+R""").find(body)
+                    if (rootPagesMatch != null) {
+                        pagesRootId = rootPagesMatch.groupValues[1].toIntOrNull()
+                        break
+                    }
+                }
+            }
+
+            val orderedPageObjIds = mutableListOf<Int>()
+            fun traversePages(nodeId: Int, visited: MutableSet<Int>) {
+                if (!visited.add(nodeId)) return
+                val body = objBodies[nodeId] ?: return
+                val kidsMatch = Regex("""/Kids\s*\[([\s\S]*?)\]""").find(body)
+                if (kidsMatch != null) {
+                    val refRegex = Regex("""(\d+)\s+0\s+R""")
+                    for (ref in refRegex.findAll(kidsMatch.groupValues[1])) {
+                        val kidId = ref.groupValues[1].toIntOrNull() ?: continue
+                        val kidBody = objBodies[kidId].orEmpty()
+                        if (kidBody.contains("/Type") && kidBody.contains("/Pages")) {
+                            traversePages(kidId, visited)
+                        } else {
+                            orderedPageObjIds.add(kidId)
+                        }
+                    }
+                } else if (body.contains("/Type") && body.contains("/Page\b")) {
+                    orderedPageObjIds.add(nodeId)
+                }
+            }
+
+            if (pagesRootId != null) traversePages(pagesRootId, mutableSetOf())
+            if (orderedPageObjIds.isEmpty()) {
+                val fallbackRegex = Regex("""(\d+)\s+0\s+obj\s*<<[^>]*?/Type\s*/Page\b""")
+                for (m in fallbackRegex.findAll(contentStr)) {
+                    m.groupValues[1].toIntOrNull()?.let { orderedPageObjIds.add(it) }
+                }
+            }
+
+            // Map image XObject references across pages
+            val imageRefOccurrences = mutableMapOf<String, Int>()
+            val pageToImageRefs = mutableMapOf<Int, Set<String>>()
+
+            for (pZero in orderedPageObjIds.indices) {
+                val pageId = orderedPageObjIds[pZero]
+                val pageBody = objBodies[pageId].orEmpty()
+                val imageRefsInPage = mutableSetOf<String>()
+
+                // Look for /XObject << ... >> directly in page body or via referenced Resources
+                val resRefMatch = Regex("""/Resources\s+(\d+)\s+0\s+R""").find(pageBody)
+                val resBody = if (resRefMatch != null) {
+                    val resObjId = resRefMatch.groupValues[1].toIntOrNull()
+                    resObjId?.let { objBodies[it] }.orEmpty()
+                } else pageBody
+
+                val xObjMatch = Regex("""/XObject\s*(?:<<([\s\S]*?)>>|(\d+)\s+0\s+R)""").find(resBody)
+                val xObjContent = if (xObjMatch != null) {
+                    val directDict = xObjMatch.groupValues[1]
+                    val refId = xObjMatch.groupValues[2].toIntOrNull()
+                    if (directDict.isNotBlank()) directDict
+                    else refId?.let { objBodies[it] }.orEmpty()
+                } else ""
+
+                if (xObjContent.isNotBlank()) {
+                    val entryRegex = Regex("""(/[\w\.\-]+)\s+(\d+)\s+0\s+R""")
+                    for (entry in entryRegex.findAll(xObjContent)) {
+                        val refObjId = entry.groupValues[2]
+                        val targetObjBody = refObjId.toIntOrNull()?.let { objBodies[it] }.orEmpty()
+                        if (targetObjBody.contains(Regex("""/Subtype\s*/Image""")) || !targetObjBody.contains(Regex("""/Subtype\s*/Form"""))) {
+                            imageRefsInPage.add(refObjId)
+                        }
+                    }
+                }
+                pageToImageRefs[pZero] = imageRefsInPage
+                for (img in imageRefsInPage) {
+                    imageRefOccurrences[img] = (imageRefOccurrences[img] ?: 0) + 1
+                }
+            }
+
+            // Candidate pages: pages > 0 with at least one image referenced on < 4 pages
+            for (pZero in 1 until minOf(totalPages, orderedPageObjIds.size)) {
+                val images = pageToImageRefs[pZero] ?: emptySet()
+                val hasUniqueImage = images.any { (imageRefOccurrences[it] ?: 0) < 4 }
+                if (hasUniqueImage) {
+                    candidates.add(pZero)
+                }
+            }
+        }
+        return candidates
     }
 
     suspend fun scanPdfChaptersAndIllustrationsAsync(
@@ -888,80 +1075,60 @@ object PdfNativeRenderer {
             detectedChapters.addAll(existingOutline)
         }
 
-        val recognizer = runCatching {
-            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        }.getOrNull()
+        // Fast PDF byte-stream pre-filter: find candidate pages without rendering
+        val candidatePages = scanCandidateIllustrationPagesFromPdfStream(pdfFile, totalPages)
+            .filter { it in 1 until totalPages }
+            .take(12) // Cap candidate illustrations to at most 12 pages to avoid CPU churn
 
-        val scanStep = if (totalPages > 150) 2 else 1
-        val pagesToScan = (0 until totalPages step scanStep).toList()
+        if (candidatePages.isNotEmpty()) {
+            runCatching {
+                ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        for (pIdx in candidatePages) {
+                            if (pIdx >= renderer.pageCount) continue
+                            renderer.openPage(pIdx).use { page ->
+                                val thumbW = 360
+                                val thumbH = (page.height.toFloat() / page.width.toFloat() * thumbW).toInt().coerceIn(360, 600)
+                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.RGB_565)
+                                val smallCanvas = Canvas(smallBmp)
+                                smallCanvas.drawColor(Color.WHITE)
+                                page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
-        runCatching {
-            ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    for (pIdx in pagesToScan) {
-                        if (pIdx >= renderer.pageCount) break
-                        renderer.openPage(pIdx).use { page ->
-                            val thumbW = 240
-                            val thumbH = 340
-                            val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
-                            val smallCanvas = Canvas(smallBmp)
-                            smallCanvas.drawColor(Color.WHITE)
-                            page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-
-                            if (pIdx > 0 && isTrueIllustrationPage(smallBmp)) {
-                                val illustFile = File(coversDir, "${bookId}_illust_p${pIdx + 1}.jpg")
-                                if (!illustFile.exists()) {
-                                    val hiW = 540
-                                    val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
-                                    val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.ARGB_8888)
-                                    val hiCanvas = Canvas(hiBmp)
-                                    hiCanvas.drawColor(Color.WHITE)
-                                    page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                    FileOutputStream(illustFile).use { out ->
-                                        hiBmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                                    }
-                                }
-                                val caption = if (isEn) "Illustration — Page ${pIdx + 1}" else "Ilustrasi — Hal ${pIdx + 1}"
-                                detectedIllusts.add(BookIllustration(uriOrPath = illustFile.absolutePath, caption = caption))
-                            }
-
-                            if (recognizer != null && existingOutline.isEmpty() && pIdx > 0) {
-                                val image = InputImage.fromBitmap(smallBmp, 0)
-                                val visionText = runCatching { Tasks.await(recognizer.process(image)) }.getOrNull()
-                                if (visionText != null) {
-                                    val topLines = visionText.textBlocks.flatMap { it.lines }
-                                        .filter { line ->
-                                            val box = line.boundingBox
-                                            box != null && box.top < thumbH * 0.50f && line.text.trim().length in 3..60
+                                if (isTrueIllustrationPageBitmap(smallBmp)) {
+                                    val illustFile = File(coversDir, "${bookId}_illust_p${pIdx + 1}.jpg")
+                                    if (!illustFile.exists()) {
+                                        val hiW = 540
+                                        val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
+                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.RGB_565)
+                                        val hiCanvas = Canvas(hiBmp)
+                                        hiCanvas.drawColor(Color.WHITE)
+                                        page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                        FileOutputStream(illustFile).use { out ->
+                                            hiBmp.compress(Bitmap.CompressFormat.JPEG, 88, out)
                                         }
-                                    val headingCandidate = topLines.firstOrNull { line ->
-                                        val t = line.text.trim()
-                                        val isHeadingKeyword = t.contains("Chapter", true) || t.contains("Bab", true) ||
-                                            t.contains("Part", true) || t.contains("Book", true) ||
-                                            t.contains("Prologue", true) || t.contains("Epilogue", true) ||
-                                            t.contains("Act", true)
-                                        val isLarge = (line.boundingBox?.height() ?: 0) >= 16
-                                        isHeadingKeyword || (isLarge && t.all { it.isUpperCase() || it.isWhitespace() || it.isDigit() })
+                                        hiBmp.recycle()
                                     }
-                                    if (headingCandidate != null) {
-                                        val cleanTitle = normalizeBookTitle(headingCandidate.text.trim())
-                                        if (detectedChapters.none { abs(it.startPageZero - pIdx) < 4 }) {
-                                            detectedChapters.add(PdfBookmark(cleanTitle, pIdx))
-                                        }
-                                    }
+                                    val caption = if (isEn) "Illustration — Page ${pIdx + 1}" else "Ilustrasi — Hal ${pIdx + 1}"
+                                    detectedIllusts.add(
+                                        BookIllustration(
+                                            uriOrPath = illustFile.absolutePath,
+                                            caption = caption,
+                                            pageIndexInBook = pIdx
+                                        )
+                                    )
                                 }
+                                smallBmp.recycle()
                             }
                         }
                     }
                 }
             }
         }
-        recognizer?.close()
 
         val finalChapters = if (detectedChapters.isNotEmpty()) {
             val sorted = detectedChapters.distinctBy { it.startPageZero }.sortedBy { it.startPageZero }.toMutableList()
             if (sorted.first().startPageZero > 0) {
-                sorted.add(0, PdfBookmark(normalizeBookTitle(defaultTitle), 0))
+                sorted.add(0, PdfBookmark(sanitizeBookOrChapterText(normalizeBookTitle(defaultTitle)), 0))
             }
             val result = mutableListOf<BookChapterEntity>()
             for (i in sorted.indices) {
@@ -970,7 +1137,7 @@ object PdfNativeRenderer {
                 val eIdx = if (i + 1 < sorted.size) sorted[i + 1].startPageZero.coerceIn(sIdx + 1, totalPages) else totalPages
                 val pagesArr = JSONArray()
                 for (p in sIdx until eIdx) {
-                    val matchingIllust = detectedIllusts.find { it.caption.contains(" ${p + 1}") }
+                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p || it.caption.contains(" ${p + 1}") }
                     if (matchingIllust != null) {
                         pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
                     } else {
@@ -979,19 +1146,19 @@ object PdfNativeRenderer {
                 }
                 val illustArr = JSONArray()
                 detectedIllusts.filter { il ->
-                    val pNum = Regex("""\d+""").find(il.caption)?.value?.toIntOrNull()
-                    pNum != null && (pNum - 1) in sIdx until eIdx
+                    il.pageIndexInBook in sIdx until eIdx
                 }.forEach { il ->
                     illustArr.put(JSONObject().apply {
                         put("uriOrPath", il.uriOrPath)
                         put("caption", il.caption)
+                        put("pageIndexInBook", il.pageIndexInBook)
                     })
                 }
                 result.add(
                     BookChapterEntity(
                         bookId = bookId,
                         chapterIndex = i,
-                        title = bm.title,
+                        title = sanitizeBookOrChapterText(bm.title),
                         pagesJson = pagesArr.toString(),
                         illustrationsJson = illustArr.toString()
                     )
@@ -1016,7 +1183,7 @@ object PdfNativeRenderer {
                 val e = (s + pagesPerChapter).coerceAtMost(totalPages)
                 val pagesArr = JSONArray()
                 for (p in s until e) {
-                    val matchingIllust = detectedIllusts.find { it.caption.contains(" ${p + 1}") }
+                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p || it.caption.contains(" ${p + 1}") }
                     if (matchingIllust != null) {
                         pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
                     } else {
@@ -1025,15 +1192,15 @@ object PdfNativeRenderer {
                 }
                 val illustArr = JSONArray()
                 detectedIllusts.filter { il ->
-                    val pNum = Regex("""\d+""").find(il.caption)?.value?.toIntOrNull()
-                    pNum != null && (pNum - 1) in s until e
+                    il.pageIndexInBook in s until e
                 }.forEach { il ->
                     illustArr.put(JSONObject().apply {
                         put("uriOrPath", il.uriOrPath)
                         put("caption", il.caption)
+                        put("pageIndexInBook", il.pageIndexInBook)
                     })
                 }
-                val title = if (chCount == 1) defaultTitle else if (isEn) "Section ${cIdx + 1} (pp. ${s + 1}–$e)" else "Bagian ${cIdx + 1} (Hal ${s + 1}–$e)"
+                val title = if (chCount == 1) sanitizeBookOrChapterText(defaultTitle) else if (isEn) "Section ${cIdx + 1} (pp. ${s + 1}–$e)" else "Bagian ${cIdx + 1} (Hal ${s + 1}–$e)"
                 result.add(
                     BookChapterEntity(
                         bookId = bookId,
