@@ -395,6 +395,9 @@ fun AddBookSheet(
                                         val dimInfo = if (lengthCm.isNotBlank() || widthCm.isNotBlank() || weightKg.isNotBlank()) {
                                             "\n\nDimensi: ${lengthCm.ifBlank { "-" }} × ${widthCm.ifBlank { "-" }} cm · Berat: ${weightKg.ifBlank { "-" }} kg."
                                         } else ""
+                                        val parsedHeight = lengthCm.replace(',', '.').toFloatOrNull() ?: 20f
+                                        val parsedWidth = widthCm.replace(',', '.').toFloatOrNull() ?: 14f
+                                        val parsedWeight = weightKg.replace(',', '.').toFloatOrNull()?.let { it * 1000f } ?: 300f
                                         val candidate = CatalogBookCandidate(
                                             id = "manual-${System.currentTimeMillis()}",
                                             title = title.trim(),
@@ -409,7 +412,11 @@ fun AddBookSheet(
                                             category = category,
                                             coverUrl = coverUrl.ifBlank { null },
                                             coverBgHex = 0xFF2B3A4AL,
-                                            synopsis = (synopsis + dimInfo).trim()
+                                            synopsis = (synopsis + dimInfo).trim(),
+                                            heightCm = parsedHeight,
+                                            widthCm = parsedWidth,
+                                            lengthCm = parsedHeight,
+                                            weightGrams = parsedWeight
                                         )
                                         onPromptSaveCandidate(candidate)
                                     }

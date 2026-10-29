@@ -1,18 +1,30 @@
 package com.llunaticsys.llunevie.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,13 +43,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -46,6 +67,7 @@ import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
 import com.llunaticsys.llunevie.ui.components.CustomThemeDropdown
 import com.llunaticsys.llunevie.ui.components.LlunevieAppLogoSvg
+import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.ModernSwitch
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
@@ -53,6 +75,9 @@ import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import coil.compose.AsyncImage
 import java.io.File
+import java.io.FileOutputStream
+import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(
@@ -67,6 +92,7 @@ fun SettingsScreen(
     onSetUserName: (String) -> Unit,
     onPickPhoto: () -> Unit,
     onResetPhoto: () -> Unit = {},
+    onSavePhotoPath: (String?) -> Unit = {},
     onSetReadingFlowMode: (ReadingFlowMode) -> Unit,
     onSetAnimatePageTurn: (Boolean) -> Unit,
     onSetPageAnimStyle: (PageAnimStyle) -> Unit,
@@ -76,7 +102,31 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
+    val context = LocalContext.current
     var showNameDialog by remember { mutableStateOf(false) }
+
+    var pendingCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var cropScale by remember { mutableFloatStateOf(1f) }
+    var cropOffset by remember { mutableStateOf(Offset.Zero) }
+    var cropRotationDegrees by remember { mutableFloatStateOf(0f) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val stream = context.contentResolver.openInputStream(uri)
+                val decoded = BitmapFactory.decodeStream(stream)
+                stream?.close()
+                if (decoded != null) {
+                    pendingCropBitmap = decoded
+                    cropScale = 1f
+                    cropOffset = Offset.Zero
+                    cropRotationDegrees = 0f
+                }
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -150,7 +200,7 @@ fun SettingsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onPickPhoto() }
+                        .clickable { photoPickerLauncher.launch("image/*") }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -613,4 +663,230 @@ fun SettingsScreen(
             }
         }
     }
+
+    // Circular Photo Crop, Drag-Pan, Pinch-Zoom & 90° Rotate Modal
+    pendingCropBitmap?.let { cropBmp ->
+            Dialog(onDismissRequest = { pendingCropBitmap = null }) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = palette.sheetBg,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 24.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Sesuaikan Foto Profil" else "Adjust Profile Photo",
+                                color = palette.textMain,
+                                fontSize = 17.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Surface(
+                                onClick = { pendingCropBitmap = null },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
+                                }
+                            }
+                        }
+
+                        // Interactive 240.dp x 240.dp Crop Stage
+                        Box(
+                            modifier = Modifier
+                                .size(240.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.Black)
+                                .pointerInput(Unit) {
+                                    detectTransformGestures { _, pan, zoom, _ ->
+                                        cropScale = (cropScale * zoom).coerceIn(1f, 3.5f)
+                                        cropOffset += pan
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = cropBmp.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .offset { IntOffset(cropOffset.x.roundToInt(), cropOffset.y.roundToInt()) }
+                                    .scale(cropScale)
+                                    .rotate(cropRotationDegrees)
+                            )
+
+                            // Circular Cutout Mask & crisp circular border
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val r = 105.dp.toPx()
+                                val cx = size.width / 2f
+                                val cy = size.height / 2f
+                                val mask = android.graphics.Path().apply {
+                                    fillType = android.graphics.Path.FillType.EVEN_ODD
+                                    addRect(0f, 0f, size.width, size.height, android.graphics.Path.Direction.CW)
+                                    addCircle(cx, cy, r, android.graphics.Path.Direction.CW)
+                                }
+                                drawContext.canvas.nativeCanvas.drawPath(
+                                    mask,
+                                    android.graphics.Paint().apply {
+                                        color = android.graphics.Color.argb(170, 0, 0, 0)
+                                        style = android.graphics.Paint.Style.FILL
+                                    }
+                                )
+                                drawCircle(
+                                    color = Color.White.copy(alpha = 0.95f),
+                                    radius = r,
+                                    center = Offset(cx, cy),
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                                )
+                            }
+                        }
+
+                        // Zoom Slider & Live readout
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "Zoom",
+                                color = palette.textMuted,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            LlunevieThinSlider(
+                                value = cropScale,
+                                onValueChange = { cropScale = it },
+                                valueRange = 1f..3.5f,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "${String.format(Locale.US, "%.1f", cropScale)}x",
+                                color = palette.textMain,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        // Rotate 90° button
+                        Surface(
+                            onClick = { cropRotationDegrees = (cropRotationDegrees + 90f) % 360f },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text("↻", color = palette.textMain, fontSize = 14.sp)
+                                Text(
+                                    text = if (strings.isId) "Putar 90°" else "Rotate 90°",
+                                    color = palette.textMain,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = palette.borderSoft)
+
+                        // Action Buttons: Ikon Default, Batal, Terapkan Foto
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                onClick = {
+                                    onResetPhoto()
+                                    pendingCropBitmap = null
+                                },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Ikon Default" else "Default Icon",
+                                    color = palette.textMuted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 10.dp)
+                                )
+                            }
+                            Surface(
+                                onClick = { pendingCropBitmap = null },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = strings.cancelBtn,
+                                    color = palette.textMain,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 10.dp)
+                                )
+                            }
+                            Surface(
+                                onClick = {
+                                    val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+                                    val c = android.graphics.Canvas(out)
+                                    val clipP = android.graphics.Path().apply {
+                                        addCircle(256f, 256f, 256f, android.graphics.Path.Direction.CW)
+                                    }
+                                    c.clipPath(clipP)
+                                    val matrix = android.graphics.Matrix().apply {
+                                        postTranslate(-cropBmp.width / 2f, -cropBmp.height / 2f)
+                                        postRotate(cropRotationDegrees)
+                                        val fitScale = 512f / maxOf(cropBmp.width, cropBmp.height).toFloat()
+                                        postScale(fitScale * cropScale, fitScale * cropScale)
+                                        postTranslate(256f + cropOffset.x * (512f / 240f), 256f + cropOffset.y * (512f / 240f))
+                                    }
+                                    c.drawBitmap(cropBmp, matrix, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG))
+                                    val dir = File(context.filesDir, "profile").apply { mkdirs() }
+                                    val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
+                                    FileOutputStream(outFile).use { fos ->
+                                        out.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                                    }
+                                    onSavePhotoPath(outFile.absolutePath)
+                                    pendingCropBitmap = null
+                                },
+                                shape = CircleShape,
+                                color = palette.accentDark,
+                                modifier = Modifier.weight(1.2f)
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Terapkan Foto" else "Apply Photo",
+                                    color = palette.bgApp,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 10.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
 }

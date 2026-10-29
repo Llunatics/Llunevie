@@ -121,6 +121,7 @@ import com.llunaticsys.llunevie.model.HighlightColorKey
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
 import com.llunaticsys.llunevie.ui.components.FlyleafThinSlider
+import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
@@ -434,6 +435,10 @@ fun ReaderScreen(
                                         fontFamily = prefs.fontFamily,
                                         fontWeight = prefs.fontWeight,
                                         textAlign = prefs.textAlign,
+                                        paraSpacingEm = prefs.paraSpacingEm,
+                                        letterSpacingEm = prefs.letterSpacingEm,
+                                        wordSpacingPx = prefs.wordSpacingPx,
+                                        paraIndent = prefs.paraIndent,
                                         highlights = bookHighlights,
                                         highlightBgMap = highlightBgMap
                                     )
@@ -455,6 +460,10 @@ fun ReaderScreen(
                                         fontFamily = prefs.fontFamily,
                                         fontWeight = prefs.fontWeight,
                                         textAlign = prefs.textAlign,
+                                        paraSpacingEm = prefs.paraSpacingEm,
+                                        letterSpacingEm = prefs.letterSpacingEm,
+                                        wordSpacingPx = prefs.wordSpacingPx,
+                                        paraIndent = prefs.paraIndent,
                                         highlights = bookHighlights,
                                         highlightBgMap = highlightBgMap
                                     )
@@ -466,7 +475,8 @@ fun ReaderScreen(
                                 initialValue = null,
                                 curZero, isSpread, isPdfBook, nextTriple, nextLeftPdfBmp, nextRightPdfBmp,
                                 palette.bgApp, palette.textMain, prefs.fontSizeSp,
-                                prefs.fontFamily, prefs.fontWeight, prefs.textAlign, bookHighlights, stageW, stageH
+                                prefs.fontFamily, prefs.fontWeight, prefs.textAlign, prefs.paraSpacingEm,
+                                prefs.letterSpacingEm, prefs.wordSpacingPx, prefs.paraIndent, bookHighlights, stageW, stageH
                             ) {
                                 value = if (nextTriple == null) null
                                 else if (isSpread) {
@@ -490,6 +500,10 @@ fun ReaderScreen(
                                         fontFamily = prefs.fontFamily,
                                         fontWeight = prefs.fontWeight,
                                         textAlign = prefs.textAlign,
+                                        paraSpacingEm = prefs.paraSpacingEm,
+                                        letterSpacingEm = prefs.letterSpacingEm,
+                                        wordSpacingPx = prefs.wordSpacingPx,
+                                        paraIndent = prefs.paraIndent,
                                         highlights = bookHighlights,
                                         highlightBgMap = highlightBgMap
                                     )
@@ -511,6 +525,10 @@ fun ReaderScreen(
                                         fontFamily = prefs.fontFamily,
                                         fontWeight = prefs.fontWeight,
                                         textAlign = prefs.textAlign,
+                                        paraSpacingEm = prefs.paraSpacingEm,
+                                        letterSpacingEm = prefs.letterSpacingEm,
+                                        wordSpacingPx = prefs.wordSpacingPx,
+                                        paraIndent = prefs.paraIndent,
                                         highlights = bookHighlights,
                                         highlightBgMap = highlightBgMap
                                     )
@@ -522,7 +540,8 @@ fun ReaderScreen(
                                 initialValue = null,
                                 curZero, isSpread, isPdfBook, prevTriple, prevLeftPdfBmp, prevRightPdfBmp,
                                 palette.bgApp, palette.textMain, prefs.fontSizeSp,
-                                prefs.fontFamily, prefs.fontWeight, prefs.textAlign, bookHighlights, stageW, stageH
+                                prefs.fontFamily, prefs.fontWeight, prefs.textAlign, prefs.paraSpacingEm,
+                                prefs.letterSpacingEm, prefs.wordSpacingPx, prefs.paraIndent, bookHighlights, stageW, stageH
                             ) {
                                 value = if (prevTriple == null) null
                                 else if (isSpread) {
@@ -546,6 +565,10 @@ fun ReaderScreen(
                                         fontFamily = prefs.fontFamily,
                                         fontWeight = prefs.fontWeight,
                                         textAlign = prefs.textAlign,
+                                        paraSpacingEm = prefs.paraSpacingEm,
+                                        letterSpacingEm = prefs.letterSpacingEm,
+                                        wordSpacingPx = prefs.wordSpacingPx,
+                                        paraIndent = prefs.paraIndent,
                                         highlights = bookHighlights,
                                         highlightBgMap = highlightBgMap
                                     )
@@ -567,11 +590,17 @@ fun ReaderScreen(
                                         fontFamily = prefs.fontFamily,
                                         fontWeight = prefs.fontWeight,
                                         textAlign = prefs.textAlign,
+                                        paraSpacingEm = prefs.paraSpacingEm,
+                                        letterSpacingEm = prefs.letterSpacingEm,
+                                        wordSpacingPx = prefs.wordSpacingPx,
+                                        paraIndent = prefs.paraIndent,
                                         highlights = bookHighlights,
                                         highlightBgMap = highlightBgMap
                                     )
                                 }
                             }
+
+                            var isFlippingInProgress by remember { mutableStateOf(false) }
 
                             Box(
                                 modifier = Modifier
@@ -579,8 +608,177 @@ fun ReaderScreen(
                                     .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp),
                                 contentAlignment = Alignment.Center
                             ) {
+                                if (!isPdfBook && !isFlippingInProgress && externalFlipTrigger == 0) {
+                                    if (isSpread) {
+                                        val rightTriple = getPageAtGlobalZero(curZero + 1)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .aspectRatio(1.414f)
+                                                .shadow(14.dp, RoundedCornerShape(6.dp))
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(palette.bgCard)
+                                                .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
+                                        ) {
+                                            // Left Leaf
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .fillMaxHeight()
+                                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(22.dp),
+                                                    contentAlignment = Alignment.CenterStart
+                                                ) {
+                                                    Text(
+                                                        text = currentChapter?.title.orEmpty().take(32).uppercase(),
+                                                        color = palette.textMuted,
+                                                        fontSize = 8.5.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 6.dp)
+                                                        .clipToBounds()
+                                                ) {
+                                                    InteractiveTextPageContent(
+                                                        chapterTitle = currentChapter?.title.orEmpty(),
+                                                        pageText = currentPageRaw,
+                                                        showChapterHeader = false,
+                                                        scrollable = false,
+                                                        prefs = prefs,
+                                                        bookHighlights = bookHighlights,
+                                                        onParagraphClicked = { paraText, isUpper ->
+                                                            selectedQuoteForPopover = paraText
+                                                            selectedPopoverInUpperHalf = isUpper
+                                                        },
+                                                        onIllustrationClicked = { path ->
+                                                            val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
+                                                            onOpenIllustViewer(idx)
+                                                        },
+                                                        onSaveHighlightNote = onSaveHighlightNote,
+                                                        onSearchInBook = { inBookSearchQuery = it }
+                                                    )
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(20.dp),
+                                                    contentAlignment = Alignment.CenterStart
+                                                ) {
+                                                    Text(
+                                                        text = "${metrics.currentGlobalPage}",
+                                                        color = palette.textMuted,
+                                                        fontSize = 8.5.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(1.dp)
+                                                    .fillMaxHeight()
+                                                    .background(Color.Black.copy(alpha = 0.14f))
+                                            )
+                                            // Right Leaf
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .fillMaxHeight()
+                                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(22.dp),
+                                                    contentAlignment = Alignment.CenterEnd
+                                                ) {
+                                                    Text(
+                                                        text = (if (rightTriple != null) chapters.getOrNull(rightTriple.first)?.title.orEmpty() else currentChapter?.title.orEmpty()).take(32).uppercase(),
+                                                        color = palette.textMuted,
+                                                        fontSize = 8.5.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 6.dp)
+                                                        .clipToBounds()
+                                                ) {
+                                                    if (rightTriple != null) {
+                                                        InteractiveTextPageContent(
+                                                            chapterTitle = chapters.getOrNull(rightTriple.first)?.title.orEmpty(),
+                                                            pageText = rightTriple.third,
+                                                            showChapterHeader = false,
+                                                            scrollable = false,
+                                                            prefs = prefs,
+                                                            bookHighlights = bookHighlights,
+                                                            onParagraphClicked = { paraText, isUpper ->
+                                                                selectedQuoteForPopover = paraText
+                                                                selectedPopoverInUpperHalf = isUpper
+                                                            },
+                                                            onIllustrationClicked = { path ->
+                                                                val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
+                                                                onOpenIllustViewer(idx)
+                                                            },
+                                                            onSaveHighlightNote = onSaveHighlightNote,
+                                                            onSearchInBook = { inBookSearchQuery = it }
+                                                        )
+                                                    }
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(20.dp),
+                                                    contentAlignment = Alignment.CenterEnd
+                                                ) {
+                                                    Text(
+                                                        text = "${metrics.currentGlobalPage + 1}",
+                                                        color = palette.textMuted,
+                                                        fontSize = 8.5.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        InteractiveTextPageContent(
+                                            chapterTitle = currentChapter?.title.orEmpty(),
+                                            pageText = currentPageRaw,
+                                            showChapterHeader = uiState.activePageIndex == 0,
+                                            scrollable = true,
+                                            prefs = prefs,
+                                            bookHighlights = bookHighlights,
+                                            onParagraphClicked = { paraText, isUpper ->
+                                                selectedQuoteForPopover = paraText
+                                                selectedPopoverInUpperHalf = isUpper
+                                            },
+                                            onIllustrationClicked = { path ->
+                                                val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
+                                                onOpenIllustViewer(idx)
+                                            },
+                                             onSaveHighlightNote = onSaveHighlightNote,
+                                             onSearchInBook = { inBookSearchQuery = it }
+                                         )
+                                     }
+                                }
+
                                 val activeBmp = curBitmap
-                                if (activeBmp != null) {
+                                if (activeBmp != null && (isPdfBook || isFlippingInProgress || externalFlipTrigger != 0)) {
                                     CylindricalFlipbookCanvas(
                                         currentPageBitmap = activeBmp,
                                         nextPageBitmap = nextBitmap,
@@ -593,6 +791,7 @@ fun ReaderScreen(
                                         onExternalTriggerConsumed = { externalFlipTrigger = 0 },
                                         onPageTurnCommitted = { dir -> onTurnPage(dir) },
                                         onCenterTap = { onToggleFullView() },
+                                        onFlipStateChanged = { isFlippingInProgress = it },
                                         modifier = if (isSpread) {
                                             Modifier
                                                 .fillMaxHeight()
@@ -988,97 +1187,6 @@ fun ReaderScreen(
                     }
                 }
 
-                // Interactive Page Scrubber Popup when tapping "HAL X DARI Y"
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showPageScrubber,
-                    enter = fadeIn(tween(180)) + slideInVertically(tween(200)) { it / 2 },
-                    exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 2 }
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = palette.sheetBg,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        shadowElevation = 14.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = if (strings.isId) "LOMPAT KE HALAMAN" else "JUMP TO PAGE",
-                                    color = palette.textMuted,
-                                    fontSize = 9.5.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    letterSpacing = 1.2.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "${scrubberPageValue.toInt().coerceIn(1, metrics.totalBookPages)} / ${metrics.totalBookPages}",
-                                    color = palette.textMain,
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            FlyleafThinSlider(
-                                value = scrubberPageValue,
-                                onValueChange = { scrubberPageValue = it },
-                                valueRange = 1f..metrics.totalBookPages.toFloat().coerceAtLeast(1f),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Surface(
-                                    onClick = { showPageScrubber = false },
-                                    shape = CircleShape,
-                                    color = Color.Transparent
-                                ) {
-                                    Text(
-                                        text = strings.cancelBtn,
-                                        color = palette.textMuted,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    onClick = {
-                                        val target = scrubberPageValue.toInt().coerceIn(1, metrics.totalBookPages)
-                                        val targetZero = target - 1
-                                        val triple = getPageAtGlobalZero(targetZero)
-                                        if (triple != null) {
-                                            onJumpToChapterAndPage(triple.first, triple.second)
-                                        }
-                                        showPageScrubber = false
-                                    },
-                                    shape = CircleShape,
-                                    color = palette.accentDark
-                                ) {
-                                    Text(
-                                        text = if (strings.isId) "Buka" else "Go",
-                                        color = palette.bgApp,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1093,75 +1201,143 @@ fun ReaderScreen(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.TOC_LIST,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
 
-                    Surface(
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .padding(horizontal = 12.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (showArrows) {
-                                Text(
-                                    text = "‹",
-                                    color = palette.textMain.copy(alpha = 0.75f),
-                                    fontSize = 14.sp,
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .clickable {
-                                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                                externalFlipTrigger = -1
-                                            } else {
-                                                onTurnPage(-1)
-                                            }
-                                        }
-                                        .padding(horizontal = 4.dp)
-                                )
-                            }
-                            Text(
-                                text = pageIndicatorLabel,
-                                color = palette.textMain,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = 1.sp,
-                                fontWeight = FontWeight.Medium,
+                    // In-Place Animated Bottom Scrubber Capsule (Never shrinks book viewport!)
+                    AnimatedContent(
+                        targetState = showPageScrubber,
+                        transitionSpec = {
+                            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+                        },
+                        label = "bottomScrubberTransition",
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                            .height(40.dp)
+                    ) { isScrubberOpen ->
+                        if (!isScrubberOpen) {
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
                                 modifier = Modifier
-                                    .clip(CircleShape)
-                                    .clickable { showPageScrubber = !showPageScrubber }
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                            )
-                            if (showArrows) {
-                                Text(
-                                    text = "›",
-                                    color = palette.textMain.copy(alpha = 0.75f),
-                                    fontSize = 14.sp,
+                                    .fillMaxWidth()
+                                    .fillMaxHeight()
+                            ) {
+                                Row(
                                     modifier = Modifier
-                                        .clip(CircleShape)
-                                        .clickable {
-                                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                                externalFlipTrigger = 1
-                                            } else {
-                                                onTurnPage(1)
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    if (showArrows) {
+                                        Text(
+                                            text = "‹",
+                                            color = palette.textMain.copy(alpha = 0.75f),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable {
+                                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                                                        externalFlipTrigger = -1
+                                                    } else {
+                                                        onTurnPage(-1)
+                                                    }
+                                                }
+                                                .padding(horizontal = 6.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = pageIndicatorLabel,
+                                        color = palette.textMain,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        letterSpacing = 1.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .clickable { showPageScrubber = true }
+                                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                                    )
+                                    if (showArrows) {
+                                        Text(
+                                            text = "›",
+                                            color = palette.textMain.copy(alpha = 0.75f),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable {
+                                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                                                        externalFlipTrigger = 1
+                                                    } else {
+                                                        onTurnPage(1)
+                                                    }
+                                                }
+                                                .padding(horizontal = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "${scrubberPageValue.toInt().coerceIn(1, metrics.totalBookPages)} / ${metrics.totalBookPages}",
+                                        color = palette.textMain,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    LlunevieThinSlider(
+                                        value = scrubberPageValue,
+                                        onValueChange = { newVal ->
+                                            scrubberPageValue = newVal
+                                            val target = newVal.toInt().coerceIn(1, metrics.totalBookPages)
+                                            val targetZero = target - 1
+                                            val triple = getPageAtGlobalZero(targetZero)
+                                            if (triple != null) {
+                                                onJumpToChapterAndPage(triple.first, triple.second)
                                             }
+                                        },
+                                        valueRange = 1f..metrics.totalBookPages.toFloat().coerceAtLeast(1f),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Surface(
+                                        onClick = { showPageScrubber = false },
+                                        shape = CircleShape,
+                                        color = palette.accentDark,
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text("✓", color = palette.bgApp, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
-                                        .padding(horizontal = 4.dp)
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1171,13 +1347,13 @@ fun ReaderScreen(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = "Aa",
                                 color = palette.textMain,
-                                fontSize = 13.5.sp,
+                                fontSize = 14.sp,
                                 fontFamily = FontFamily.Serif,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -3259,7 +3435,7 @@ private fun InteractiveTextPageContent(
         prefs.fontWeight == 500 -> FontWeight.Medium
         else -> FontWeight.Normal
     }
-    val paraSpacingDp = (prefs.fontSizeSp * prefs.paraSpacingEm * 0.65f).dp.coerceIn(6.dp, 36.dp)
+    val paraSpacingDp = (prefs.fontSizeSp * prefs.paraSpacingEm * 0.75f).dp.coerceIn(4.dp, 48.dp)
 
     val clipboardManager = LocalClipboardManager.current
     var isToolbarShown by remember { mutableStateOf(false) }
@@ -3351,6 +3527,17 @@ private fun InteractiveTextPageContent(
                             // Stabilo Highlighting via SpanStyle inside AnnotatedString (Pastel swatches with dark readable text)
                             val annotatedPara = buildAnnotatedString {
                                 append(para)
+                                if (prefs.wordSpacingPx > 0) {
+                                    for (i in para.indices) {
+                                        if (para[i] == ' ') {
+                                            addStyle(
+                                                SpanStyle(letterSpacing = (prefs.wordSpacingPx * 0.35f).sp),
+                                                i,
+                                                i + 1
+                                            )
+                                        }
+                                    }
+                                }
                                 bookHighlights.forEach { hl ->
                                     val quote = hl.quoteText.trim()
                                     if (quote.isNotBlank() && para.contains(quote, ignoreCase = true)) {
@@ -3362,7 +3549,7 @@ private fun InteractiveTextPageContent(
                                             addStyle(
                                                 style = SpanStyle(
                                                     background = palette.highlightBg(colorKey),
-                                                    color = Color(0xFF1E1B18)
+                                                    color = Color(0xFF18181B)
                                                 ),
                                                 start = foundIdx,
                                                 end = foundIdx + quote.length
@@ -3375,7 +3562,7 @@ private fun InteractiveTextPageContent(
                                     addStyle(
                                         style = SpanStyle(
                                             background = Color(0xFFFEF08A).copy(alpha = 0.65f),
-                                            color = Color(0xFF1E1B18)
+                                            color = Color(0xFF18181B)
                                         ),
                                         start = selStart,
                                         end = selEnd
@@ -3389,12 +3576,12 @@ private fun InteractiveTextPageContent(
                                     color = palette.textMain,
                                     fontSize = prefs.fontSizeSp.sp,
                                     lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
-                                    letterSpacing = (prefs.letterSpacingEm * 14f).sp,
+                                    letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp).sp,
                                     fontFamily = resolvedFontFamily,
                                     fontWeight = resolvedFontWeight,
                                     textAlign = resolvedTextAlign,
                                     style = TextStyle(
-                                        textIndent = if (prefs.paraIndent) TextIndent(firstLine = 22.sp) else TextIndent.None
+                                        textIndent = if (prefs.paraIndent) TextIndent(firstLine = (prefs.fontSizeSp * 1.5f).sp) else TextIndent.None
                                     ),
                                     onTextLayout = { textLayoutResult = it },
                                     modifier = Modifier

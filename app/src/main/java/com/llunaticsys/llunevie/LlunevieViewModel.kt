@@ -308,6 +308,12 @@ class LlunevieViewModel(
         }
     }
 
+    fun setUserPhotoPath(path: String?) {
+        viewModelScope.launch {
+            prefsRepo.setUserPhotoPath(path)
+        }
+    }
+
     fun setReadingFlowMode(mode: ReadingFlowMode, showFeedback: Boolean = true) {
         viewModelScope.launch {
             // Close open sheets first before orientation/mode transitions to prevent WindowManager crashes
@@ -572,7 +578,32 @@ class LlunevieViewModel(
                         }
                     }
                 }
-            } else {
+            }
+
+            // Verify real PDF page count: if book is PDF, verify against actual file pageCount and rebuild if needed
+            val isPdf = book.format.equals("PDF", true)
+            if (isPdf && book.localFilePath != null) {
+                val pdfFile = File(book.localFilePath)
+                if (pdfFile.exists()) {
+                    val actualPageCount = runCatching {
+                        android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                            android.graphics.pdf.PdfRenderer(pfd).use { it.pageCount }
+                        }
+                    }.getOrDefault(book.pagesCount)
+
+                    val totalPagesInChapters = parsedChapters.sumOf { it.pages.size }
+                    if (parsedChapters.isEmpty() || totalPagesInChapters != actualPageCount) {
+                        val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title)
+                        dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), rebuilt)
+                        parsedChapters.clear()
+                        rebuilt.forEach { ce ->
+                            val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                            val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }
+                            parsedChapters.add(BookChapter(index = ce.chapterIndex, title = ce.title, pages = pagesList))
+                        }
+                    }
+                }
+            } else if (parsedChapters.isEmpty()) {
                 parsedChapters.addAll(buildStructuredChaptersFromSynopsis(book))
             }
 
@@ -879,69 +910,67 @@ class LlunevieViewModel(
             // Close AddBookSheet immediately so user sees the book card appear with its cover & progress bar in Home / Library
             _uiState.update { it.copy(showAddBookSheet = false) }
 
-            runCatching {
+            var trackedBookId: String? = null
+            try {
                 when (ext) {
                     "pdf" -> {
-                        var trackedId: String? = null
                         val bundle = PdfNativeRenderer.importPdfDocumentWithProgress(
                             context = appContext,
                             uri = uri,
                             fallbackFileName = fileName,
                             targetShelf = targetShelf,
                             onInitialBookCreated = { partialBook ->
-                                trackedId = partialBook.id
+                                trackedBookId = partialBook.id
                                 dao.upsertBook(partialBook)
                             },
                             onProgressUpdate = { bId, pct ->
+                                trackedBookId = bId
                                 setBookImportProgress(bId, pct)
                             }
                         )
                         dao.saveBookWithChapters(bundle.book, bundle.chapters)
-                        trackedId?.let { setBookImportProgress(it, null) }
                         showToast(
                             if (isId) "\"${bundle.book.title}\" ditambahkan ke pustaka"
                             else "\"${bundle.book.title}\" added to library"
                         )
                     }
                     "epub" -> {
-                        var trackedId: String? = null
                         val bundle = EpubNativeParser.importAndParseEpubWithProgress(
                             context = appContext,
                             uri = uri,
                             fallbackFileName = fileName,
                             targetShelf = targetShelf,
                             onInitialBookCreated = { partialBook ->
-                                trackedId = partialBook.id
+                                trackedBookId = partialBook.id
                                 dao.upsertBook(partialBook)
                             },
                             onProgressUpdate = { bId, pct ->
+                                trackedBookId = bId
                                 setBookImportProgress(bId, pct)
                             }
                         )
                         dao.saveBookWithChapters(bundle.book, bundle.chapters)
-                        trackedId?.let { setBookImportProgress(it, null) }
                         showToast(
                             if (isId) "\"${bundle.book.title}\" ditambahkan ke pustaka"
                             else "\"${bundle.book.title}\" added to library"
                         )
                     }
                     "txt" -> {
-                        var trackedId: String? = null
                         val bundle = TxtNativeParser.importAndParseTxtWithProgress(
                             context = appContext,
                             uri = uri,
                             fallbackFileName = fileName,
                             targetShelf = targetShelf,
                             onInitialBookCreated = { partialBook ->
-                                trackedId = partialBook.id
+                                trackedBookId = partialBook.id
                                 dao.upsertBook(partialBook)
                             },
                             onProgressUpdate = { bId, pct ->
+                                trackedBookId = bId
                                 setBookImportProgress(bId, pct)
                             }
                         )
                         dao.saveBookWithChapters(bundle.book, bundle.chapters)
-                        trackedId?.let { setBookImportProgress(it, null) }
                         showToast(
                             if (isId) "\"${bundle.book.title}\" ditambahkan ke pustaka"
                             else "\"${bundle.book.title}\" added to library"
@@ -952,9 +981,14 @@ class LlunevieViewModel(
                         restoreBackupFromJsonString(rawJson)
                         showToast(if (isId) "Cadangan lokal dipulihkan" else "Local backup restored")
                     }
+                    else -> {
+                        showToast(if (isId) "Format berkas tidak didukung (.$ext)" else "Unsupported file format (.$ext)")
+                    }
                 }
-            }.onFailure {
-                showToast(if (isId) "Gagal membaca file ($fileName)" else "Failed to import file ($fileName)")
+            } catch (e: Exception) {
+                showToast(if (isId) "Gagal mengimpor: ${e.localizedMessage ?: "Kesalahan berkas"}" else "Import failed: ${e.localizedMessage ?: "File error"}")
+            } finally {
+                trackedBookId?.let { setBookImportProgress(it, null) }
             }
         }
     }
@@ -1281,7 +1315,11 @@ class LlunevieViewModel(
                 coverImagePath = candidate.coverUrl,
                 spineColorHex = spineColor,
                 spineTextColorHex = spineTextColor,
-                synopsis = candidate.synopsis
+                synopsis = candidate.synopsis,
+                heightCm = candidate.heightCm,
+                widthCm = candidate.widthCm,
+                lengthCm = candidate.lengthCm,
+                weightGrams = candidate.weightGrams
             )
             val chapters = buildStructuredChaptersFromSynopsis(entity).map {
                 BookChapterEntity(

@@ -87,16 +87,16 @@ fun buildLluneviePalette(
             isAmoled = false,
             isDark = false,
             bgApp = Color(0xFFF5F2EA),
-            bgCard = if (isGlass) Color(0xFFE6E0D2).copy(alpha = 0.54f) else Color(0xFFEFECE3),
-            bgSurface = if (isGlass) Color(0xFFD8D2C4).copy(alpha = 0.66f) else Color(0xFFFAF8F3),
-            sheetBg = if (isGlass) Color(0xFFF6F3EB).copy(alpha = 0.92f) else Color(0xFFFAF8F3),
-            dockBg = if (isGlass) Color(0xFFD8D2C4).copy(alpha = 0.68f) else Color(0xFFFAF8F3),
-            dockBorder = if (isGlass) Color(0xFF23201A).copy(alpha = 0.12f) else Color(0xFFE3DFD3),
+            bgCard = if (isGlass) Color(0xFFECE7DA).copy(alpha = 0.65f) else Color(0xFFECE7DA),
+            bgSurface = if (isGlass) Color(0xFFFAF7F0).copy(alpha = 0.68f) else Color(0xFFFAF7F0),
+            sheetBg = if (isGlass) Color(0xFFF5F2EA).copy(alpha = 0.92f) else Color(0xFFF5F2EA),
+            dockBg = if (isGlass) Color(0xFFE5DFD0).copy(alpha = 0.75f) else Color(0xFFFAF7F0),
+            dockBorder = if (isGlass) Color(0xFF23201A).copy(alpha = 0.12f) else Color(0xFFDDD6C5),
             textMain = Color(0xFF23201A),
             textMuted = Color(0xFF7C776B),
-            borderSoft = if (isGlass) Color(0xFF23201A).copy(alpha = 0.11f) else Color(0xFFE3DFD3),
-            accentDark = Color(0xFF1E1D1A),
-            pillActiveBg = if (isGlass) Color(0xFFEAE6DC) else Color(0xFFEFECE4),
+            borderSoft = if (isGlass) Color(0xFF23201A).copy(alpha = 0.11f) else Color(0xFFDDD6C5),
+            accentDark = Color(0xFF181A1F),
+            pillActiveBg = if (isGlass) Color(0xFFE5DFD0) else Color(0xFFE5DFD0),
             pillActiveBorder = Color(0xFF23201A).copy(alpha = 0.08f),
             flipBackPaper = Color(0xFFEAE4D6),
             dotEmpty = Color(0xFFE4E0D5),
@@ -112,7 +112,7 @@ fun buildLluneviePalette(
             hlSkyBorder = Color(0xFF5B87BE),
             hlSageBg = Color(0xFF8FB384).copy(alpha = 0.36f),
             hlSageBorder = Color(0xFF68945B),
-            hlText = Color(0xFF23201A)
+            hlText = Color(0xFF18181B)
         )
 
         AppThemeMode.WHITE -> LluneviePalette(
@@ -146,7 +146,7 @@ fun buildLluneviePalette(
             hlSkyBorder = Color(0xFF4F81BD),
             hlSageBg = Color(0xFF96C08C).copy(alpha = 0.36f),
             hlSageBorder = Color(0xFF5E9450),
-            hlText = Color(0xFF18202C)
+            hlText = Color(0xFF18181B)
         )
 
         AppThemeMode.SEPIA -> LluneviePalette(
@@ -155,16 +155,16 @@ fun buildLluneviePalette(
             isAmoled = false,
             isDark = false,
             bgApp = Color(0xFFEFE6D5),
-            bgCard = if (isGlass) Color(0xFFE0D2BA).copy(alpha = 0.56f) else Color(0xFFE6DBC6),
-            bgSurface = if (isGlass) Color(0xFFD2C3AA).copy(alpha = 0.68f) else Color(0xFFF6EFE2),
-            sheetBg = if (isGlass) Color(0xFFF2E8D6).copy(alpha = 0.92f) else Color(0xFFF6EFE2),
-            dockBg = if (isGlass) Color(0xFFD2C3AA).copy(alpha = 0.70f) else Color(0xFFF6EFE2),
-            dockBorder = if (isGlass) Color(0xFF2B2116).copy(alpha = 0.13f) else Color(0xFFD8CBB3),
+            bgCard = if (isGlass) Color(0xFFE4D8C1).copy(alpha = 0.65f) else Color(0xFFE4D8C1),
+            bgSurface = if (isGlass) Color(0xFFF6EFE2).copy(alpha = 0.68f) else Color(0xFFF6EFE2),
+            sheetBg = if (isGlass) Color(0xFFEFE6D5).copy(alpha = 0.92f) else Color(0xFFEFE6D5),
+            dockBg = if (isGlass) Color(0xFFDCCEB4).copy(alpha = 0.75f) else Color(0xFFF6EFE2),
+            dockBorder = if (isGlass) Color(0xFF2B2116).copy(alpha = 0.13f) else Color(0xFFD2C2A6),
             textMain = Color(0xFF2C2217),
             textMuted = Color(0xFF7B6A56),
-            borderSoft = if (isGlass) Color(0xFF2B2116).copy(alpha = 0.12f) else Color(0xFFD8CBB3),
-            accentDark = Color(0xFF2C2217),
-            pillActiveBg = if (isGlass) Color(0xFFDDD4BD) else Color(0xFFE6DEC8),
+            borderSoft = if (isGlass) Color(0xFF2B2116).copy(alpha = 0.12f) else Color(0xFFD2C2A6),
+            accentDark = Color(0xFF181A1F),
+            pillActiveBg = if (isGlass) Color(0xFFDCCEB4) else Color(0xFFDCCEB4),
             pillActiveBorder = Color(0xFF2C2217).copy(alpha = 0.09f),
             flipBackPaper = Color(0xFFE3D7C1),
             dotEmpty = Color(0xFFDFD2BA),
@@ -180,7 +180,7 @@ fun buildLluneviePalette(
             hlSkyBorder = Color(0xFF517CAE),
             hlSageBg = Color(0xFF88AA7C).copy(alpha = 0.38f),
             hlSageBorder = Color(0xFF5F8852),
-            hlText = Color(0xFF2C2217)
+            hlText = Color(0xFF18181B)
         )
 
         AppThemeMode.BLACK -> LluneviePalette(
@@ -249,7 +249,7 @@ fun buildLluneviePalette(
             hlSkyBorder = Color(0xFF82B2EC),
             hlSageBg = Color(0xFF92C488).copy(alpha = 0.28f),
             hlSageBorder = Color(0xFF92C488),
-            hlText = Color(0xFFF5F2EA)
+            hlText = Color(0xFF18181B)
         )
     }
 }

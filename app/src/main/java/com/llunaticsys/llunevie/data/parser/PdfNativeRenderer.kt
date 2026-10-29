@@ -46,6 +46,51 @@ object PdfNativeRenderer {
         return aspectRatioCache[pdfFilePath] ?: 0.707f
     }
 
+    fun buildPdfChapters(
+        bookId: String,
+        totalPages: Int,
+        defaultTitle: String = "Dokumen PDF"
+    ): List<BookChapterEntity> {
+        val safePages = totalPages.coerceAtLeast(1)
+        val chaptersCount = when {
+            safePages <= 16 -> 1
+            safePages <= 32 -> 2
+            safePages <= 64 -> 4
+            safePages <= 128 -> 8
+            safePages <= 256 -> 12
+            safePages <= 512 -> 16
+            else -> 20
+        }
+        val pagesPerChapter = ceil(safePages.toDouble() / chaptersCount.toDouble()).toInt().coerceAtLeast(1)
+        val chapters = mutableListOf<BookChapterEntity>()
+        var startIdx = 0
+        var chIdx = 0
+        while (startIdx < safePages) {
+            val endIdx = (startIdx + pagesPerChapter).coerceAtMost(safePages)
+            val pagesArr = JSONArray()
+            for (pIdx in startIdx until endIdx) {
+                pagesArr.put("[PDF_PAGE:$pIdx]")
+            }
+            val title = if (chaptersCount == 1) {
+                defaultTitle
+            } else {
+                "Bagian ${chIdx + 1} (Hal ${startIdx + 1}–$endIdx)"
+            }
+            chapters.add(
+                BookChapterEntity(
+                    bookId = bookId,
+                    chapterIndex = chIdx,
+                    title = title,
+                    pagesJson = pagesArr.toString(),
+                    illustrationsJson = "[]"
+                )
+            )
+            chIdx++
+            startIdx = endIdx
+        }
+        return chapters
+    }
+
     suspend fun importPdfDocumentWithProgress(
         context: Context,
         uri: Uri,
@@ -90,21 +135,19 @@ object PdfNativeRenderer {
             synopsis = cleanTitle
         )
         onInitialBookCreated(initialBook)
-        onProgressUpdate(bookId, 12)
+        onProgressUpdate(bookId, 15)
 
         val destPdfFile = File(booksDir, "$bookId.pdf")
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(destPdfFile).use { output ->
                 val buffer = ByteArray(64 * 1024)
                 var bytesRead: Int
-                var totalCopied = 0L
                 while (input.read(buffer).also { bytesRead = it } != -1) {
                     output.write(buffer, 0, bytesRead)
-                    totalCopied += bytesRead
                 }
             }
         }
-        onProgressUpdate(bookId, 45)
+        onProgressUpdate(bookId, 50)
 
         var totalPages = 1
         var coverFilePath: String? = null
@@ -137,7 +180,7 @@ object PdfNativeRenderer {
                 }
             }
         }
-        onProgressUpdate(bookId, 75)
+        onProgressUpdate(bookId, 80)
 
         val (spineHex, spineTextHex) = SpineColorExtractor.extractSpineColors(firstPageBitmap)
 
@@ -150,19 +193,17 @@ object PdfNativeRenderer {
             spineTextColorHex = spineTextHex,
             synopsis = "$cleanTitle ($totalPages PDF pages)."
         )
-        onInitialBookCreated(bookWithCover)
-        onProgressUpdate(bookId, 85)
 
-        val (chapters, _) = extractLogicalPdfChapters(
-            destPdfFile = destPdfFile,
-            totalPages = totalPages,
+        // Instantly generate logical chapters covering ALL pages 0 until totalPages (< 10ms!)
+        val chapters = buildPdfChapters(
             bookId = bookId,
-            coversDir = coversDir,
-            coverFilePath = coverFilePath,
+            totalPages = totalPages,
             defaultTitle = cleanTitle
         )
 
+        onInitialBookCreated(bookWithCover)
         onProgressUpdate(bookId, 100)
+
         ParsedBookBundle(book = bookWithCover, chapters = chapters)
     }
 

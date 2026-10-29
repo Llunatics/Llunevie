@@ -437,28 +437,17 @@ fun LibraryScreen(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)
                                     ) {
                                           shelfRow.forEach { (globalIdx, book) ->
-                                              val pages = book.pagesCount.coerceIn(80, 950)
-                                              val wDp = (38 + ((pages - 80) * 16) / (950 - 80)).dp.coerceIn(38.dp, 54.dp)
-                                              val explicitHeightMatch = remember(book.synopsis) {
-                                                  Regex("""(?:tinggi|dimensi|height)\s*[:=]?\s*(\d{2}(?:\.\d+)?)\s*cm""", RegexOption.IGNORE_CASE).find(book.synopsis)
-                                              }
-                                              val hDp = remember(book.id, book.synopsis) {
-                                                  if (explicitHeightMatch != null) {
-                                                      val cm = explicitHeightMatch.groupValues[1].toFloatOrNull()
-                                                      if (cm != null && cm in 16f..28f) {
-                                                          (210f + (cm - 18f) * 5f).coerceIn(210f, 246f).dp
-                                                      } else {
-                                                          val seed = abs(book.id.hashCode())
-                                                          val heights = listOf(216.dp, 224.dp, 232.dp, 226.dp, 238.dp, 220.dp, 230.dp)
-                                                          heights[seed % heights.size]
-                                                      }
-                                                  } else {
-                                                      val seed = abs(book.id.hashCode())
-                                                      val heights = listOf(216.dp, 224.dp, 232.dp, 226.dp, 238.dp, 220.dp, 230.dp)
-                                                      heights[seed % heights.size]
-                                                  }
-                                              }
-                                              val isSelected = uiState.libSelectedIds.contains(book.id)
+                                               val pages = book.pagesCount.coerceIn(80, 950)
+                                               val wDp = (38 + ((pages - 80) * 16) / (950 - 80)).dp.coerceIn(38.dp, 54.dp)
+                                               val hDp = remember(book.id, book.heightCm) {
+                                                   if (book.heightCm > 0f) {
+                                                       val clampedCm = book.heightCm.coerceIn(14f, 30f)
+                                                       (176f + ((clampedCm - 14f) / 16f) * 76f).dp // Maps 14cm..30cm -> 176.dp..252.dp
+                                                   } else {
+                                                       (208 + (abs(book.id.hashCode()) % 28)).dp
+                                                   }
+                                               }
+                                               val isSelected = uiState.libSelectedIds.contains(book.id)
 
                                               val dist = hoveredBookIdx?.let { abs(it - globalIdx) }
                                               val isHovered = dist == 0
@@ -1408,9 +1397,15 @@ fun LibraryScreen(
                 bMatch?.groupValues?.get(1).orEmpty()
             )
         }
-        var lengthCm by remember(editing) { mutableStateOf(parsedDim.first) }
-        var widthCm by remember(editing) { mutableStateOf(parsedDim.second) }
-        var weightKg by remember(editing) { mutableStateOf(parsedDim.third) }
+        var lengthCm by remember(editing) {
+            mutableStateOf(if (editing.heightCm > 0f) "${editing.heightCm}" else parsedDim.first)
+        }
+        var widthCm by remember(editing) {
+            mutableStateOf(if (editing.widthCm > 0f) "${editing.widthCm}" else parsedDim.second)
+        }
+        var weightKg by remember(editing) {
+            mutableStateOf(if (editing.weightGrams > 0f) "${editing.weightGrams / 1000f}" else parsedDim.third)
+        }
 
         Dialog(onDismissRequest = onCloseEditModal) {
             Surface(
@@ -1644,6 +1639,9 @@ fun LibraryScreen(
                         Surface(
                             onClick = {
                                 val nextMins = timeMinsStr.toIntOrNull()?.coerceAtLeast(0) ?: editing.timeMinutes
+                                val parsedHeight = lengthCm.replace(',', '.').toFloatOrNull() ?: editing.heightCm
+                                val parsedWidth = widthCm.replace(',', '.').toFloatOrNull() ?: editing.widthCm
+                                val parsedWeight = weightKg.replace(',', '.').toFloatOrNull()?.let { it * 1000f } ?: editing.weightGrams
                                 val dimInfo = if (lengthCm.isNotBlank() || widthCm.isNotBlank() || weightKg.isNotBlank()) {
                                     listOfNotNull(
                                         lengthCm.ifBlank { null }?.let { "P: ${it}cm" },
@@ -1669,7 +1667,11 @@ fun LibraryScreen(
                                         isbn = isbnStr.ifBlank { "—" },
                                         coverImagePath = coverUrlStr.ifBlank { editing.coverImagePath },
                                         synopsis = synopsis,
-                                        dimensionsText = dimInfo
+                                        dimensionsText = dimInfo,
+                                        heightCm = parsedHeight,
+                                        widthCm = parsedWidth,
+                                        lengthCm = parsedHeight,
+                                        weightGrams = parsedWeight
                                     )
                                 )
                             },

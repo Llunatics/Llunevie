@@ -33,6 +33,10 @@ data class BookEntity(
     val spineTextColorHex: Long,
     val synopsis: String,
     val dimensionsText: String = "",
+    val heightCm: Float = 20f,
+    val widthCm: Float = 14f,
+    val lengthCm: Float = 20f,
+    val weightGrams: Float = 300f,
     val createdAtMillis: Long = System.currentTimeMillis()
 )
 

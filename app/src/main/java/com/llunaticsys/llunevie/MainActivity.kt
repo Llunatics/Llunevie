@@ -12,10 +12,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -234,13 +239,19 @@ private fun LlunevieMainContainer(
             .background(palette.bgApp)
             .statusBarsPadding()
     ) {
-        // Smooth screen transition matching `@keyframes fadeSlideUp` in `llunevie_prototype.html`
+        // Directional spring + subtle scale screen transition matching native fluid navigation
         AnimatedContent(
             targetState = uiState.activeTab,
             transitionSpec = {
-                (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                    slideInVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) { fullH -> fullH / 36 })
-                    .togetherWith(fadeOut(animationSpec = tween(140)))
+                val dir = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                (slideInHorizontally(spring(dampingRatio = 0.84f, stiffness = 360f)) { w -> dir * (w / 6) } +
+                    fadeIn(tween(200)) +
+                    scaleIn(initialScale = 0.965f, animationSpec = spring(dampingRatio = 0.84f, stiffness = 360f)))
+                    .togetherWith(
+                        slideOutHorizontally(tween(170)) { w -> -dir * (w / 8) } +
+                            fadeOut(tween(140)) +
+                            scaleOut(targetScale = 0.965f, animationSpec = tween(170))
+                    )
             },
             label = "mainTabTransition",
             modifier = Modifier.fillMaxSize()
@@ -307,6 +318,7 @@ private fun LlunevieMainContainer(
                     onSetUserName = { viewModel.setUserName(it) },
                     onPickPhoto = onPickPhoto,
                     onResetPhoto = { viewModel.resetUserPhoto() },
+                    onSavePhotoPath = { viewModel.setUserPhotoPath(it) },
                     onSetReadingFlowMode = { viewModel.setReadingFlowMode(it) },
                     onSetAnimatePageTurn = { viewModel.setAnimatePageTurn(it) },
                     onSetPageAnimStyle = { viewModel.setPageAnimStyle(it) },

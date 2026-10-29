@@ -54,7 +54,12 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import com.llunaticsys.llunevie.ui.theme.LluneviePalette
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
@@ -681,10 +686,89 @@ fun <T> ClassicGlassSegmentedControl(
     }
 }
 
+fun Modifier.llunevieSurface(
+    palette: LluneviePalette,
+    isGlass: Boolean = palette.isGlass,
+    shape: Shape = RoundedCornerShape(16.dp),
+    shadowElevation: androidx.compose.ui.unit.Dp = if (isGlass) 10.dp else 4.dp
+): Modifier {
+    return if (isGlass) {
+        val glassBg = if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface.copy(alpha = 0.65f)
+        val glassBorderBrush = if (palette.isDark) {
+            Brush.linearGradient(
+                colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
+                start = Offset.Zero,
+                end = Offset.Infinite
+            )
+        } else {
+            Brush.linearGradient(
+                colors = listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.15f)),
+                start = Offset.Zero,
+                end = Offset.Infinite
+            )
+        }
+        this
+            .shadow(shadowElevation, shape)
+            .clip(shape)
+            .background(glassBg)
+            .border(BorderStroke(1.dp, glassBorderBrush), shape)
+    } else {
+        this
+            .shadow(shadowElevation, shape)
+            .clip(shape)
+            .background(palette.bgCard)
+            .border(BorderStroke(1.dp, palette.borderSoft), shape)
+    }
+}
+
+@Composable
+fun GlassSurface(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(16.dp),
+    shadowElevation: androidx.compose.ui.unit.Dp = 8.dp,
+    content: @Composable () -> Unit
+) {
+    val palette = LocalLluneviePalette.current
+    val isGlass = palette.isGlass
+    val glassBg = if (isGlass) {
+        if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface.copy(alpha = 0.65f)
+    } else {
+        palette.bgCard
+    }
+    val borderStroke = if (isGlass) {
+        val brush = if (palette.isDark) {
+            Brush.linearGradient(
+                colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
+                start = Offset.Zero,
+                end = Offset.Infinite
+            )
+        } else {
+            Brush.linearGradient(
+                colors = listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.15f)),
+                start = Offset.Zero,
+                end = Offset.Infinite
+            )
+        }
+        BorderStroke(1.dp, brush)
+    } else {
+        BorderStroke(1.dp, palette.borderSoft)
+    }
+
+    Surface(
+        shape = shape,
+        color = glassBg,
+        border = borderStroke,
+        shadowElevation = if (isGlass) (shadowElevation * 1.4f) else shadowElevation,
+        modifier = modifier
+    ) {
+        content()
+    }
+}
+
 /**
  * 1:1 Bottom Floating Navigation Dock (`#bottomNavContainer` in `llunevie_prototype.html`)
  * - Respects `.navigationBarsPadding()` so it never collides with Android system navigation bar
- * - 62.dp capsule height, 6.dp inner padding, 50.dp active pill with 20.dp icon and 13.5.sp label
+ * - 62.dp capsule height, 6.dp inner padding, sliding active pill with 20.dp icon and 13.5.sp label
  * - Asymmetric `31/31/31/14dp` `.llunevie-starry-fab` (62x62.dp) with low-opacity ✦ sparkles
  */
 @Composable
@@ -754,63 +838,57 @@ fun BottomFloatingNavDock(
                         palette.pillActiveBorder
                     }
 
-                    if (isSelected) {
-                        Surface(
-                            shape = RoundedCornerShape(25.dp),
-                            color = activePillBg,
-                            border = BorderStroke(1.dp, activePillBorder),
-                            shadowElevation = 1.5.dp,
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (isSelected) 1.08f else 1f,
+                        animationSpec = spring(dampingRatio = 0.6f),
+                        label = "iconBounce"
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(25.dp),
+                        color = if (isSelected) activePillBg else Color.Transparent,
+                        border = if (isSelected) BorderStroke(1.dp, activePillBorder) else null,
+                        shadowElevation = if (isSelected) 1.5.dp else 0.dp,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(25.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { onSelectTab(tab) }
+                    ) {
+                        Row(
                             modifier = Modifier
                                 .fillMaxHeight()
-                                .clip(RoundedCornerShape(25.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) { onSelectTab(tab) }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                PrototypeSvgIcon(
-                                    type = iconType,
-                                    tint = palette.textMain,
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidthDp = 1.8f,
-                                    badgeFillColor = if (palette.isGlass) Color.White.copy(alpha = 0.5f) else palette.pillActiveBg
-                                )
-                                Spacer(modifier = Modifier.width(7.dp))
-                                Text(
-                                    text = label,
-                                    color = palette.textMain,
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .clip(CircleShape)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) { onSelectTab(tab) },
-                            contentAlignment = Alignment.Center
+                                .padding(horizontal = if (isSelected) 16.dp else 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
                             PrototypeSvgIcon(
                                 type = iconType,
-                                tint = palette.textMuted,
-                                modifier = Modifier.size(20.dp),
-                                strokeWidthDp = 1.6f,
-                                badgeFillColor = palette.dockBg
+                                tint = if (isSelected) palette.textMain else palette.textMuted,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .scale(iconScale),
+                                strokeWidthDp = if (isSelected) 1.8f else 1.6f,
+                                badgeFillColor = if (isSelected) (if (palette.isGlass) Color.White.copy(alpha = 0.5f) else palette.pillActiveBg) else palette.dockBg
                             )
+                            AnimatedVisibility(
+                                visible = isSelected,
+                                enter = expandHorizontally(spring(dampingRatio = 0.8f, stiffness = 420f)) + fadeIn(tween(180)),
+                                exit = shrinkHorizontally(tween(150)) + fadeOut(tween(120))
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Spacer(modifier = Modifier.width(7.dp))
+                                    Text(
+                                        text = label,
+                                        color = palette.textMain,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -934,5 +1012,22 @@ fun FlyleafThinSlider(
                 )
             }
         }
+    )
+}
+
+@Composable
+fun LlunevieThinSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    steps: Int = 0,
+    modifier: Modifier = Modifier
+) {
+    FlyleafThinSlider(
+        value = value,
+        onValueChange = onValueChange,
+        valueRange = valueRange,
+        steps = steps,
+        modifier = modifier
     )
 }

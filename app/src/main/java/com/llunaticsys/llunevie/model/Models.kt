@@ -152,5 +152,9 @@ data class CatalogBookCandidate(
     val category: String,
     val coverUrl: String?,
     val coverBgHex: Long,
-    val synopsis: String
+    val synopsis: String,
+    val heightCm: Float = 20f,
+    val widthCm: Float = 14f,
+    val lengthCm: Float = 20f,
+    val weightGrams: Float = 300f
 )
