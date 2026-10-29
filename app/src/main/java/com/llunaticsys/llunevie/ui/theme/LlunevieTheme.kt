@@ -45,6 +45,8 @@ data class LluneviePalette(
     val hlSageBorder: Color,
     val hlText: Color
 ) {
+    val textPrimary: Color get() = textMain
+    val textSecondary: Color get() = textMuted
     fun highlightBg(key: HighlightColorKey): Color = when (key) {
         HighlightColorKey.GOLD -> Color(0xFFFEF08A)
         HighlightColorKey.PEACH -> Color(0xFFFECDD3)

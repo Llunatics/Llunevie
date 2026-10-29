@@ -216,7 +216,7 @@ fun AddBookSheet(
                         var showAdvance by remember { mutableStateOf(false) }
                         var publisher by remember { mutableStateOf("") }
                         var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
-                        var isbn by remember { mutableStateOf("") }
+                        var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
                         var coverUrl by remember { mutableStateOf("") }
                         var lengthCm by remember { mutableStateOf("") }
                         var widthCm by remember { mutableStateOf("") }

@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -69,6 +70,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import android.graphics.BitmapFactory
+import com.llunaticsys.llunevie.data.parser.SpineColorExtractor
 import com.llunaticsys.llunevie.LlunevieUiState
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.data.local.ShelfEntity
@@ -117,6 +124,7 @@ fun LibraryScreen(
     onSaveEditedBook: (BookEntity) -> Unit,
     onShowDeleteConfirm: (Boolean) -> Unit,
     onConfirmDeleteSelected: () -> Unit,
+    onUpdateSpineColor: (bookId: String, extractedHex: Long) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
@@ -375,9 +383,6 @@ fun LibraryScreen(
                 when (prefs.libViewMode) {
                     // 1. SPINE SHELF MODE (1:1 with `llunevie_prototype.html`: ✦ top, vertical title, page count, vertical author first name, 3D spine gradient, swipe wave lift, 14dp rounded-full plank)
                     LibraryViewMode.SPINE -> {
-                        var hoveredBookIdx by remember { mutableStateOf<Int?>(null) }
-                        val spineBoundsMap = remember { mutableMapOf<Int, Pair<Float, Float>>() }
-
                         val shelvesRows = remember(filteredBooks) {
                             val rows = mutableListOf<List<Pair<Int, BookEntity>>>()
                             var currentRow = mutableListOf<Pair<Int, BookEntity>>()
@@ -400,6 +405,9 @@ fun LibraryScreen(
 
                         Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                             shelvesRows.forEach { shelfRow ->
+                                var rowHoverX by remember { mutableStateOf<Float?>(null) }
+                                val rowSpineBoundsMap = remember { mutableMapOf<Int, Pair<Float, Float>>() }
+
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     Row(
                                         modifier = Modifier
@@ -410,22 +418,13 @@ fun LibraryScreen(
                                                 if (uiState.libSelectMode) return@pointerInput
                                                 detectHorizontalDragGestures(
                                                     onDragStart = { offset ->
-                                                        val hit = spineBoundsMap.entries.find { (_, range) ->
-                                                            offset.x in range.first..range.second
-                                                        }?.key
-                                                        hoveredBookIdx = hit
+                                                        rowHoverX = offset.x
                                                     },
                                                     onHorizontalDrag = { change, _ ->
-                                                        val x = change.position.x
-                                                        val hit = spineBoundsMap.entries.find { (_, range) ->
-                                                            x in range.first..range.second
-                                                        }?.key
-                                                        if (hoveredBookIdx != hit) {
-                                                            hoveredBookIdx = hit
-                                                        }
+                                                        rowHoverX = change.position.x
                                                     },
-                                                    onDragEnd = { hoveredBookIdx = null },
-                                                    onDragCancel = { hoveredBookIdx = null }
+                                                    onDragEnd = { rowHoverX = null },
+                                                    onDragCancel = { rowHoverX = null }
                                                 )
                                             },
                                         verticalAlignment = Alignment.Bottom,
@@ -444,52 +443,82 @@ fun LibraryScreen(
                                                }
                                                val isSelected = uiState.libSelectedIds.contains(book.id)
 
-                                              val dist = hoveredBookIdx?.let { abs(it - globalIdx) }
-                                              val isHovered = dist == 0
-                                              val targetLift = when {
-                                                  isHovered || isSelected -> (-18).dp
-                                                  else -> 0.dp
-                                              }
-                                              val targetScale = when {
-                                                  isHovered -> 1.03f
-                                                  else -> 1f
-                                              }
-                                              val liftOffset by animateDpAsState(
-                                                  targetValue = targetLift,
-                                                  animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                                                  label = "spineLift"
-                                              )
-                                              val scaleAnim by animateFloatAsState(
-                                                  targetValue = targetScale,
-                                                  animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                                                  label = "spineScale"
-                                              )
+                                               val isHovered = rowHoverX?.let { x ->
+                                                   rowSpineBoundsMap[globalIdx]?.let { (left, right) -> x in left..right }
+                                               } == true
+                                               val targetLift = when {
+                                                   isHovered || isSelected -> (-18).dp
+                                                   else -> 0.dp
+                                               }
+                                               val targetScale = when {
+                                                   isHovered -> 1.03f
+                                                   else -> 1f
+                                               }
+                                               val liftOffset by animateDpAsState(
+                                                   targetValue = targetLift,
+                                                   animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                                   label = "spineLift"
+                                               )
+                                               val scaleAnim by animateFloatAsState(
+                                                   targetValue = targetScale,
+                                                   animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                                   label = "spineScale"
+                                               )
 
-                                              val spineShape = RoundedCornerShape(
-                                                  topStart = 5.dp,
-                                                  topEnd = 5.dp,
-                                                  bottomStart = 3.dp,
-                                                  bottomEnd = 3.dp
-                                              )
-                                              val spineTextColor = Color(book.spineTextColorHex)
-                                              val shortTitle = remember(book.title) {
-                                                  book.title.substringBefore(":").trim().ifBlank { book.title }
-                                              }
-                                              val firstAuthor = remember(book.author) {
-                                                  book.author.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
-                                              }
+                                               val spineShape = RoundedCornerShape(
+                                                   topStart = 5.dp,
+                                                   topEnd = 5.dp,
+                                                   bottomStart = 3.dp,
+                                                   bottomEnd = 3.dp
+                                               )
+                                               val spineTextColor = Color(book.spineTextColorHex)
+                                               val shortTitle = remember(book.title) {
+                                                   book.title.substringBefore(":").trim().ifBlank { book.title }
+                                               }
+                                               val firstAuthor = remember(book.author) {
+                                                   book.author.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
+                                               }
 
-                                              Box(
-                                                  modifier = Modifier
-                                                      .width(wDp)
-                                                      .height(hDp)
-                                                      .zIndex(if (isHovered || isSelected) 25f else 1f)
-                                                      .offset(y = liftOffset)
-                                                      .scale(scaleAnim)
-                                                      .onGloballyPositioned { coords ->
-                                                          val left = coords.positionInRoot().x
-                                                          spineBoundsMap[globalIdx] = Pair(left, left + coords.size.width)
-                                                      }
+                                               val spineContext = LocalContext.current
+                                               LaunchedEffect(book.id, book.coverImagePath) {
+                                                   val isFallbackColor = book.spineColorHex == 0L ||
+                                                                         book.spineColorHex == 0xFF1E3A5FL ||
+                                                                         book.spineColorHex == 0xFF2B3A4AL
+                                                   val coverPath = book.coverImagePath
+                                                   if (isFallbackColor && !coverPath.isNullOrBlank()) {
+                                                       withContext(Dispatchers.IO) {
+                                                           runCatching {
+                                                               val bmp = if (coverPath.startsWith("http://") || coverPath.startsWith("https://")) {
+                                                                   val loader = coil.ImageLoader(spineContext)
+                                                                   val req = coil.request.ImageRequest.Builder(spineContext)
+                                                                       .data(coverPath)
+                                                                       .allowHardware(false)
+                                                                       .build()
+                                                                   val result = (loader.execute(req) as? coil.request.SuccessResult)?.drawable
+                                                                   (result as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                                                               } else {
+                                                                   BitmapFactory.decodeFile(coverPath)
+                                                               }
+                                                               if (bmp != null) {
+                                                                   val extracted = SpineColorExtractor.extractDominantSpineHex(bmp)
+                                                                   onUpdateSpineColor(book.id, extracted)
+                                                               }
+                                                           }
+                                                       }
+                                                   }
+                                               }
+
+                                               Box(
+                                                   modifier = Modifier
+                                                       .width(wDp)
+                                                       .height(hDp)
+                                                       .zIndex(if (isHovered || isSelected) 25f else 1f)
+                                                       .offset(y = liftOffset)
+                                                       .scale(scaleAnim)
+                                                       .onGloballyPositioned { coords ->
+                                                           val left = coords.positionInParent().x
+                                                           rowSpineBoundsMap[globalIdx] = Pair(left, left + coords.size.width)
+                                                       }
                                                       .shadow(if (isHovered || isSelected) 14.dp else 6.dp, spineShape)
                                                      .clip(spineShape)
                                                      .background(Color(book.spineColorHex))

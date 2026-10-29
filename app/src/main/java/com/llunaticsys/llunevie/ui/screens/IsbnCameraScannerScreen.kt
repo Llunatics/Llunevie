@@ -46,6 +46,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material3.Icon
+import androidx.compose.ui.window.Dialog
+import com.llunaticsys.llunevie.model.BatchLookupStatus
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -124,6 +130,8 @@ fun IsbnCameraScannerScreen(
     onRemoveBatchItem: (String) -> Unit,
     onClearBatchQueue: () -> Unit,
     onCommitBatchQueue: (String) -> Unit,
+    onCommitBatchFiltered: (String) -> Unit = onCommitBatchQueue,
+    onFillDetailsManually: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -519,6 +527,14 @@ fun IsbnCameraScannerScreen(
         val isBatchMode = uiState.cameraMode == "batch"
         val batchScannedBooks = uiState.batchScanQueue
         val isEn = strings.isEn
+        var showUnresolvedDialog by remember { mutableStateOf(false) }
+        val queueListState = rememberLazyListState()
+
+        LaunchedEffect(batchScannedBooks.size, batchScannedBooks.firstOrNull()?.isbn) {
+            if (batchScannedBooks.isNotEmpty()) {
+                queueListState.animateScrollToItem(0)
+            }
+        }
 
         Column(
             modifier = Modifier
@@ -583,7 +599,14 @@ fun IsbnCameraScannerScreen(
                 }
                 if (isBatchMode && batchScannedBooks.isNotEmpty()) {
                     Surface(
-                        onClick = { onCommitBatchQueue(defaultShelf) },
+                        onClick = {
+                            val unresolved = batchScannedBooks.filter { it.status != BatchLookupStatus.FOUND }
+                            if (unresolved.isEmpty()) {
+                                onCommitBatchQueue(defaultShelf)
+                            } else {
+                                showUnresolvedDialog = true
+                            }
+                        },
                         shape = RoundedCornerShape(50),
                         color = palette.textMain,
                         modifier = Modifier.padding(start = 8.dp)
@@ -621,6 +644,7 @@ fun IsbnCameraScannerScreen(
                     }
                 } else {
                     LazyColumn(
+                        state = queueListState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp, max = 188.dp),
@@ -663,15 +687,17 @@ fun IsbnCameraScannerScreen(
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = item.title,
-                                        color = palette.textMain,
+                                        text = if (item.status == BatchLookupStatus.NOT_FOUND) {
+                                            if (isEn) "ISBN Not Found" else "ISBN Tidak Ditemukan"
+                                        } else item.title,
+                                        color = if (item.status == BatchLookupStatus.NOT_FOUND) palette.textSecondary else palette.textMain,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${item.author} · ${item.isbn}",
+                                        text = if (item.status == BatchLookupStatus.NOT_FOUND || item.status == BatchLookupStatus.SEARCHING) item.isbn else "${item.author} · ${item.isbn}",
                                         color = palette.textMuted,
                                         fontSize = 11.sp,
                                         maxLines = 1,
@@ -798,19 +824,92 @@ fun IsbnCameraScannerScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                Surface(
-                    onClick = { onIsbnDetected(manualIsbnText) },
-                    shape = CircleShape,
-                    color = palette.textMain,
-                    modifier = Modifier.size(32.dp)
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(palette.textPrimary)
+                        .clickable { onIsbnDetected(manualIsbnText) },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                        contentDescription = "Submit ISBN",
+                        tint = palette.bgApp,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        if (showUnresolvedDialog) {
+            val unresolved = batchScannedBooks.filter { it.status != BatchLookupStatus.FOUND }
+            Dialog(onDismissRequest = { showUnresolvedDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = palette.sheetBg,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 16.dp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
                         Text(
-                            text = "→",
-                            color = palette.bgApp,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            text = if (isEn) "${unresolved.size} Book(s) Not Found" else "${unresolved.size} Buku Tidak Ditemukan",
+                            fontSize = 17.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.textPrimary
                         )
+                        Text(
+                            text = if (isEn) "Unresolved ISBNs: ${unresolved.joinToString(", ") { it.isbn }}\n\nHow would you like to proceed?"
+                            else "ISBN tidak ditemukan: ${unresolved.joinToString(", ") { it.isbn }}\n\nBagaimana Anda ingin melanjutkan?",
+                            fontSize = 12.sp,
+                            color = palette.textSecondary,
+                            lineHeight = 18.sp
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(
+                                onClick = {
+                                    showUnresolvedDialog = false
+                                    onCommitBatchFiltered(defaultShelf)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = if (isEn) "Remove & Save Found" else "Hapus dari Daftar & Simpan Sisanya",
+                                    color = palette.textPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 12.dp)
+                                )
+                            }
+                            Surface(
+                                onClick = {
+                                    showUnresolvedDialog = false
+                                    val firstUnresolved = unresolved.firstOrNull()?.isbn ?: ""
+                                    onFillDetailsManually(firstUnresolved)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = palette.accentDark,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = if (isEn) "Fill Details Manually" else "Tetap Simpan & Isi Detail Manual",
+                                    color = palette.bgApp,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 12.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

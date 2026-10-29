@@ -139,6 +139,12 @@ data class BookChapter(
     val pages: List<String>
 )
 
+enum class BatchLookupStatus {
+    SEARCHING,
+    FOUND,
+    NOT_FOUND
+}
+
 data class CatalogBookCandidate(
     val id: String,
     val title: String,
@@ -157,5 +163,6 @@ data class CatalogBookCandidate(
     val heightCm: Float = 20f,
     val widthCm: Float = 14f,
     val lengthCm: Float = 20f,
-    val weightGrams: Float = 300f
+    val weightGrams: Float = 300f,
+    val status: BatchLookupStatus = BatchLookupStatus.FOUND
 )

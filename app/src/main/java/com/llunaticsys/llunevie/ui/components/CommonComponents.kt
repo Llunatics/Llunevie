@@ -33,6 +33,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.shadow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -861,49 +865,32 @@ fun BottomFloatingNavDock(
             }
         }
 
-        // Asymmetric squircle 62x62.dp FAB button
-        val fabShape = RoundedCornerShape(topStart = 31.dp, topEnd = 31.dp, bottomEnd = 31.dp, bottomStart = 14.dp)
-        Surface(
-            onClick = onOpenAddBook,
-            shape = fabShape,
-            color = palette.accentDark,
-            shadowElevation = 8.dp,
-            modifier = Modifier.size(62.dp)
+        val isEn = strings.isEn
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
+                .clip(CircleShape)
+                .background(color = palette.textPrimary, shape = CircleShape)
+                .clickable { onOpenAddBook() },
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "✦",
-                    color = palette.bgApp.copy(alpha = 0.25f),
-                    fontSize = 8.sp,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(top = 8.dp, start = 11.dp)
-                )
-                Text(
-                    text = "✦",
-                    color = palette.bgApp.copy(alpha = 0.25f),
-                    fontSize = 7.sp,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 8.dp, end = 11.dp)
-                )
-                PrototypeSvgIcon(
-                    type = PrototypeIconType.PLUS,
-                    tint = palette.bgApp,
-                    modifier = Modifier.size(20.dp),
-                    strokeWidthDp = 2.0f
-                )
-            }
+            Icon(
+                imageVector = Icons.Rounded.Add,
+                contentDescription = if (isEn) "Add Book" else "Tambah Buku",
+                tint = palette.bgApp,
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }
 
 fun sanitizeBookOrChapterText(raw: String): String {
     if (raw.isBlank()) return raw
-    return raw
+    val pre = raw
+        .replace("&apos;", "'", ignoreCase = true)
+        .replace("&quot;", "\"", ignoreCase = true)
+        .replace("&nbsp;", " ", ignoreCase = true)
         .replace("&amp;", "&", ignoreCase = true)
         .replace("&#39;", "'")
         .replace("&rsquo;", "'")
@@ -912,6 +899,15 @@ fun sanitizeBookOrChapterText(raw: String): String {
         .replace("&rdquo;", "\"")
         .replace("&ndash;", "–")
         .replace("&mdash;", "—")
+
+    val htmlDecoded = runCatching {
+        android.text.Html.fromHtml(pre, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+    }.getOrDefault(pre)
+
+    return htmlDecoded
+        .replace("&apos;", "'", ignoreCase = true)
+        .replace("&quot;", "\"", ignoreCase = true)
+        .replace("&nbsp;", " ", ignoreCase = true)
         // Windows-1252 / MacRoman / Private Use / Replacement char apostrophes between letters (e.g., Storm▯s End -> Storm's End)
         .replace(Regex("([A-Za-z])[\\uFFFD\\u0080-\\u009F\\u00D5\\uF000-\\uFFFF]+([sStTdDmMrRvVeE]\\b)"), "$1'$2")
         .replace('\u0091', '\'')
