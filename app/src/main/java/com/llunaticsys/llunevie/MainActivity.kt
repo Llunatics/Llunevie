@@ -408,6 +408,7 @@ private fun LlunevieMainContainer(
                     }
                 }
             }
+        } // Close inner blurred tab content container (Child 1)
         }
 
         val showBottomDock = uiState.activeTab != MainNavTab.READER &&
@@ -474,15 +475,15 @@ private fun LlunevieMainContainer(
         if (uiState.showFullCameraScanner) {
             IsbnCameraScannerScreen(
                 uiState = uiState,
+                shelves = shelves,
                 strings = strings,
                 defaultShelf = prefs.libShelf.ifBlank { "eReader" },
                 onClose = { viewModel.closeFullCameraScanner() },
                 onSetCameraMode = { viewModel.setCameraMode(it) },
                 onToggleTorch = { viewModel.toggleCameraTorch() },
                 onIsbnDetected = { viewModel.lookupIsbnFromScanner(it) },
-                onSaveSingleCandidate = {
-                    viewModel.closeFullCameraScanner()
-                    viewModel.promptChooseShelfForCandidate(it)
+                onSaveSingleCandidateToShelf = { candidate, shelfName ->
+                    viewModel.saveCandidateToShelf(candidate, shelfName, "PHYSICAL")
                 },
                 onRemoveBatchItem = { viewModel.removeBatchItem(it) },
                 onClearBatchQueue = { viewModel.clearBatchScanQueue() },
@@ -630,5 +631,4 @@ private fun LlunevieMainContainer(
             }
         }
     }
-}
 }

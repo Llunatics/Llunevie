@@ -2,7 +2,7 @@ package com.llunaticsys.llunevie.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.util.Size
+import android.util.Size as AndroidSize
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -30,6 +30,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -76,19 +77,22 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInParent
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import com.llunaticsys.llunevie.data.local.ShelfEntity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -122,13 +126,17 @@ import java.util.concurrent.Executors
 @Composable
 fun IsbnCameraScannerScreen(
     uiState: LlunevieUiState,
+    shelves: List<ShelfEntity> = emptyList(),
     strings: LlunevieStrings,
     defaultShelf: String,
     onClose: () -> Unit,
     onSetCameraMode: (String) -> Unit,
     onToggleTorch: () -> Unit,
     onIsbnDetected: (String) -> Unit,
-    onSaveSingleCandidate: (CatalogBookCandidate) -> Unit,
+    onSaveSingleCandidate: (CatalogBookCandidate) -> Unit = {},
+    onSaveSingleCandidateToShelf: (CatalogBookCandidate, String) -> Unit = { candidate, _ ->
+        onSaveSingleCandidate(candidate)
+    },
     onRemoveBatchItem: (String) -> Unit,
     onClearBatchQueue: () -> Unit,
     onCommitBatchQueue: (String) -> Unit,
@@ -160,6 +168,27 @@ fun IsbnCameraScannerScreen(
     var cameraRef by remember { mutableStateOf<Camera?>(null) }
     var manualIsbnText by remember { mutableStateOf("") }
     var lastScannedCode by remember { mutableStateOf("") }
+    var pendingBookForShelfPicker by remember { mutableStateOf<CatalogBookCandidate?>(null) }
+
+    val transition = rememberInfiniteTransition(label = "scannerLaser")
+    val laserProgress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "laserY"
+    )
+    val pulseAlpha by transition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "emeraldPulse"
+    )
 
     LaunchedEffect(uiState.cameraTorchEnabled, cameraRef) {
         runCatching {
@@ -167,7 +196,7 @@ fun IsbnCameraScannerScreen(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(
@@ -210,7 +239,7 @@ fun IsbnCameraScannerScreen(
                             }
                             val resolutionSelector = ResolutionSelector.Builder()
                                 .setResolutionStrategy(
-                                    ResolutionStrategy(Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                                    ResolutionStrategy(AndroidSize(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
                                 )
                                 .build()
                             val imageAnalysis = ImageAnalysis.Builder()
@@ -266,25 +295,6 @@ fun IsbnCameraScannerScreen(
                     previewView
                 }
             )
-        }
-
-        var viewfinderRectInParent by remember { mutableStateOf(Rect.Zero) }
-
-        // Dimmed camera mask with clear rounded cutout locked to viewfinderRectInParent
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val mask = Path().apply {
-                fillType = PathFillType.EvenOdd
-                addRect(Rect(0f, 0f, size.width, size.height))
-                if (viewfinderRectInParent != Rect.Zero) {
-                    addRoundRect(
-                        RoundRect(
-                            rect = viewfinderRectInParent,
-                            cornerRadius = CornerRadius(20.dp.toPx(), 20.dp.toPx())
-                        )
-                    )
-                }
-            }
-            drawPath(mask, color = Color.Black.copy(alpha = 0.48f))
         }
 
         // 2. Top Camera Overlay Chrome (statusBarsPadding(), Theme-Adaptive Switcher & Buttons)
@@ -369,162 +379,140 @@ fun IsbnCameraScannerScreen(
             }
         }
 
-        // 3. Center Reticle with 4 Sculpted 2.5dp Corner Brackets, Glowing Laser Trail, and Emerald Status Pill
-        Column(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(y = (-44).dp)
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            val transition = rememberInfiniteTransition(label = "scannerLaser")
-            val laserProgress by transition.animateFloat(
-                initialValue = 0.08f,
-                targetValue = 0.90f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(2200, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "laserY"
+        // 3. Single Unified Viewfinder Canvas: Cutout Hole, 4 Corner Brackets & Cyan Scan Laser from exact same scanRect
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val boxW = 248.dp.toPx()
+            val boxH = 180.dp.toPx()
+            val centerX = size.width / 2f
+            val centerY = size.height * 0.42f
+            val scanRect = Rect(
+                left = centerX - boxW / 2f,
+                top = centerY - boxH / 2f,
+                right = centerX + boxW / 2f,
+                bottom = centerY + boxH / 2f
             )
-            val pulseAlpha by transition.animateFloat(
-                initialValue = 0.45f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(1000, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "emeraldPulse"
+            val cornerRad = 20.dp.toPx()
+
+            // 1. Dark vignette overlay with clear cutout at scanRect
+            val outerPath = Path().apply { addRect(Rect(0f, 0f, size.width, size.height)) }
+            val holePath = Path().apply {
+                addRoundRect(RoundRect(scanRect, CornerRadius(cornerRad, cornerRad)))
+            }
+            val vignettePath = Path().apply {
+                op(outerPath, holePath, PathOperation.Difference)
+            }
+            drawPath(path = vignettePath, color = Color.Black.copy(alpha = 0.62f))
+
+            // 2. Four white rounded corner brackets at the EXACT corners of scanRect
+            val bracketLen = 28.dp.toPx()
+            val strokeW = 2.5.dp.toPx()
+            val bracketPath = Path().apply {
+                // Top-Left corner
+                moveTo(scanRect.left, scanRect.top + bracketLen)
+                lineTo(scanRect.left, scanRect.top + cornerRad)
+                quadraticTo(scanRect.left, scanRect.top, scanRect.left + cornerRad, scanRect.top)
+                lineTo(scanRect.left + bracketLen, scanRect.top)
+
+                // Top-Right corner
+                moveTo(scanRect.right - bracketLen, scanRect.top)
+                lineTo(scanRect.right - cornerRad, scanRect.top)
+                quadraticTo(scanRect.right, scanRect.top, scanRect.right, scanRect.top + cornerRad)
+                lineTo(scanRect.right + bracketLen, scanRect.top)
+
+                // Bottom-Right corner
+                moveTo(scanRect.right, scanRect.bottom - bracketLen)
+                lineTo(scanRect.right, scanRect.bottom - cornerRad)
+                quadraticTo(scanRect.right, scanRect.bottom, scanRect.right - cornerRad, scanRect.bottom)
+                lineTo(scanRect.right - bracketLen, scanRect.bottom)
+
+                // Bottom-Left corner
+                moveTo(scanRect.left + bracketLen, scanRect.bottom)
+                lineTo(scanRect.left + cornerRad, scanRect.bottom)
+                quadraticTo(scanRect.left, scanRect.bottom, scanRect.left, scanRect.bottom - cornerRad)
+                lineTo(scanRect.left - bracketLen, scanRect.bottom)
+            }
+            drawPath(
+                path = bracketPath,
+                color = Color.White,
+                style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
-            // Floating glass status pill placed 14.dp above the Box
-            Surface(
-                shape = CircleShape,
-                color = Color.Black.copy(alpha = 0.58f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .alpha(pulseAlpha)
-                            .clip(CircleShape)
-                            .background(Color(0xFF34D399))
-                    )
-                    Text(
-                        text = if (uiState.isLookingUpIsbn) {
-                            if (strings.isId) "MENCARI ISBN..." else "LOOKING UP ISBN..."
-                        } else {
-                            lastScannedCode.ifBlank { "ISBN / QR READY" }
-                        },
-                        color = Color.White.copy(alpha = 0.95f),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.4.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Box(
-                modifier = Modifier
-                    .size(248.dp, 180.dp)
-                    .onGloballyPositioned { coords ->
-                        viewfinderRectInParent = coords.boundsInParent()
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                // Sculpted 2.5dp rounded corner brackets (26dp arm length, 20dp corner radius)
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val strokeW = 2.5.dp.toPx()
-                    val arm = 26.dp.toPx()
-                    val r = 20.dp.toPx()
-                    val c = Color.White.copy(alpha = 0.92f)
-                    val s = Stroke(width = strokeW, cap = StrokeCap.Round)
-
-                    // Top-Left Bracket
-                    drawPath(
-                        Path().apply {
-                            moveTo(0f, arm)
-                            lineTo(0f, r)
-                            quadraticTo(0f, 0f, r, 0f)
-                            lineTo(arm, 0f)
-                        },
-                        color = c,
-                        style = s
-                    )
-                    // Top-Right Bracket
-                    drawPath(
-                        Path().apply {
-                            moveTo(size.width - arm, 0f)
-                            lineTo(size.width - r, 0f)
-                            quadraticTo(size.width, 0f, size.width, r)
-                            lineTo(size.width, arm)
-                        },
-                        color = c,
-                        style = s
-                    )
-                    // Bottom-Left Bracket
-                    drawPath(
-                        Path().apply {
-                            moveTo(0f, size.height - arm)
-                            lineTo(0f, size.height - r)
-                            quadraticTo(0f, size.height, r, size.height)
-                            lineTo(arm, size.height)
-                        },
-                        color = c,
-                        style = s
-                    )
-                    // Bottom-Right Bracket
-                    drawPath(
-                        Path().apply {
-                            moveTo(size.width - arm, size.height)
-                            lineTo(size.width - r, size.height)
-                            quadraticTo(size.width, size.height, size.width, size.height - r)
-                            lineTo(size.width, size.height - arm)
-                        },
-                        color = c,
-                        style = s
-                    )
-                }
-
-                // Glowing scan line with subtle vertical gradient trail
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
-                        .offset(y = (180.dp - 16.dp) * laserProgress)
-                        .height(16.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color(0xFF38BDF8).copy(alpha = 0.16f),
-                                    Color(0xFF38BDF8).copy(alpha = 0.45f),
-                                    Color.White.copy(alpha = 0.95f)
-                                )
-                            ),
-                            shape = RoundedCornerShape(2.dp)
-                        )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = if (strings.isId) "Arahkan kamera ke kode QR atau ISBN di sampul belakang buku"
-                else "Aim camera at the QR code or ISBN on the back cover",
-                color = Color.White.copy(alpha = 0.75f),
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center
+            // 3. Animated cyan laser line strictly inside scanRect
+            val laserY = scanRect.top + cornerRad + (scanRect.height - 2f * cornerRad) * laserProgress
+            val laserLeft = scanRect.left + 10.dp.toPx()
+            val laserRight = scanRect.right - 10.dp.toPx()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.Transparent, Color(0xFF38BDF8).copy(alpha = 0.35f), Color(0xFFE0F2FE)),
+                    startY = (laserY - 18.dp.toPx()).coerceAtLeast(scanRect.top),
+                    endY = laserY
+                ),
+                topLeft = Offset(laserLeft, (laserY - 18.dp.toPx()).coerceAtLeast(scanRect.top)),
+                size = Size(laserRight - laserLeft, (laserY - (laserY - 18.dp.toPx()).coerceAtLeast(scanRect.top)))
+            )
+            drawLine(
+                color = Color.White.copy(alpha = 0.92f),
+                start = Offset(laserLeft, laserY),
+                end = Offset(laserRight, laserY),
+                strokeWidth = 1.5.dp.toPx(),
+                cap = StrokeCap.Round
             )
         }
+
+        val boxWDp = 248.dp
+        val boxHDp = 180.dp
+        val centerYDp = maxHeight * 0.42f
+        val pillTop = centerYDp - boxHDp / 2f - 44.dp
+        val helperTextTop = centerYDp + boxHDp / 2f + 16.dp
+
+        // Floating glass status pill placed centered at y = centerY - boxH / 2f - 44.dp
+        Surface(
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.58f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = pillTop)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .alpha(pulseAlpha)
+                        .clip(CircleShape)
+                        .background(Color(0xFF34D399))
+                )
+                Text(
+                    text = if (uiState.isLookingUpIsbn) {
+                        if (strings.isId) "MENCARI ISBN..." else "LOOKING UP ISBN..."
+                    } else {
+                        lastScannedCode.ifBlank { "ISBN / QR READY" }
+                    },
+                    color = Color.White.copy(alpha = 0.95f),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.4.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        // Helper text centered at y = centerY + boxH / 2f + 16.dp
+        Text(
+            text = if (strings.isId) "Arahkan kamera ke kode QR atau ISBN di sampul belakang buku"
+            else "Aim camera at the QR code or ISBN on the back cover",
+            color = Color.White.copy(alpha = 0.75f),
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = helperTextTop)
+                .padding(horizontal = 24.dp)
+        )
 
         // 4. Floating Rounded Bottom Console Card (Unclipped, navigationBarsPadding().imePadding())
         val isBatchMode = uiState.cameraMode == "batch"
@@ -768,7 +756,7 @@ fun IsbnCameraScannerScreen(
                         )
                     }
                     Surface(
-                        onClick = { onSaveSingleCandidate(item) },
+                        onClick = { pendingBookForShelfPicker = item },
                         shape = RoundedCornerShape(50),
                         color = palette.textMain
                     ) {
@@ -910,6 +898,79 @@ fun IsbnCameraScannerScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.padding(vertical = 12.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Choose Destination Shelf Dialog for Single Scan
+        pendingBookForShelfPicker?.let { candidate ->
+            Dialog(onDismissRequest = { pendingBookForShelfPicker = null }) {
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = palette.sheetBg,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 24.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 340.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Pilih Rak Tujuan" else "Choose Destination Shelf",
+                                color = palette.textMain,
+                                fontSize = 18.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Surface(
+                                onClick = { pendingBookForShelfPicker = null },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                        Text(
+                            text = candidate.title,
+                            color = palette.textMuted,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        shelves.forEach { shelf ->
+                            Surface(
+                                onClick = {
+                                    val chosenShelf = shelf.name
+                                    onSaveSingleCandidateToShelf(candidate, chosenShelf)
+                                    pendingBookForShelfPicker = null
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = strings.localizeShelfName(shelf.name),
+                                    color = palette.textMain,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                                 )
                             }
                         }

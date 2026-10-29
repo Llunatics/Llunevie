@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.StrokeCap
 import android.os.Build
 import androidx.compose.foundation.rememberScrollState
@@ -137,16 +136,9 @@ fun SettingsScreen(
         }
     }
 
-    val blurModifier = if (Build.VERSION.SDK_INT >= 31 && pendingCropBitmap != null) {
-        Modifier.blur(10.dp)
-    } else {
-        Modifier
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
-            .then(blurModifier)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
             .padding(horizontal = 20.dp)
