@@ -1085,9 +1085,28 @@ fun CylindricalFlipbookCanvas(
                     clipPath(curPath) {
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
+
+                        // Soft natural cast shadow to the left of the peeled leading edge R_top -> R_bot
+                        withTransform({
+                            translate(left = rTop.x, top = rTop.y)
+                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
+                        }) {
+                            val castW = 12.dp.toPx() * bell
+                            if (castW > 0.5f) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.08f * bell)),
+                                        startX = -castW,
+                                        endX = 0f
+                                    ),
+                                    topLeft = Offset(-castW, -pageRect.width * 0.5f),
+                                    size = Size(castW, diagLen * 1.5f)
+                                )
+                            }
+                        }
                     }
 
-                    // Region B: Uncovered next page (right of crease)
+                    // Region B: Uncovered next page (right of crease) — no dark crease shadow smudge
                     val destPath = Path().apply {
                         moveTo(foldTopX, pageRect.top)
                         lineTo(pageRect.right, pageRect.top)
@@ -1099,24 +1118,6 @@ fun CylindricalFlipbookCanvas(
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
                             drawPageBitmapFitted(destBitmap, isPdfBook, false)
-                        }
-                        // Crease shadow on underlying uncovered page
-                        withTransform({
-                            translate(left = foldTopX, top = pageRect.top)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
-                        }) {
-                            val creaseW = 22.dp.toPx() * bell
-                            if (creaseW > 0.5f) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Black.copy(alpha = 0.16f * bell), Color.Transparent),
-                                        startX = 0f,
-                                        endX = creaseW
-                                    ),
-                                    topLeft = Offset(0f, -pageRect.width * 0.5f),
-                                    size = Size(creaseW, diagLen * 1.5f)
-                                )
-                            }
                         }
                     }
 
@@ -1132,7 +1133,7 @@ fun CylindricalFlipbookCanvas(
                         // 1. Fill 100% solid opaque back paper color to prevent bleedthrough
                         drawPath(flapPath, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
 
-                        // 2. Exact clockwise reflection transform around fTop
+                        // 2. Exact clockwise reflection transform around fTop with subtle 0.06f bleed
                         withTransform({
                             translate(left = fTop.x, top = fTop.y)
                             rotate(degrees = -thetaDeg, pivot = Offset.Zero)
@@ -1144,44 +1145,25 @@ fun CylindricalFlipbookCanvas(
                                 image = currentPageBitmap,
                                 dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
                                 dstSize = IntSize(pageRect.width.roundToInt(), pageRect.height.roundToInt()),
-                                alpha = 0.08f
+                                alpha = 0.06f
                             )
-                        }
-
-                        // 3. Subtle rotated paper-curl shading along crease
-                        withTransform({
-                            translate(left = fTop.x, top = fTop.y)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
-                        }) {
-                            val curlW = 24.dp.toPx() * bell
-                            if (curlW > 0.5f) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Black.copy(alpha = 0.12f * bell), Color.Transparent),
-                                        startX = -curlW,
-                                        endX = 0f
-                                    ),
-                                    topLeft = Offset(-curlW, -pageRect.width * 0.5f),
-                                    size = Size(curlW, diagLen * 1.5f)
-                                )
-                            }
                         }
                     }
 
-                    // Crisp paper edge line along rTop -> rBot
+                    // Crisp paper edge line along rTop -> rBot (0.75.dp hairline)
                     drawLine(
-                        color = Color.Black.copy(alpha = 0.14f * bell),
+                        color = Color.Black.copy(alpha = 0.07f),
                         start = rTop,
                         end = rBot,
-                        strokeWidth = 1.dp.toPx()
+                        strokeWidth = 0.75.dp.toPx()
                     )
 
-                    // Crisp crease line along fTop -> fBot
+                    // Crisp crease line along fTop -> fBot (0.75.dp hairline)
                     drawLine(
-                        color = Color.Black.copy(alpha = 0.12f),
+                        color = Color.Black.copy(alpha = 0.07f),
                         start = fTop,
                         end = fBot,
-                        strokeWidth = 1.dp.toPx()
+                        strokeWidth = 0.75.dp.toPx()
                     )
                 } else {
                     // Turn Prev: foldMidX moves from pageRect.left to pageRect.right
@@ -1200,7 +1182,7 @@ fun CylindricalFlipbookCanvas(
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
                     val diagLen = kotlin.math.hypot(dxFold, dyFold) + pageRect.width
 
-                    // Region B: Uncovered prev page (left of crease)
+                    // Region B: Uncovered prev page (left of crease) — no dark crease shadow smudge
                     val destPath = Path().apply {
                         moveTo(pageRect.left, pageRect.top)
                         lineTo(foldTopX, pageRect.top)
@@ -1212,23 +1194,6 @@ fun CylindricalFlipbookCanvas(
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
                             drawPageBitmapFitted(destBitmap, isPdfBook, false)
-                        }
-                        withTransform({
-                            translate(left = foldTopX, top = pageRect.top)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
-                        }) {
-                            val creaseW = 22.dp.toPx() * bell
-                            if (creaseW > 0.5f) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.16f * bell)),
-                                        startX = -creaseW,
-                                        endX = 0f
-                                    ),
-                                    topLeft = Offset(-creaseW, -pageRect.width * 0.5f),
-                                    size = Size(creaseW, diagLen * 1.5f)
-                                )
-                            }
                         }
                     }
 
@@ -1243,6 +1208,25 @@ fun CylindricalFlipbookCanvas(
                     clipPath(curPath) {
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
+
+                        // Soft natural cast shadow to the right of the peeled leading edge R_top -> R_bot
+                        withTransform({
+                            translate(left = rTop.x, top = rTop.y)
+                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
+                        }) {
+                            val castW = 12.dp.toPx() * bell
+                            if (castW > 0.5f) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(Color.Black.copy(alpha = 0.08f * bell), Color.Transparent),
+                                        startX = 0f,
+                                        endX = castW
+                                    ),
+                                    topLeft = Offset(0f, -pageRect.width * 0.5f),
+                                    size = Size(castW, diagLen * 1.5f)
+                                )
+                            }
+                        }
                     }
 
                     // Region C: Congruent reflected paper flap
@@ -1268,43 +1252,25 @@ fun CylindricalFlipbookCanvas(
                                 image = currentPageBitmap,
                                 dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
                                 dstSize = IntSize(pageRect.width.roundToInt(), pageRect.height.roundToInt()),
-                                alpha = 0.08f
+                                alpha = 0.06f
                             )
-                        }
-
-                        withTransform({
-                            translate(left = fTop.x, top = fTop.y)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
-                        }) {
-                            val curlW = 24.dp.toPx() * bell
-                            if (curlW > 0.5f) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.12f * bell)),
-                                        startX = 0f,
-                                        endX = curlW
-                                    ),
-                                    topLeft = Offset(0f, -pageRect.width * 0.5f),
-                                    size = Size(curlW, diagLen * 1.5f)
-                                )
-                            }
                         }
                     }
 
                     // Crisp paper edge line along rTop -> rBot
                     drawLine(
-                        color = Color.Black.copy(alpha = 0.14f * bell),
+                        color = Color.Black.copy(alpha = 0.07f),
                         start = rTop,
                         end = rBot,
-                        strokeWidth = 1.dp.toPx()
+                        strokeWidth = 0.75.dp.toPx()
                     )
 
                     // Crisp crease line along fTop -> fBot
                     drawLine(
-                        color = Color.Black.copy(alpha = 0.12f),
+                        color = Color.Black.copy(alpha = 0.07f),
                         start = fTop,
                         end = fBot,
-                        strokeWidth = 1.dp.toPx()
+                        strokeWidth = 0.75.dp.toPx()
                     )
                 }
             }
