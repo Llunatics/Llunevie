@@ -33,6 +33,7 @@ import com.llunaticsys.llunevie.model.LibrarySortOption
 import com.llunaticsys.llunevie.model.LibraryViewMode
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
+import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import com.llunaticsys.llunevie.ui.theme.canonicalShelfKey
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -249,18 +250,24 @@ class LlunevieViewModel(
         }
     }
 
-    fun toggleGlassDesign() {
+    fun setFollowDeviceTheme(enabled: Boolean) {
         viewModelScope.launch {
-            val next = !preferences.value.glassDesign
-            prefsRepo.setGlassDesign(next)
+            prefsRepo.setFollowDeviceTheme(enabled)
             val isId = preferences.value.lang != "en"
             showToast(
                 if (isId) {
-                    if (next) "Desain Glass: Aktif" else "Desain Glass: Mati"
+                    if (enabled) "Ikuti Tema Perangkat: Aktif" else "Ikuti Tema Perangkat: Mati"
                 } else {
-                    if (next) "Glass Design: On" else "Glass Design: Off"
+                    if (enabled) "Follow Device Theme: On" else "Follow Device Theme: Off"
                 }
             )
+        }
+    }
+
+    fun toggleGlassDesign() {
+        viewModelScope.launch {
+            val next = !preferences.value.followDeviceTheme
+            setFollowDeviceTheme(next)
         }
     }
 
@@ -565,30 +572,64 @@ class LlunevieViewModel(
     // -------------------------------------------------------------------------
     fun openBookInReader(bookId: String) {
         viewModelScope.launch {
-            val book = dao.getBookById(bookId) ?: return@launch
+            val rawBook = dao.getBookById(bookId) ?: return@launch
+            val sanitizedTitle = sanitizeBookOrChapterText(rawBook.title)
+            val book = if (sanitizedTitle != rawBook.title) {
+                val updated = rawBook.copy(title = sanitizedTitle)
+                dao.updateBook(updated)
+                updated
+            } else rawBook
+
             val chEntities = dao.getChaptersForBook(bookId)
             val parsedChapters = mutableListOf<BookChapter>()
             val parsedIllustrations = mutableListOf<BookIllustration>()
 
             if (chEntities.isNotEmpty()) {
+                var globalTracker = 0
                 for (ce in chEntities) {
                     val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
                     val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }.ifEmpty { listOf(book.synopsis) }
-                    parsedChapters.add(BookChapter(index = ce.chapterIndex, title = ce.title, pages = pagesList))
+                    val cleanChTitle = sanitizeBookOrChapterText(ce.title)
+                    parsedChapters.add(BookChapter(index = ce.chapterIndex, title = cleanChTitle, pages = pagesList))
 
                     val illustArr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
                     for (i in 0 until illustArr.length()) {
                         val obj = illustArr.optJSONObject(i) ?: continue
                         val path = obj.optString("uriOrPath")
                         if (path.isNotBlank()) {
+                            val savedPageIdx = obj.optInt("pageIndexInBook", -1)
+                            val effectivePageIdx = if (savedPageIdx >= 0) savedPageIdx else {
+                                val found = pagesList.indexOfFirst { it.contains(path) }
+                                if (found >= 0) globalTracker + found else globalTracker
+                            }
                             parsedIllustrations.add(
                                 BookIllustration(
                                     uriOrPath = path,
-                                    caption = obj.optString("caption", ce.title)
+                                    caption = sanitizeBookOrChapterText(obj.optString("caption", cleanChTitle)),
+                                    pageIndexInBook = effectivePageIdx
                                 )
                             )
                         }
                     }
+
+                    // Extract embedded illustrations in page texts if not already recorded
+                    pagesList.forEachIndexed { pIdx, pText ->
+                        if (pText.contains("[ILLUST:")) {
+                            val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
+                            val path = inner.substringBefore("|")
+                            val cap = inner.substringAfter("|", "")
+                            if (path.isNotBlank() && parsedIllustrations.none { it.uriOrPath == path }) {
+                                parsedIllustrations.add(
+                                    BookIllustration(
+                                        uriOrPath = path,
+                                        caption = sanitizeBookOrChapterText(cap.ifBlank { cleanChTitle }),
+                                        pageIndexInBook = globalTracker + pIdx
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    globalTracker += pagesList.size
                 }
             }
 
@@ -631,7 +672,7 @@ class LlunevieViewModel(
                                 val liveChs = updatedChapters.map { ce ->
                                     val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
                                     val pList = (0 until pArr.length()).map { pArr.optString(it) }
-                                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
+                                    BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
                                 }
                                 _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
                             }

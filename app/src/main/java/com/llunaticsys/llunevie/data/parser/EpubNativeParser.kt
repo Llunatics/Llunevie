@@ -6,6 +6,7 @@ import android.net.Uri
 import com.llunaticsys.llunevie.data.local.BookChapterEntity
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
+import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -55,7 +56,7 @@ object EpubNativeParser {
         val booksDir = File(context.filesDir, "books").apply { mkdirs() }
         val coversDir = File(context.filesDir, "covers/$bookId").apply { mkdirs() }
 
-        var bookTitle = normalizeBookTitle(fallbackFileName)
+        var bookTitle = sanitizeBookOrChapterText(normalizeBookTitle(fallbackFileName))
         val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val yearStr = SimpleDateFormat("yyyy", Locale.US).format(Date())
 
@@ -164,7 +165,7 @@ object EpubNativeParser {
                 val opfDoc = Jsoup.parse(opfXml, "", Parser.xmlParser())
 
                 opfDoc.selectFirst("dc|title, title")?.text()?.trim()?.takeIf { it.isNotBlank() }?.let {
-                    bookTitle = it
+                    bookTitle = sanitizeBookOrChapterText(it)
                 }
                 opfDoc.selectFirst("dc|creator, creator")?.text()?.trim()?.takeIf { it.isNotBlank() }?.let {
                     bookAuthor = it
@@ -303,7 +304,7 @@ object EpubNativeParser {
                 var chTitle = if (isCoverDoc) {
                     if (isEn) "Cover" else "Sampul"
                 } else if (!rawTitle.isNullOrBlank()) {
-                    normalizeBookTitle(rawTitle)
+                    sanitizeBookOrChapterText(normalizeBookTitle(rawTitle))
                 } else {
                     if (isEn) "Chapter ${chapterEntities.size + 1}" else "Bab ${chapterEntities.size + 1}"
                 }

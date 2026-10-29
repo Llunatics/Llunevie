@@ -129,7 +129,8 @@ enum class HighlightColorKey(val key: String, val label: String) {
 
 data class BookIllustration(
     val uriOrPath: String,
-    val caption: String
+    val caption: String,
+    val pageIndexInBook: Int = 0
 )
 
 data class BookChapter(

@@ -941,21 +941,45 @@ fun BottomFloatingNavDock(
     }
 }
 
-fun normalizeBookTitle(fileName: String): String {
-    var s = fileName.substringBeforeLast(".")
-    // Decode common HTML entities and URL encoding first
-    s = s.replace("&amp;", "&")
-        .replace("&quot;", "\"")
+fun sanitizeBookOrChapterText(raw: String): String {
+    if (raw.isBlank()) return raw
+    return raw
+        .replace("&amp;", "&", ignoreCase = true)
         .replace("&#39;", "'")
-        .replace("&apos;", "'")
+        .replace("&rsquo;", "'")
+        .replace("&lsquo;", "'")
+        .replace("&ldquo;", "\"")
+        .replace("&rdquo;", "\"")
         .replace("&ndash;", "–")
         .replace("&mdash;", "—")
+        // Windows-1252 / MacRoman / Private Use / Replacement char apostrophes between letters (e.g., Storm▯s End -> Storm's End)
+        .replace(Regex("([A-Za-z])[\\uFFFD\\u0080-\\u009F\\u00D5\\uF000-\\uFFFF]+([sStTdDmMrRvVeE]\\b)"), "$1'$2")
+        .replace('\u0091', '\'')
+        .replace('\u0092', '\'')
+        .replace('\u2018', '\'')
+        .replace('\u2019', '\'')
+        .replace('\u0093', '"')
+        .replace('\u0094', '"')
+        .replace('\u0096', '–')
+        .replace('\u0097', '—')
+        .replace('\uFFFD', '\'')
+        .replace(Regex("[\\u0000-\\u001F\\u007F-\\u009F]"), "")
+        .replace(Regex("\\s+"), " ")
+        .replace(" Amp ", " & ")
+        .trim()
+}
+
+fun normalizeBookTitle(fileName: String): String {
+    val sanitized = sanitizeBookOrChapterText(fileName)
+    var s = sanitized.substringBeforeLast(".")
+    // Decode common HTML entities and URL encoding first
+    s = sanitizeBookOrChapterText(s)
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
     s = runCatching { java.net.URLDecoder.decode(s, "UTF-8") }.getOrDefault(s)
-    s = s.replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
+    s = sanitizeBookOrChapterText(s)
     // Replace " - " or " _ " or " -- " with ": "
     s = s.replace(Regex("""\s*[-_–—]{2,}\s*|\s+[-–—]\s+"""), ": ")
     // Replace remaining single underscores and dashes with spaces
@@ -969,13 +993,13 @@ fun normalizeBookTitle(fileName: String): String {
         "dan", "di", "ke", "dari", "yang", "untuk", "pada", "dengan"
     )
     val words = s.split(" ")
-    return words.mapIndexed { i, w ->
+    val result = words.mapIndexed { i, w ->
         val cleanWord = w.trim()
         val hasColon = cleanWord.endsWith(":")
         val core = if (hasColon) cleanWord.dropLast(1) else cleanWord
         val coreLower = core.lowercase(java.util.Locale.ROOT)
 
-        val res = if (core == "&") {
+        val res = if (core == "&" || core.equals("amp", ignoreCase = true)) {
             "&"
         } else if (i > 0 && coreLower in minorWords) {
             coreLower
@@ -984,6 +1008,7 @@ fun normalizeBookTitle(fileName: String): String {
         }
         if (hasColon) "$res:" else res
     }.joinToString(" ").ifBlank { "Untitled" }
+    return sanitizeBookOrChapterText(result).replace(" Amp ", " & ")
 }
 
 /**
