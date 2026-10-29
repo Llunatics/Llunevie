@@ -2,7 +2,11 @@ package com.llunaticsys.llunevie.ui.reader
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,11 +16,17 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -70,6 +80,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -102,7 +117,12 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.text.PlatformTextStyle
+import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.googlefonts.GoogleFont
@@ -214,6 +234,7 @@ fun ReaderScreen(
     val palette = LocalLluneviePalette.current
     val density = LocalDensity.current
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
 
     val chapters = uiState.activeBookChapters
     val currentChapter = chapters.getOrNull(uiState.activeChapterIndex)
@@ -231,6 +252,9 @@ fun ReaderScreen(
     var inBookSearchQuery by remember { mutableStateOf<String?>(null) }
     var lastTurnDirection by remember { mutableIntStateOf(1) }
     var slideDragOffsetPx by remember { mutableFloatStateOf(0f) }
+    var hasSelectionActive by remember { mutableStateOf(false) }
+    var selStartHandleAnchor by remember { mutableStateOf(Offset.Zero) }
+    var selEndHandleAnchor by remember { mutableStateOf(Offset.Zero) }
 
     LaunchedEffect(fullViewBtnLastActive, uiState.readerFullView) {
         kotlinx.coroutines.delay(3500L)
@@ -424,6 +448,8 @@ fun ReaderScreen(
                                     PageSnapshotBitmapRenderer.renderSingleTextPageBitmapAsync(
                                         widthPx = stageW,
                                         heightPx = stageH,
+                                        density = density.density,
+                                        scaledDensity = density.fontScale * density.density,
                                         chapterTitle = currentChapter?.title.orEmpty(),
                                         pageText = currentPageRaw,
                                         pageNumberLabel = if (strings.isId) "Halaman ${curZero + 1} dari ${metrics.totalBookPages}" else "Page ${curZero + 1} of ${metrics.totalBookPages}",
@@ -489,6 +515,8 @@ fun ReaderScreen(
                                     PageSnapshotBitmapRenderer.renderSingleTextPageBitmapAsync(
                                         widthPx = stageW,
                                         heightPx = stageH,
+                                        density = density.density,
+                                        scaledDensity = density.fontScale * density.density,
                                         chapterTitle = chapters.getOrNull(nextTriple.first)?.title.orEmpty(),
                                         pageText = nextTriple.third,
                                         pageNumberLabel = if (strings.isId) "Halaman ${curZero + 2} dari ${metrics.totalBookPages}" else "Page ${curZero + 2} of ${metrics.totalBookPages}",
@@ -554,6 +582,8 @@ fun ReaderScreen(
                                     PageSnapshotBitmapRenderer.renderSingleTextPageBitmapAsync(
                                         widthPx = stageW,
                                         heightPx = stageH,
+                                        density = density.density,
+                                        scaledDensity = density.fontScale * density.density,
                                         chapterTitle = chapters.getOrNull(prevTriple.first)?.title.orEmpty(),
                                         pageText = prevTriple.third,
                                         pageNumberLabel = if (strings.isId) "Halaman $curZero dari ${metrics.totalBookPages}" else "Page $curZero of ${metrics.totalBookPages}",
@@ -577,11 +607,95 @@ fun ReaderScreen(
                             }
 
                             var isFlippingInProgress by remember { mutableStateOf(false) }
+                            var flipTurnDir by remember { mutableIntStateOf(1) }
+                            var liveDragProgress by remember { mutableFloatStateOf(0f) }
+                            var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
+
+                            val flipbookGestureModifier = Modifier.pointerInput(curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    if (hasSelectionActive) {
+                                        val distStart = (down.position - selStartHandleAnchor).getDistance()
+                                        val distEnd = (down.position - selEndHandleAnchor).getDistance()
+                                        if (distStart < 44.dp.toPx() || distEnd < 44.dp.toPx()) {
+                                            return@awaitEachGesture
+                                        }
+                                    }
+                                    val touchSlop = viewConfiguration.touchSlop
+                                    var dragLocked = false
+                                    var totalDx = 0f
+                                    var totalDy = 0f
+                                    val velocityTracker = VelocityTracker()
+                                    velocityTracker.addPosition(down.uptimeMillis, down.position)
+
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val change = event.changes.firstOrNull() ?: break
+                                        if (change.changedToUp()) {
+                                            if (dragLocked && isFlippingInProgress) {
+                                                val velX = velocityTracker.calculateVelocity().x
+                                                val speedInDir = if (flipTurnDir > 0) -velX else velX
+                                                val shouldCommit = liveDragProgress >= 0.14f || (speedInDir > 350f)
+                                                scope.launch {
+                                                    if (shouldCommit) {
+                                                        val anim = Animatable(liveDragProgress)
+                                                        anim.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) {
+                                                            liveDragProgress = value
+                                                        }
+                                                        onTurnPage(flipTurnDir)
+                                                    } else {
+                                                        val anim = Animatable(liveDragProgress)
+                                                        anim.animateTo(0f, tween(160, easing = FastOutSlowInEasing)) {
+                                                            liveDragProgress = value
+                                                        }
+                                                    }
+                                                    liveDragProgress = 0f
+                                                    isFlippingInProgress = false
+                                                }
+                                            } else if (!dragLocked) {
+                                                val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
+                                                if (relX >= 0.76f) {
+                                                    externalFlipTrigger = 1
+                                                } else if (relX <= 0.24f) {
+                                                    externalFlipTrigger = -1
+                                                } else {
+                                                    onToggleFullView()
+                                                }
+                                            }
+                                            break
+                                        }
+
+                                        velocityTracker.addPosition(change.uptimeMillis, change.position)
+                                        totalDx = change.position.x - down.position.x
+                                        totalDy = change.position.y - down.position.y
+
+                                        if (!dragLocked) {
+                                            if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                val candidateDir = if (totalDx < 0f) 1 else -1
+                                                if (candidateDir > 0 && curZero >= metrics.totalBookPages - 1) break
+                                                if (candidateDir < 0 && curZero <= 0) break
+                                                dragLocked = true
+                                                flipTurnDir = candidateDir
+                                                isFlippingInProgress = true
+                                                change.consume()
+                                            }
+                                        }
+
+                                        if (dragLocked) {
+                                            change.consume()
+                                            val signedDelta = if (flipTurnDir > 0) -totalDx else totalDx
+                                            liveDragProgress = (signedDelta / (size.width.toFloat() * 0.85f)).coerceIn(0.01f, 0.99f)
+                                            liveCornerYNorm = (change.position.y / size.height.toFloat()).coerceIn(0.15f, 0.85f)
+                                        }
+                                    }
+                                }
+                            }
 
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp),
+                                    .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp)
+                                    .then(flipbookGestureModifier),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (!isPdfBook && !isFlippingInProgress && externalFlipTrigger == 0) {
@@ -641,8 +755,15 @@ fun ReaderScreen(
                                                             onOpenIllustViewer(idx)
                                                         },
                                                         onSaveHighlightNote = onSaveHighlightNote,
+                                                        onDeleteHighlightNote = onDeleteHighlightNote,
                                                         onSearchInBook = { inBookSearchQuery = it },
-                                                        isCoverPage = (curZero == 0)
+                                                        isCoverPage = (curZero == 0),
+                                                        bookTitle = book.title,
+                                                        onSelectionActiveChanged = { active, start, end ->
+                                                            hasSelectionActive = active
+                                                            selStartHandleAnchor = start
+                                                            selEndHandleAnchor = end
+                                                        }
                                                     )
                                                 }
                                                 Box(
@@ -749,8 +870,15 @@ fun ReaderScreen(
                                                 onOpenIllustViewer(idx)
                                             },
                                              onSaveHighlightNote = onSaveHighlightNote,
+                                             onDeleteHighlightNote = onDeleteHighlightNote,
                                              onSearchInBook = { inBookSearchQuery = it },
-                                             isCoverPage = (curZero == 0)
+                                             isCoverPage = (curZero == 0),
+                                             bookTitle = book.title,
+                                             onSelectionActiveChanged = { active, start, end ->
+                                                 hasSelectionActive = active
+                                                 selStartHandleAnchor = start
+                                                 selEndHandleAnchor = end
+                                             }
                                          )
                                      }
                                 }
@@ -767,6 +895,9 @@ fun ReaderScreen(
                                         isTwoPageSpread = isSpread,
                                         externalTriggerDir = externalFlipTrigger,
                                         onExternalTriggerConsumed = { externalFlipTrigger = 0 },
+                                        manualProgress = if (isFlippingInProgress) liveDragProgress else null,
+                                        manualCornerYNorm = if (isFlippingInProgress) liveCornerYNorm else null,
+                                        manualTurnDir = if (isFlippingInProgress) flipTurnDir else null,
                                         onPageTurnCommitted = { dir -> onTurnPage(dir) },
                                         onCenterTap = { onToggleFullView() },
                                         onFlipStateChanged = { isFlippingInProgress = it },
@@ -796,58 +927,8 @@ fun ReaderScreen(
                                 }
                             }
                         } else {
-                            val swipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages, prefs.pageAnimStyle, prefs.animatePageTurn) {
-                                var totalDx = 0f
-                                var totalDy = 0f
-                                detectHorizontalDragGestures(
-                                    onDragStart = {
-                                        totalDx = 0f
-                                        totalDy = 0f
-                                    },
-                                    onDragEnd = {
-                                        val thresholdPx = 42.dp.toPx()
-                                        if (kotlin.math.abs(totalDx) > thresholdPx && kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.2f) {
-                                            if (totalDx < 0f && curZero < metrics.totalBookPages - 1) {
-                                                lastTurnDirection = 1
-                                                onTurnPage(1)
-                                            } else if (totalDx > 0f && curZero > 0) {
-                                                lastTurnDirection = -1
-                                                onTurnPage(-1)
-                                            }
-                                        }
-                                        slideDragOffsetPx = 0f
-                                    },
-                                    onDragCancel = { slideDragOffsetPx = 0f },
-                                    onHorizontalDrag = { change, dragAmount ->
-                                        totalDx += dragAmount
-                                        if (kotlin.math.abs(totalDx) > 12.dp.toPx()) {
-                                            change.consume()
-                                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
-                                                slideDragOffsetPx = (totalDx * 0.35f).coerceIn(-120.dp.toPx(), 120.dp.toPx())
-                                            }
-                                        }
-                                    }
-                                )
-                            }
-
-                            AnimatedContent(
-                                targetState = curZero,
-                                transitionSpec = {
-                                    if (!prefs.animatePageTurn) {
-                                        fadeIn(tween(0)) togetherWith fadeOut(tween(0))
-                                    } else if (prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
-                                        val dir = if (targetState != initialState) (if (targetState > initialState) 1 else -1) else lastTurnDirection
-                                        (slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { w -> dir * w } + fadeIn(tween(180)))
-                                            .togetherWith(slideOutHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { w -> -dir * (w / 3) } + fadeOut(tween(150)))
-                                    } else {
-                                        fadeIn(tween(240)) togetherWith fadeOut(tween(200))
-                                    }
-                                },
-                                label = "readerPageTransition",
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .then(swipeModifier)
-                            ) { pageZero ->
+                            @Composable
+                            fun RenderPageForNonFlipbook(pageZero: Int) {
                                 if (isSpread) {
                                     val rightTriple = getPageAtGlobalZero(pageZero + 1)
                                     Box(
@@ -1064,9 +1145,90 @@ fun ReaderScreen(
                                             onOpenIllustViewer(idx)
                                         },
                                                              onSaveHighlightNote = onSaveHighlightNote,
+                                                             onDeleteHighlightNote = onDeleteHighlightNote,
                                                              onSearchInBook = { inBookSearchQuery = it },
-                                                             isCoverPage = (pageZero == 0)
+                                                             isCoverPage = (pageZero == 0),
+                                                             bookTitle = book.title
                                                          )
+                                }
+                            }
+
+                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
+                                val pagerState = rememberPagerState(
+                                    initialPage = curZero.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
+                                    pageCount = { metrics.totalBookPages.coerceAtLeast(1) }
+                                )
+                                LaunchedEffect(curZero) {
+                                    if (pagerState.currentPage != curZero && !pagerState.isScrollInProgress) {
+                                        pagerState.animateScrollToPage(curZero, animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f))
+                                    }
+                                }
+                                LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
+                                    if (!pagerState.isScrollInProgress && pagerState.currentPage != curZero) {
+                                        val target = getPageAtGlobalZero(pagerState.currentPage)
+                                        if (target != null) {
+                                            onJumpToChapterAndPage(target.first, target.second)
+                                        }
+                                    }
+                                }
+                                HorizontalPager(
+                                    state = pagerState,
+                                    beyondViewportPageCount = 1,
+                                    modifier = Modifier.fillMaxSize()
+                                ) { pIdx ->
+                                    RenderPageForNonFlipbook(pIdx)
+                                }
+                            } else if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FADE) {
+                                val fadeSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
+                                    var totalDx = 0f
+                                    var totalDy = 0f
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { totalDx = 0f; totalDy = 0f },
+                                        onDragEnd = {
+                                            if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
+                                                else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
+                                            }
+                                        },
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            totalDx += dragAmount
+                                            if (abs(totalDx) > 16.dp.toPx()) change.consume()
+                                        }
+                                    )
+                                }
+                                AnimatedContent(
+                                    targetState = curZero,
+                                    transitionSpec = {
+                                        fadeIn(tween(220, easing = FastOutSlowInEasing)) togetherWith fadeOut(tween(180, easing = FastOutSlowInEasing)) using SizeTransform(clip = false)
+                                    },
+                                    label = "readerFadeTransition",
+                                    modifier = Modifier.fillMaxSize().then(fadeSwipeModifier)
+                                ) { pIdx ->
+                                    RenderPageForNonFlipbook(pIdx)
+                                }
+                            } else {
+                                val noAnimSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
+                                    var totalDx = 0f
+                                    var totalDy = 0f
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { totalDx = 0f; totalDy = 0f },
+                                        onDragEnd = {
+                                            if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
+                                                else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
+                                            }
+                                        },
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            totalDx += dragAmount
+                                            if (abs(totalDx) > 16.dp.toPx()) change.consume()
+                                        }
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier.fillMaxSize().then(noAnimSwipeModifier),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    RenderPageForNonFlipbook(curZero)
                                 }
                             }
                         }
@@ -1160,9 +1322,16 @@ fun ReaderScreen(
                                                 val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
                                                 onOpenIllustViewer(idx)
                                             },
-                                            onSaveHighlightNote = onSaveHighlightNote,
-                                            onSearchInBook = { inBookSearchQuery = it }
-                                        )
+                                                            onSaveHighlightNote = onSaveHighlightNote,
+                                                            onDeleteHighlightNote = onDeleteHighlightNote,
+                                                            onSearchInBook = { inBookSearchQuery = it },
+                                                            bookTitle = book.title,
+                                                            onSelectionActiveChanged = { active, start, end ->
+                                                                hasSelectionActive = active
+                                                                selStartHandleAnchor = start
+                                                                selEndHandleAnchor = end
+                                                            }
+                                                        )
                                     }
                                     if (!isWebtoon) {
                                         item(key = "ch_div_$chIdx") {
@@ -2570,25 +2739,66 @@ fun ReaderScreen(
                             HorizontalDivider(color = palette.borderSoft)
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            var drawerTab by remember { mutableIntStateOf(0) }
+                            val allIllusts = uiState.activeBookIllustrations
+
+                            // 2-Tab Segmented Switcher (Chapters | Illustrations)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(36.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(palette.bgCard)
+                                    .padding(3.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                itemsIndexed(chapters, key = { idx, _ -> "toc_ch_$idx" }) { idx, ch ->
-                                    val active = idx == uiState.activeChapterIndex
-                                    val chIllusts = remember(ch) {
-                                        ch.pages.mapIndexedNotNull { pIdx, pText ->
-                                            if (pText.contains("[ILLUST:")) {
-                                                val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
-                                                val path = inner.substringBefore("|")
-                                                val cap = inner.substringAfter("|", "")
-                                                Triple(pIdx, path, cap)
-                                            } else null
-                                        }
+                                Surface(
+                                    onClick = { drawerTab = 0 },
+                                    shape = RoundedCornerShape(50),
+                                    color = if (drawerTab == 0) palette.textMain else Color.Transparent,
+                                    modifier = Modifier.weight(1f).fillMaxHeight()
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = if (strings.isEn) "Chapters (${chapters.size})" else "Bab (${chapters.size})",
+                                            color = if (drawerTab == 0) palette.bgApp else palette.textMuted,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (drawerTab == 0) FontWeight.SemiBold else FontWeight.Medium
+                                        )
                                     }
-                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                }
+                                Surface(
+                                    onClick = { drawerTab = 1 },
+                                    shape = RoundedCornerShape(50),
+                                    color = if (drawerTab == 1) palette.textMain else Color.Transparent,
+                                    modifier = Modifier.weight(1f).fillMaxHeight()
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = if (strings.isEn) "Illustrations (${allIllusts.size})" else "Ilustrasi (${allIllusts.size})",
+                                            color = if (drawerTab == 1) palette.bgApp else palette.textMuted,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (drawerTab == 1) FontWeight.SemiBold else FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            if (drawerTab == 0) {
+                                // Chapters Tab: Pure chapter rows only!
+                                LazyColumn(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    itemsIndexed(chapters, key = { idx, _ -> "toc_ch_$idx" }) { idx, ch ->
+                                        val active = idx == uiState.activeChapterIndex
                                         Surface(
-                                            onClick = { onJumpToChapterAndPage(idx, 0) },
+                                            onClick = {
+                                                onJumpToChapterAndPage(idx, 0)
+                                                onToggleTocDrawer(false)
+                                            },
                                             shape = RoundedCornerShape(16.dp),
                                             color = if (active) palette.textMain else palette.bgSurface,
                                             border = BorderStroke(1.dp, if (active) palette.textMain else palette.borderSoft),
@@ -2612,7 +2822,7 @@ fun ReaderScreen(
                                                         fontWeight = FontWeight.Normal
                                                     )
                                                     Text(
-                                                        text = localizeChapterTitle(ch.title, strings.isEn),
+                                                        text = sanitizeBookOrChapterText(localizeChapterTitle(ch.title, strings.isEn)),
                                                         color = if (active) palette.bgApp else palette.textMain,
                                                         fontSize = 13.5.sp,
                                                         fontFamily = FontFamily.Serif,
@@ -2630,130 +2840,96 @@ fun ReaderScreen(
                                                 )
                                             }
                                         }
-
-                                        chIllusts.forEach { (pIdx, path, cap) ->
+                                    }
+                                }
+                            } else {
+                                // Illustrations Tab: Only detected illustrations!
+                                if (allIllusts.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (strings.isEn) "No illustrations detected in this book" else "Tidak ada ilustrasi di buku ini",
+                                            color = palette.textMuted,
+                                            fontSize = 12.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        itemsIndexed(allIllusts, key = { iIdx, _ -> "drawer_illust_$iIdx" }) { iIdx, illust ->
+                                            val pNum = if (illust.pageIndexInBook > 0) illust.pageIndexInBook + 1 else Regex("""\d+""").find(illust.caption)?.value?.toIntOrNull() ?: 1
                                             Surface(
                                                 onClick = {
-                                                    onJumpToChapterAndPage(idx, pIdx)
+                                                    val target = getPageAtGlobalZero(illust.pageIndexInBook)
+                                                    if (target != null) {
+                                                        onJumpToChapterAndPage(target.first, target.second)
+                                                    }
                                                     onToggleTocDrawer(false)
                                                 },
-                                                shape = RoundedCornerShape(12.dp),
+                                                shape = RoundedCornerShape(14.dp),
                                                 color = palette.bgCard,
                                                 border = BorderStroke(1.dp, palette.borderSoft),
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(start = 20.dp, top = 4.dp)
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Row(
-                                                    modifier = Modifier.padding(6.dp),
+                                                    modifier = Modifier.padding(8.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                                 ) {
                                                     AsyncImage(
-                                                        model = File(path),
-                                                        contentDescription = cap,
+                                                        model = File(illust.uriOrPath),
+                                                        contentDescription = illust.caption,
                                                         contentScale = ContentScale.Crop,
                                                         modifier = Modifier
-                                                            .size(width = 38.dp, height = 48.dp)
-                                                            .clip(RoundedCornerShape(6.dp))
+                                                            .size(width = 44.dp, height = 58.dp)
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clickable { onOpenIllustViewer(iIdx) }
                                                     )
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text(
-                                                            text = if (strings.isEn) "Insert Illustration" else "Ilustrasi Sisipan",
-                                                            color = palette.textMuted,
-                                                            fontSize = 8.5.sp,
-                                                            fontFamily = FontFamily.Monospace,
-                                                            letterSpacing = 0.8.sp
-                                                        )
-                                                        Text(
-                                                            text = cap.ifBlank { if (strings.isEn) "Illustration — Page ${pIdx + 1}" else "Ilustrasi — Hal ${pIdx + 1}" },
+                                                            text = if (strings.isEn) "Illustration — Page $pNum" else "Ilustrasi — Hal $pNum",
                                                             color = palette.textMain,
-                                                            fontSize = 11.5.sp,
+                                                            fontSize = 12.5.sp,
+                                                            fontFamily = FontFamily.Serif,
                                                             fontWeight = FontWeight.Medium,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
+                                                        if (illust.caption.isNotBlank()) {
+                                                            Text(
+                                                                text = sanitizeBookOrChapterText(illust.caption),
+                                                                color = palette.textMuted,
+                                                                fontSize = 10.5.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
                                                     }
-                                                    Text(
-                                                        text = "p. ${pIdx + 1}",
-                                                        color = palette.textMuted,
-                                                        fontSize = 10.sp,
-                                                        fontFamily = FontFamily.Monospace
-                                                    )
+                                                    Surface(
+                                                        shape = CircleShape,
+                                                        color = palette.bgSurface,
+                                                        border = BorderStroke(1.dp, palette.borderSoft)
+                                                    ) {
+                                                        Text(
+                                                            text = "p. $pNum",
+                                                            color = palette.textMuted,
+                                                            fontSize = 10.sp,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
-
-                                 if (uiState.activeBookIllustrations.isNotEmpty()) {
-                                     item(key = "toc_illust_hdr") {
-                                         Spacer(modifier = Modifier.height(14.dp))
-                                         Text(
-                                             text = "INSERT ILLUSTRATIONS (${uiState.activeBookIllustrations.size})",
-                                             color = palette.textMuted,
-                                             fontSize = 10.sp,
-                                             fontFamily = FontFamily.Monospace,
-                                             letterSpacing = 1.2.sp
-                                         )
-                                     }
-                                     val illustPairs = uiState.activeBookIllustrations.chunked(2)
-                                     itemsIndexed(illustPairs, key = { rowIdx, _ -> "toc_il_row_$rowIdx" }) { rowIdx, pair ->
-                                         Row(
-                                             modifier = Modifier.fillMaxWidth(),
-                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                         ) {
-                                             pair.forEachIndexed { colIdx, illust ->
-                                                 val globalIllustIdx = rowIdx * 2 + colIdx
-                                                 Surface(
-                                                     onClick = { onOpenIllustViewer(globalIllustIdx) },
-                                                     shape = RoundedCornerShape(14.dp),
-                                                     color = palette.bgCard,
-                                                     border = BorderStroke(1.dp, palette.borderSoft),
-                                                     modifier = Modifier
-                                                         .weight(1f)
-                                                         .aspectRatio(0.74f)
-                                                 ) {
-                                                     Box(modifier = Modifier.fillMaxSize()) {
-                                                         AsyncImage(
-                                                             model = File(illust.uriOrPath),
-                                                             contentDescription = illust.caption,
-                                                             contentScale = ContentScale.Crop,
-                                                             modifier = Modifier.fillMaxSize()
-                                                         )
-                                                         Box(
-                                                             modifier = Modifier
-                                                                 .fillMaxWidth()
-                                                                 .align(Alignment.BottomCenter)
-                                                                 .background(
-                                                                     Brush.verticalGradient(
-                                                                         listOf(
-                                                                             Color.Transparent,
-                                                                             Color.Black.copy(alpha = 0.82f)
-                                                                         )
-                                                                     )
-                                                                 )
-                                                                 .padding(horizontal = 8.dp, vertical = 6.dp)
-                                                         ) {
-                                                             Text(
-                                                                 text = illust.caption,
-                                                                 color = Color.White,
-                                                                 fontSize = 10.sp,
-                                                                 fontWeight = FontWeight.Medium,
-                                                                 maxLines = 1,
-                                                                 overflow = TextOverflow.Ellipsis
-                                                             )
-                                                         }
-                                                     }
-                                                 }
-                                             }
-                                             if (pair.size == 1) {
-                                                 Spacer(modifier = Modifier.weight(1f))
-                                             }
-                                         }
-                                     }
-                                 }
-                             }
+                            }
                         }
 
                         // Sidebar Footer Progress (`#tocSidebarProgressBar` in `llunevie_prototype.html`)
@@ -3485,12 +3661,19 @@ private fun InteractiveTextPageContent(
     onParagraphClicked: (String, Boolean) -> Unit,
     onIllustrationClicked: (String) -> Unit,
     onSaveHighlightNote: (String, String, HighlightColorKey, String?) -> Unit,
+    onDeleteHighlightNote: (String) -> Unit = {},
     onSearchInBook: (String) -> Unit,
-    isCoverPage: Boolean = false
+    isCoverPage: Boolean = false,
+    bookTitle: String = "",
+    onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> }
 ) {
     val palette = LocalLluneviePalette.current
     val context = LocalContext.current
-    val paragraphs = remember(pageText) {
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val clipboardManager = LocalClipboardManager.current
+
+    val rawParagraphs = remember(pageText) {
         pageText.split("\n\n")
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
@@ -3498,43 +3681,61 @@ private fun InteractiveTextPageContent(
 
     val isCover = isCoverPage || (
         (chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) &&
-        paragraphs.any { it.startsWith("[ILLUST:") }
-    ) || (paragraphs.size == 1 && paragraphs[0].startsWith("[ILLUST:") && !showChapterHeader)
+        rawParagraphs.any { it.startsWith("[ILLUST:") }
+    ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:") && !showChapterHeader)
 
+    // 1. Natural Aspect-Ratio EPUB Cover (Never Stretched or Cropped!)
     if (isCover) {
-        val illustPara = paragraphs.firstOrNull { it.startsWith("[ILLUST:") }
+        val illustPara = rawParagraphs.firstOrNull { it.startsWith("[ILLUST:") }
         val imgPath = illustPara?.removePrefix("[ILLUST:")?.substringBefore("|")?.substringBefore("]")
         if (imgPath != null && File(imgPath).exists()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onIllustrationClicked(imgPath) },
-                contentAlignment = Alignment.Center
-            ) {
-                AsyncImage(
-                    model = File(imgPath),
-                    contentDescription = "Cover",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+            val coverBitmap = remember(imgPath) {
+                runCatching { BitmapFactory.decodeFile(imgPath) }.getOrNull()
             }
-            return
+            if (coverBitmap != null) {
+                val ratio = (coverBitmap.width.toFloat() / coverBitmap.height.toFloat()).coerceIn(0.58f, 0.80f)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onIllustrationClicked(imgPath) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        bitmap = coverBitmap.asImageBitmap(),
+                        contentDescription = bookTitle.ifBlank { "Cover" },
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(ratio, matchHeightConstraintsFirst = false)
+                            .clip(RoundedCornerShape(10.dp))
+                    )
+                }
+                return
+            }
         }
     }
 
-    val colModifier = if (scrollable) {
-        Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = prefs.pageMarginDp.dp, vertical = 12.dp)
-    } else {
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
+    val textParagraphs = remember(rawParagraphs) {
+        rawParagraphs.filter { !it.startsWith("[ILLUST:") }
     }
+    val fullPageText = remember(textParagraphs, prefs.paraIndent) {
+        if (prefs.paraIndent) {
+            textParagraphs.joinToString("\n\n") { "\u2003\u2003$it" }
+        } else {
+            textParagraphs.joinToString("\n\n")
+        }
+    }
+
+    var selStart by remember(pageText) { mutableIntStateOf(-1) }
+    var selEnd by remember(pageText) { mutableIntStateOf(-1) }
+    var activeDraggingHandle by remember { mutableStateOf<Int?>(null) } // 0 = start handle, 1 = end handle
+    var selectedHighlightId by remember(pageText) { mutableStateOf<String?>(null) }
+    val hasActiveSelection = selStart >= 0 && selEnd > selStart && selEnd <= fullPageText.length
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
     val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
         "justify" -> TextAlign.Justify
@@ -3549,350 +3750,412 @@ private fun InteractiveTextPageContent(
         prefs.fontWeight == 500 -> FontWeight.Medium
         else -> FontWeight.Normal
     }
-    val paraSpacingDp = (prefs.fontSizeSp * prefs.paraSpacingEm * 0.75f).dp.coerceIn(4.dp, 48.dp)
 
-    val clipboardManager = LocalClipboardManager.current
-    var isToolbarShown by remember { mutableStateOf(false) }
-    var pendingCopyAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val customTextToolbar = remember(clipboardManager) {
-        object : TextToolbar {
-            override var status: TextToolbarStatus = TextToolbarStatus.Hidden
-            override fun hide() {
-                status = TextToolbarStatus.Hidden
-                isToolbarShown = false
-                pendingCopyAction = null
+    // Build unified AnnotatedString with pastel highlights & active blue selection span
+    val annotatedString = remember(fullPageText, bookHighlights, selStart, selEnd, hasActiveSelection, palette) {
+        buildAnnotatedString {
+            append(fullPageText)
+            bookHighlights.forEach { hl ->
+                val quote = hl.quoteText.trim()
+                if (quote.isNotBlank()) {
+                    var sIdx = 0
+                    while (sIdx < fullPageText.length) {
+                        val found = fullPageText.indexOf(quote, sIdx, ignoreCase = true)
+                        if (found < 0) break
+                        val colorKey = HighlightColorKey.fromKey(hl.colorKey)
+                        addStyle(
+                            SpanStyle(
+                                background = palette.highlightBg(colorKey),
+                                color = Color(0xFF18181B)
+                            ),
+                            found,
+                            found + quote.length
+                        )
+                        sIdx = found + quote.length
+                    }
+                }
             }
-            override fun showMenu(
-                rect: Rect,
-                onCopyRequested: (() -> Unit)?,
-                onPasteRequested: (() -> Unit)?,
-                onCutRequested: (() -> Unit)?,
-                onSelectAllRequested: (() -> Unit)?
-            ) {
-                status = TextToolbarStatus.Shown
-                pendingCopyAction = onCopyRequested
-                isToolbarShown = true
+            if (hasActiveSelection && selStart in 0 until fullPageText.length && selEnd in (selStart + 1)..fullPageText.length) {
+                addStyle(
+                    SpanStyle(
+                        background = Color(0xFF38BDF8).copy(alpha = 0.28f),
+                        color = Color(0xFF18181B)
+                    ),
+                    selStart,
+                    selEnd
+                )
             }
         }
     }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
-        CompositionLocalProvider(LocalTextToolbar provides customTextToolbar) {
-            SelectionContainer {
-                Column(
-                    modifier = colModifier,
-                    verticalArrangement = Arrangement.spacedBy(paraSpacingDp)
+    val layout = textLayoutResult
+    val startBox = remember(layout, selStart, fullPageText.length) {
+        if (layout != null && selStart in 0 until fullPageText.length) {
+            layout.getBoundingBox(selStart)
+        } else Rect.Zero
+    }
+    val endBox = remember(layout, selEnd, fullPageText.length) {
+        if (layout != null && selEnd in 1..fullPageText.length) {
+            layout.getBoundingBox(selEnd - 1)
+        } else Rect.Zero
+    }
+    val startHandleAnchor = remember(startBox) { Offset(startBox.left, startBox.bottom) }
+    val endHandleAnchor = remember(endBox) { Offset(endBox.right, endBox.bottom) }
+
+    LaunchedEffect(hasActiveSelection, startHandleAnchor, endHandleAnchor) {
+        onSelectionActiveChanged(hasActiveSelection, startHandleAnchor, endHandleAnchor)
+    }
+
+    val outerScrollModifier = if (scrollable) {
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    } else {
+        Modifier.fillMaxSize()
+    }
+
+    Box(
+        modifier = outerScrollModifier
+            .padding(start = 22.dp, end = 22.dp, top = 20.dp, bottom = 24.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            if (showChapterHeader && chapterTitle.isNotBlank()) {
+                Text(
+                    text = chapterTitle,
+                    color = palette.textMain,
+                    fontSize = (prefs.fontSizeSp + 6).sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                )
+            }
+
+            // Inline illustrations inside the chapter
+            rawParagraphs.filter { it.startsWith("[ILLUST:") && it.endsWith("]") }.forEach { para ->
+                val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
+                val path = inner.substringBefore("|")
+                val caption = inner.substringAfter("|", "")
+                Surface(
+                    onClick = { onIllustrationClicked(path) },
+                    shape = RoundedCornerShape(16.dp),
+                    color = palette.bgCard,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
                 ) {
-                    if (showChapterHeader && chapterTitle.isNotBlank()) {
-                        Text(
-                            text = chapterTitle,
-                            color = palette.textMain,
-                            fontSize = (prefs.fontSizeSp + 6).sp,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center,
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AsyncImage(
+                            model = File(path),
+                            contentDescription = caption,
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 16.dp)
+                                .height(260.dp)
+                        )
+                        if (caption.isNotBlank()) {
+                            Text(
+                                text = caption,
+                                color = palette.textMuted,
+                                fontSize = 10.5.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Deterministic Single-Text Selection Canvas
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(fullPageText) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { pressPos ->
+                                val l = textLayoutResult ?: return@detectDragGesturesAfterLongPress
+                                val rawOffset = l.getOffsetForPosition(pressPos).coerceIn(0, fullPageText.length)
+                                var wStart = rawOffset
+                                while (wStart > 0 && !fullPageText[wStart - 1].isWhitespace() && fullPageText[wStart - 1] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
+                                    wStart--
+                                }
+                                var wEnd = rawOffset
+                                while (wEnd < fullPageText.length && !fullPageText[wEnd].isWhitespace() && fullPageText[wEnd] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
+                                    wEnd++
+                                }
+                                if (wEnd <= wStart) {
+                                    wEnd = (wStart + 1).coerceAtMost(fullPageText.length)
+                                }
+                                selStart = wStart
+                                selEnd = wEnd
+                                selectedHighlightId = null
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val l = textLayoutResult ?: return@detectDragGesturesAfterLongPress
+                                val curOffset = l.getOffsetForPosition(change.position).coerceIn(0, fullPageText.length)
+                                if (curOffset > selStart) {
+                                    selEnd = curOffset
+                                } else if (curOffset < selStart) {
+                                    selStart = curOffset
+                                }
+                            },
+                            onDragEnd = {},
+                            onDragCancel = {}
                         )
                     }
-
-                    paragraphs.forEachIndexed { idx, para ->
-                        if (para.startsWith("[ILLUST:") && para.endsWith("]")) {
-                            val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
-                            val path = inner.substringBefore("|")
-                            val caption = inner.substringAfter("|", "")
-                            Surface(
-                                onClick = { onIllustrationClicked(path) },
-                                shape = RoundedCornerShape(16.dp),
-                                color = palette.bgCard,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    AsyncImage(
-                                        model = File(path),
-                                        contentDescription = caption,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(260.dp)
-                                    )
-                                    if (caption.isNotBlank()) {
-                                        Text(
-                                            text = caption,
-                                            color = palette.textMuted,
-                                            fontSize = 10.5.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            modifier = Modifier.padding(8.dp)
-                                        )
-                                    }
-                                }
+                    .pointerInput(fullPageText) {
+                        detectTapGestures { tapPos ->
+                            val l = textLayoutResult ?: return@detectTapGestures
+                            if (hasActiveSelection) {
+                                selStart = -1
+                                selEnd = -1
+                                selectedHighlightId = null
+                                return@detectTapGestures
                             }
-                        } else {
-                            val isUpperHalf = idx <= paragraphs.size / 2
-                            var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-                            var dragStartOffset by remember { mutableIntStateOf(-1) }
-                            var dragCurrentOffset by remember { mutableIntStateOf(-1) }
-
-                            val selStart = if (dragStartOffset >= 0 && dragCurrentOffset >= 0) minOf(dragStartOffset, dragCurrentOffset) else -1
-                            val selEnd = if (dragStartOffset >= 0 && dragCurrentOffset >= 0) maxOf(dragStartOffset, dragCurrentOffset) else -1
-
-                            // Stabilo Highlighting via SpanStyle inside AnnotatedString (Pastel swatches with dark readable text)
-                            val annotatedPara = buildAnnotatedString {
-                                withStyle(
-                                    SpanStyle(
-                                        fontFamily = resolvedFontFamily,
-                                        fontSize = prefs.fontSizeSp.sp,
-                                        fontWeight = resolvedFontWeight
-                                    )
-                                ) {
-                                    append(para)
-                                    if (prefs.wordSpacingPx > 0) {
-                                        for (i in para.indices) {
-                                            if (para[i] == ' ') {
-                                                addStyle(
-                                                    SpanStyle(letterSpacing = (prefs.wordSpacingPx * 0.35f).sp),
-                                                    i,
-                                                    i + 1
-                                                )
-                                            }
-                                        }
-                                    }
-                                    bookHighlights.forEach { hl ->
-                                        val quote = hl.quoteText.trim()
-                                        if (quote.isNotBlank() && para.contains(quote, ignoreCase = true)) {
-                                            var startIndex = 0
-                                            while (startIndex < para.length) {
-                                                val foundIdx = para.indexOf(quote, startIndex, ignoreCase = true)
-                                                if (foundIdx < 0) break
-                                                val colorKey = HighlightColorKey.fromKey(hl.colorKey)
-                                                addStyle(
-                                                    style = SpanStyle(
-                                                        background = palette.highlightBg(colorKey),
-                                                        color = Color(0xFF18181B)
-                                                    ),
-                                                    start = foundIdx,
-                                                    end = foundIdx + quote.length
-                                                )
-                                                startIndex = foundIdx + quote.length
-                                            }
-                                        }
-                                    }
-                                    if (selStart in 0 until para.length && selEnd in (selStart + 1)..para.length) {
-                                        addStyle(
-                                            style = SpanStyle(
-                                                background = Color(0xFFFEF08A).copy(alpha = 0.65f),
-                                                color = Color(0xFF18181B)
-                                            ),
-                                            start = selStart,
-                                            end = selEnd
-                                        )
-                                    }
-                                }
+                            val tapOffset = l.getOffsetForPosition(tapPos).coerceIn(0, fullPageText.length)
+                            val matchedHl = bookHighlights.find { hl ->
+                                val q = hl.quoteText.trim()
+                                if (q.isNotBlank()) {
+                                    val idx = fullPageText.indexOf(q, ignoreCase = true)
+                                    idx >= 0 && tapOffset in idx until (idx + q.length)
+                                } else false
                             }
-
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = annotatedPara,
-                                    color = palette.textMain,
-                                    fontSize = prefs.fontSizeSp.sp,
-                                    lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
-                                    letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp).sp,
-                                    fontFamily = resolvedFontFamily,
-                                    fontWeight = resolvedFontWeight,
-                                    textAlign = resolvedTextAlign,
-                                    style = TextStyle(
-                                        textIndent = if (prefs.paraIndent) TextIndent(firstLine = (prefs.fontSizeSp * 1.5f).sp) else TextIndent.None
-                                    ),
-                                    onTextLayout = { textLayoutResult = it },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .pointerInput(para) {
-                                            detectDragGesturesAfterLongPress(
-                                                onDragStart = { startPos ->
-                                                    textLayoutResult?.let { layout ->
-                                                        val charIdx = layout.getOffsetForPosition(startPos).coerceIn(0, para.length)
-                                                        val word = layout.getWordBoundary(charIdx)
-                                                        dragStartOffset = word.start
-                                                        dragCurrentOffset = word.end
-                                                    }
-                                                },
-                                                onDrag = { change, _ ->
-                                                    change.consume()
-                                                    textLayoutResult?.let { layout ->
-                                                        val charIdx = layout.getOffsetForPosition(change.position).coerceIn(0, para.length)
-                                                        dragCurrentOffset = charIdx
-                                                    }
-                                                },
-                                                onDragEnd = {
-                                                    if (dragStartOffset >= 0 && dragCurrentOffset >= 0) {
-                                                        val s = minOf(dragStartOffset, dragCurrentOffset).coerceIn(0, para.length)
-                                                        val e = maxOf(dragStartOffset, dragCurrentOffset).coerceIn(0, para.length)
-                                                        if (e > s) {
-                                                            val selectedText = para.substring(s, e).trim()
-                                                            if (selectedText.isNotBlank()) {
-                                                                onParagraphClicked(selectedText, isUpperHalf)
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                onDragCancel = {
-                                                    dragStartOffset = -1
-                                                    dragCurrentOffset = -1
-                                                }
-                                            )
-                                        }
-                                        .pointerInput(para) {
-                                            detectTapGestures { tapPos ->
-                                                textLayoutResult?.let { layout ->
-                                                    val charIdx = layout.getOffsetForPosition(tapPos).coerceIn(0, para.length)
-                                                    val matchedHl = bookHighlights.find { hl ->
-                                                        val q = hl.quoteText.trim()
-                                                        val idx = para.indexOf(q, ignoreCase = true)
-                                                        idx >= 0 && charIdx in idx until (idx + q.length)
-                                                    }
-                                                    if (matchedHl != null) {
-                                                        onParagraphClicked(matchedHl.quoteText, isUpperHalf)
-                                                    } else {
-                                                        val word = layout.getWordBoundary(charIdx)
-                                                        val selectedText = para.substring(word.start.coerceIn(0, para.length), word.end.coerceIn(0, para.length)).trim()
-                                                        if (selectedText.isNotBlank()) {
-                                                            dragStartOffset = word.start
-                                                            dragCurrentOffset = word.end
-                                                            onParagraphClicked(selectedText, isUpperHalf)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        .padding(vertical = 2.dp)
-                                )
-
-                                if (selStart in 0 until para.length && selEnd in (selStart + 1)..para.length && textLayoutResult != null) {
-                                    val layout = textLayoutResult!!
-                                    val startBox = layout.getBoundingBox(selStart)
-                                    val endBox = layout.getBoundingBox((selEnd - 1).coerceAtLeast(0))
-
-                                    Box(
-                                        modifier = Modifier
-                                            .offset { IntOffset((startBox.left - 18f).roundToInt(), startBox.bottom.roundToInt()) }
-                                            .size(13.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFFACC15))
-                                            .border(1.5.dp, Color.White, CircleShape)
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .offset { IntOffset((endBox.right - 6f).roundToInt(), endBox.bottom.roundToInt()) }
-                                            .size(13.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFFACC15))
-                                            .border(1.5.dp, Color.White, CircleShape)
-                                    )
+                            if (matchedHl != null) {
+                                val idx = fullPageText.indexOf(matchedHl.quoteText.trim(), ignoreCase = true)
+                                if (idx >= 0) {
+                                    selStart = idx
+                                    selEnd = idx + matchedHl.quoteText.trim().length
+                                    selectedHighlightId = matchedHl.id
                                 }
                             }
                         }
+                    }
+            ) {
+                Text(
+                    text = annotatedString,
+                    color = palette.textMain,
+                    fontSize = prefs.fontSizeSp.sp,
+                    lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
+                    letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp).sp,
+                    fontFamily = resolvedFontFamily,
+                    fontWeight = resolvedFontWeight,
+                    textAlign = resolvedTextAlign,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false)
+                    ),
+                    onTextLayout = { textLayoutResult = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Draggable Teardrop Selection Handles & Vertical Bars
+                if (hasActiveSelection && layout != null) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        // Start vertical bar
+                        drawLine(
+                            color = Color(0xFF38BDF8),
+                            start = Offset(startBox.left, startBox.top),
+                            end = Offset(startBox.left, startBox.bottom),
+                            strokeWidth = 2.dp.toPx()
+                        )
+                        // End vertical bar
+                        drawLine(
+                            color = Color(0xFF38BDF8),
+                            start = Offset(endBox.right, endBox.top),
+                            end = Offset(endBox.right, endBox.bottom),
+                            strokeWidth = 2.dp.toPx()
+                        )
+                    }
+
+                    // Left (Start) Handle (40x40 hit target, visible 18dp circle)
+                    var leftDragPos by remember(startBox) { mutableStateOf(Offset(startBox.left, startBox.bottom)) }
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset((startHandleAnchor.x - 20.dp.toPx()).roundToInt(), startHandleAnchor.y.roundToInt()) }
+                            .size(40.dp)
+                            .pointerInput(fullPageText) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        activeDraggingHandle = 0
+                                        leftDragPos = Offset(startBox.left, startBox.bottom)
+                                    },
+                                    onDragEnd = { activeDraggingHandle = null },
+                                    onDragCancel = { activeDraggingHandle = null },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val l = textLayoutResult ?: return@detectDragGestures
+                                        leftDragPos += dragAmount
+                                        val newIdx = l.getOffsetForPosition(leftDragPos).coerceIn(0, fullPageText.length)
+                                        if (newIdx < selEnd) selStart = newIdx
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8))
+                                .border(1.5.dp, Color.White, CircleShape)
+                        )
+                    }
+
+                    // Right (End) Handle (40x40 hit target, visible 18dp circle)
+                    var rightDragPos by remember(endBox) { mutableStateOf(Offset(endBox.right, endBox.bottom)) }
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset((endHandleAnchor.x - 20.dp.toPx()).roundToInt(), endHandleAnchor.y.roundToInt()) }
+                            .size(40.dp)
+                            .pointerInput(fullPageText) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        activeDraggingHandle = 1
+                                        rightDragPos = Offset(endBox.right, endBox.bottom)
+                                    },
+                                    onDragEnd = { activeDraggingHandle = null },
+                                    onDragCancel = { activeDraggingHandle = null },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val l = textLayoutResult ?: return@detectDragGestures
+                                        rightDragPos += dragAmount
+                                        val newIdx = (l.getOffsetForPosition(rightDragPos) + 1).coerceIn(0, fullPageText.length)
+                                        if (newIdx > selStart) selEnd = newIdx
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8))
+                                .border(1.5.dp, Color.White, CircleShape)
+                        )
                     }
                 }
             }
         }
 
-        // Floating Compact Selection Action Bar: Selector stays alive until user taps an action
-        if (isToolbarShown && pendingCopyAction != null) {
+        // 5. Floating Highlight & Note Popover (#highlightPopover)
+        if (hasActiveSelection && activeDraggingHandle == null && layout != null) {
+            val selectedText = fullPageText.substring(selStart, selEnd).trim()
+            val popoverY = if (startBox.top < 80f) {
+                (endBox.bottom + 12f).roundToInt()
+            } else {
+                with(density) { (startBox.top - 64.dp.toPx()).roundToInt().coerceAtLeast(0) }
+            }
+
             Surface(
-                shape = CircleShape,
-                color = palette.sheetBg,
+                shape = RoundedCornerShape(16.dp),
+                color = palette.bgSurface,
                 border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 10.dp,
+                shadowElevation = 8.dp,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 4.dp)
-                    .zIndex(60f)
+                    .offset { IntOffset(0, popoverY) }
+                    .zIndex(100f)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    HighlightColorKey.entries.forEach { key ->
+                    // 4 Pastel color swatches (Amber #FEF3C7, Sky #DBEAFE, Rose #FCE7F3, Mint #DCFCE7)
+                    val pastelSwatches = listOf(
+                        HighlightColorKey.GOLD to Color(0xFFFEF3C7),
+                        HighlightColorKey.SKY to Color(0xFFDBEAFE),
+                        HighlightColorKey.PEACH to Color(0xFFFCE7F3),
+                        HighlightColorKey.MINT to Color(0xFFDCFCE7)
+                    )
+                    pastelSwatches.forEach { (key, col) ->
                         Box(
                             modifier = Modifier
-                                .size(20.dp)
+                                .size(22.dp)
                                 .clip(CircleShape)
-                                .background(palette.highlightBorder(key))
+                                .background(col)
                                 .border(1.dp, palette.borderSoft, CircleShape)
                                 .clickable {
-                                    pendingCopyAction?.invoke()
-                                    val text = clipboardManager.getText()?.text?.toString()?.trim()
-                                    if (!text.isNullOrBlank()) {
-                                        onSaveHighlightNote(text, "", key, null)
-                                    }
-                                    customTextToolbar.hide()
+                                    onSaveHighlightNote(selectedText, "", key, selectedHighlightId)
+                                    selStart = -1
+                                    selEnd = -1
+                                    selectedHighlightId = null
                                 }
                         )
                     }
+
                     Box(
                         modifier = Modifier
                             .width(1.dp)
-                            .height(14.dp)
+                            .height(16.dp)
                             .background(palette.borderSoft)
                     )
+
+                    // + Note button
                     Surface(
                         onClick = {
-                            pendingCopyAction?.invoke()
-                            val text = clipboardManager.getText()?.text?.toString()?.trim()
-                            if (!text.isNullOrBlank()) {
-                                onParagraphClicked(text, true)
-                            }
-                            customTextToolbar.hide()
+                            onParagraphClicked(selectedText, startBox.top <= 200f)
+                            selStart = -1
+                            selEnd = -1
+                            selectedHighlightId = null
                         },
                         shape = CircleShape,
                         color = Color.Transparent
                     ) {
                         Text(
-                            text = "Catatan",
+                            text = if (prefs.lang == "en") "+ Note" else "+ Catatan",
                             color = palette.textMain,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                         )
                     }
+
+                    // Copy button
                     Surface(
                         onClick = {
-                            pendingCopyAction?.invoke()
-                            customTextToolbar.hide()
+                            clipboardManager.setText(AnnotatedString(selectedText))
+                            selStart = -1
+                            selEnd = -1
+                            selectedHighlightId = null
                         },
                         shape = CircleShape,
                         color = Color.Transparent
                     ) {
                         Text(
-                            text = "Salin",
+                            text = if (prefs.lang == "en") "Copy" else "Salin",
                             color = palette.textMain,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                         )
                     }
-                    Surface(
-                        onClick = {
-                            pendingCopyAction?.invoke()
-                            val text = clipboardManager.getText()?.text?.toString()?.trim()
-                            if (!text.isNullOrBlank()) {
-                                onSearchInBook(text)
-                            }
-                            customTextToolbar.hide()
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = "Cari",
-                            color = palette.textMain,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+
+                    // Delete button (when an existing highlight is tapped/selected)
+                    if (selectedHighlightId != null) {
+                        Surface(
+                            onClick = {
+                                onDeleteHighlightNote(selectedHighlightId!!)
+                                selStart = -1
+                                selEnd = -1
+                                selectedHighlightId = null
+                            },
+                            shape = CircleShape,
+                            color = Color.Transparent
+                        ) {
+                            Text(
+                                text = if (prefs.lang == "en") "Delete" else "Hapus",
+                                color = Color(0xFFEF4444),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
             }
