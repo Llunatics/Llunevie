@@ -48,7 +48,10 @@ data class UserPreferencesState(
     val libSort: LibrarySortOption = LibrarySortOption.RECENT,
     val libGridCols: Int = 0,
     val homeRecentMode: String = "grid"
-)
+) {
+    val lineHeightMult: Float get() = lineHeightMultiplier
+    val pageMargin: Int get() = when { pageMarginDp <= 16 -> 0; pageMarginDp <= 28 -> 1; else -> 2 }
+}
 
 class UserPreferencesRepository(private val context: Context) {
 

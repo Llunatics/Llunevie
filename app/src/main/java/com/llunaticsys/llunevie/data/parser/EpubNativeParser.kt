@@ -340,14 +340,14 @@ object EpubNativeParser {
                 val blockElements: List<Element> = body.select("p, h1, h2, h3, h4, blockquote, li")
                 if (blockElements.isNotEmpty()) {
                     for (el in blockElements) {
-                        val txt = el.text().replace(Regex("""\s+"""), " ").trim()
+                        val txt = sanitizeBookOrChapterText(el.text()).replace(Regex("""\s+"""), " ").trim()
                         if (txt.isNotBlank() && !txt.equals(chTitle, ignoreCase = true)) {
                             chapterParagraphs.add(txt)
                         }
                     }
                 } else {
                     // Fallback for EPUBs that use <div> or <br>-separated text directly inside <body>
-                    val cleanedBody = body.wholeText().lines().map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
+                    val cleanedBody = body.wholeText().lines().map { sanitizeBookOrChapterText(it).replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
                     for (line in cleanedBody) {
                         if (!line.equals(chTitle, ignoreCase = true)) {
                             chapterParagraphs.add(line)
