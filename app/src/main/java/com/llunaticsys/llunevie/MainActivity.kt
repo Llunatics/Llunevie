@@ -10,6 +10,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import android.os.Build
+import androidx.compose.ui.draw.blur
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.style.TextOverflow
 import com.llunaticsys.llunevie.model.AppThemeMode
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -241,6 +245,19 @@ private fun LlunevieMainContainer(
     onShareBackupJson: (String) -> Unit
 ) {
     val palette = LocalLluneviePalette.current
+    val isAnyModalOrSheetOpen = uiState.showAddBookSheet ||
+        uiState.showFullCameraScanner ||
+        uiState.showLibFilterSheet ||
+        uiState.editingBook != null ||
+        uiState.showDeleteConfirmDialog ||
+        uiState.pendingCandidateForShelf != null ||
+        uiState.selectedCatalogBookDetail != null
+
+    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) {
+        Modifier.blur(10.dp)
+    } else {
+        Modifier
+    }
 
     Box(
         modifier = Modifier
@@ -248,23 +265,24 @@ private fun LlunevieMainContainer(
             .background(palette.bgApp)
             .statusBarsPadding()
     ) {
-        // Directional spring + subtle scale screen transition matching native fluid navigation
-        AnimatedContent(
-            targetState = uiState.activeTab,
-            transitionSpec = {
-                val dir = if (targetState.ordinal >= initialState.ordinal) 1 else -1
-                (slideInHorizontally(spring(dampingRatio = 0.84f, stiffness = 360f)) { w -> dir * (w / 6) } +
-                    fadeIn(tween(200)) +
-                    scaleIn(initialScale = 0.965f, animationSpec = spring(dampingRatio = 0.84f, stiffness = 360f)))
-                    .togetherWith(
-                        slideOutHorizontally(tween(170)) { w -> -dir * (w / 8) } +
-                            fadeOut(tween(140)) +
-                            scaleOut(targetScale = 0.965f, animationSpec = tween(170))
-                    )
-            },
-            label = "mainTabTransition",
-            modifier = Modifier.fillMaxSize()
-        ) { targetTab ->
+        Box(modifier = Modifier.fillMaxSize().then(screenBlurModifier)) {
+            // Directional spring + subtle scale screen transition matching native fluid navigation
+            AnimatedContent(
+                targetState = uiState.activeTab,
+                transitionSpec = {
+                    val dir = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                    (slideInHorizontally(spring(dampingRatio = 0.84f, stiffness = 360f)) { w -> dir * (w / 6) } +
+                        fadeIn(tween(200)) +
+                        scaleIn(initialScale = 0.965f, animationSpec = spring(dampingRatio = 0.84f, stiffness = 360f)))
+                        .togetherWith(
+                            slideOutHorizontally(tween(170)) { w -> -dir * (w / 8) } +
+                                fadeOut(tween(140)) +
+                                scaleOut(targetScale = 0.965f, animationSpec = tween(170))
+                        )
+                },
+                label = "mainTabTransition",
+                modifier = Modifier.fillMaxSize()
+            ) { targetTab ->
             when (targetTab) {
                 MainNavTab.HOME -> HomeScreen(
                     books = books,
@@ -425,6 +443,14 @@ private fun LlunevieMainContainer(
             )
         }
 
+        if (isAnyModalOrSheetOpen && (uiState.showAddBookSheet || uiState.showLibFilterSheet || uiState.editingBook != null || uiState.selectedCatalogBookDetail != null || uiState.pendingCandidateForShelf != null)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.40f))
+            )
+        }
+
         if (uiState.showAddBookSheet && !uiState.showFullCameraScanner) {
             AddBookSheet(
                 uiState = uiState,
@@ -454,13 +480,85 @@ private fun LlunevieMainContainer(
                 onSetCameraMode = { viewModel.setCameraMode(it) },
                 onToggleTorch = { viewModel.toggleCameraTorch() },
                 onIsbnDetected = { viewModel.lookupIsbnFromScanner(it) },
-                onSaveSingleCandidate = { viewModel.promptChooseShelfForCandidate(it) },
+                onSaveSingleCandidate = {
+                    viewModel.closeFullCameraScanner()
+                    viewModel.promptChooseShelfForCandidate(it)
+                },
                 onRemoveBatchItem = { viewModel.removeBatchItem(it) },
                 onClearBatchQueue = { viewModel.clearBatchScanQueue() },
                 onCommitBatchQueue = { viewModel.commitBatchScanToShelf(it) },
                 onCommitBatchFiltered = { viewModel.commitResolvedBatchOnly(it) },
                 onFillDetailsManually = { viewModel.saveResolvedBatchAndOpenManual(prefs.libShelf.ifBlank { "eReader" }, it) }
             )
+        }
+
+        // Top-level Choose Destination Shelf Dialog (Always appears on top of every screen including scanner)
+        uiState.pendingCandidateForShelf?.let { candidate ->
+            androidx.compose.ui.window.Dialog(onDismissRequest = { viewModel.promptChooseShelfForCandidate(null) }) {
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = palette.sheetBg,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 24.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 340.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Pilih Rak Tujuan" else "Choose Destination Shelf",
+                                color = palette.textMain,
+                                fontSize = 18.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Surface(
+                                onClick = { viewModel.promptChooseShelfForCandidate(null) },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                        Text(
+                            text = candidate.title,
+                            color = palette.textMuted,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        shelves.forEach { shelf ->
+                            Surface(
+                                onClick = { viewModel.saveCandidateToShelf(candidate, shelf.name, "PHYSICAL") },
+                                shape = RoundedCornerShape(16.dp),
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = strings.localizeShelfName(shelf.name),
+                                    color = palette.textMain,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Minimal Floating Progress Bar when importing large PDF/EPUB in background
@@ -532,4 +630,5 @@ private fun LlunevieMainContainer(
             }
         }
     }
+}
 }

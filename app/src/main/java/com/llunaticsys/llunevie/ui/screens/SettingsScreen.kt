@@ -25,6 +25,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.StrokeCap
+import android.os.Build
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -133,9 +137,16 @@ fun SettingsScreen(
         }
     }
 
+    val blurModifier = if (Build.VERSION.SDK_INT >= 31 && pendingCropBitmap != null) {
+        Modifier.blur(10.dp)
+    } else {
+        Modifier
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
+            .then(blurModifier)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
             .padding(horizontal = 20.dp)
@@ -684,156 +695,177 @@ fun SettingsScreen(
 
     // Circular Photo Crop, Drag-Pan, Pinch-Zoom & 90° Rotate Modal
     pendingCropBitmap?.let { cropBmp ->
-            Dialog(onDismissRequest = { pendingCropBitmap = null }) {
-                Surface(
-                    shape = RoundedCornerShape(28.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier.fillMaxWidth()
+        val isEn = !strings.isId
+        Dialog(onDismissRequest = { pendingCropBitmap = null }) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = palette.bgSurface,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 340.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    // Header Row: Title & Subtitle on Left, 32.dp Close Button on Right
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (strings.isId) "Sesuaikan Foto Profil" else "Adjust Profile Photo",
-                                color = palette.textMain,
-                                fontSize = 17.sp,
+                                text = if (isEn) "Adjust Profile Photo" else "Sesuaikan Foto Profil",
+                                color = palette.textPrimary,
+                                fontSize = 18.sp,
                                 fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.Normal
                             )
-                            Surface(
-                                onClick = { pendingCropBitmap = null },
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
-                                }
-                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isEn) "Drag to reposition, pinch to zoom" else "Geser dan cubit untuk mengatur posisi",
+                                color = palette.textSecondary,
+                                fontSize = 11.sp
+                            )
                         }
-
-                        // Interactive 240.dp x 240.dp Crop Stage
-                        val stageSizeDp = 240.dp
-                        val stageSizePx = with(LocalDensity.current) { stageSizeDp.toPx() }
-                        Box(
-                            modifier = Modifier
-                                .size(stageSizeDp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Color.Black)
-                                .pointerInput(cropBmp) {
-                                    detectTransformGestures { _, pan, zoom, _ ->
-                                        val newScale = (cropScale * zoom).coerceIn(1f, 3.5f)
-                                        cropScale = newScale
-                                        cropOffset = clampCropPan(
-                                            panX = cropOffset.x + pan.x,
-                                            panY = cropOffset.y + pan.y,
-                                            stageSizePx = stageSizePx,
-                                            bmpW = cropBmp.width,
-                                            bmpH = cropBmp.height,
-                                            zoom = newScale,
-                                            rotationDeg = cropRotationDegrees
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
+                        Surface(
+                            onClick = { pendingCropBitmap = null },
+                            shape = CircleShape,
+                            color = palette.bgCard,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(32.dp)
                         ) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val stageW = size.width
-                                val stageH = size.height
-                                val isQuarterTurn = ((cropRotationDegrees.roundToInt() / 90) % 2) != 0
-                                val rotW = if (isQuarterTurn) cropBmp.height.toFloat() else cropBmp.width.toFloat()
-                                val rotH = if (isQuarterTurn) cropBmp.width.toFloat() else cropBmp.height.toFloat()
-                                val baseScale = max(stageW / rotW.coerceAtLeast(1f), stageH / rotH.coerceAtLeast(1f))
-                                val totalScale = baseScale * cropScale
-
-                                val matrix = android.graphics.Matrix().apply {
-                                    postTranslate(-cropBmp.width / 2f, -cropBmp.height / 2f)
-                                    postRotate(cropRotationDegrees)
-                                    postScale(totalScale, totalScale)
-                                    postTranslate(
-                                        (stageW / 2f) + cropOffset.x,
-                                        (stageH / 2f) + cropOffset.y
+                            Box(contentAlignment = Alignment.Center) {
+                                Canvas(modifier = Modifier.size(11.dp)) {
+                                    val strokePx = 1.5.dp.toPx()
+                                    drawLine(
+                                        color = palette.textPrimary,
+                                        start = Offset(0f, 0f),
+                                        end = Offset(size.width, size.height),
+                                        strokeWidth = strokePx,
+                                        cap = StrokeCap.Round
+                                    )
+                                    drawLine(
+                                        color = palette.textPrimary,
+                                        start = Offset(size.width, 0f),
+                                        end = Offset(0f, size.height),
+                                        strokeWidth = strokePx,
+                                        cap = StrokeCap.Round
                                     )
                                 }
-                                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
-                                drawIntoCanvas { canvas ->
-                                    canvas.nativeCanvas.drawBitmap(cropBmp, matrix, paint)
-                                }
-
-                                // Circular Cutout Mask & crisp circular border
-                                val r = stageW / 2f
-                                val cx = stageW / 2f
-                                val cy = stageH / 2f
-                                val mask = android.graphics.Path().apply {
-                                    fillType = android.graphics.Path.FillType.EVEN_ODD
-                                    addRect(0f, 0f, stageW, stageH, android.graphics.Path.Direction.CW)
-                                    addCircle(cx, cy, r, android.graphics.Path.Direction.CW)
-                                }
-                                drawContext.canvas.nativeCanvas.drawPath(
-                                    mask,
-                                    android.graphics.Paint().apply {
-                                        color = android.graphics.Color.argb(170, 0, 0, 0)
-                                        style = android.graphics.Paint.Style.FILL
-                                    }
-                                )
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.95f),
-                                    radius = r - 1f,
-                                    center = Offset(cx, cy),
-                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                                )
                             }
                         }
+                    }
 
-                        // Zoom Slider & Live readout
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Text(
-                                text = "Zoom",
-                                color = palette.textMuted,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            LlunevieThinSlider(
-                                value = cropScale,
-                                onValueChange = { newScale ->
+                    // Interactive 216.dp x 216.dp Crop Stage
+                    val stageSizeDp = 216.dp
+                    val stageSizePx = with(LocalDensity.current) { stageSizeDp.toPx() }
+                    Box(
+                        modifier = Modifier
+                            .size(stageSizeDp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.Black)
+                            .pointerInput(cropBmp) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    val newScale = (cropScale * zoom).coerceIn(1f, 3f)
                                     cropScale = newScale
                                     cropOffset = clampCropPan(
-                                        panX = cropOffset.x,
-                                        panY = cropOffset.y,
+                                        panX = cropOffset.x + pan.x,
+                                        panY = cropOffset.y + pan.y,
                                         stageSizePx = stageSizePx,
                                         bmpW = cropBmp.width,
                                         bmpH = cropBmp.height,
                                         zoom = newScale,
                                         rotationDeg = cropRotationDegrees
                                     )
-                                },
-                                valueRange = 1f..3.5f,
-                                modifier = Modifier.weight(1f)
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val stageW = size.width
+                            val stageH = size.height
+                            val isQuarterTurn = ((cropRotationDegrees.roundToInt() / 90) % 2) != 0
+                            val rotW = if (isQuarterTurn) cropBmp.height.toFloat() else cropBmp.width.toFloat()
+                            val rotH = if (isQuarterTurn) cropBmp.width.toFloat() else cropBmp.height.toFloat()
+                            val baseScale = max(stageW / rotW.coerceAtLeast(1f), stageH / rotH.coerceAtLeast(1f))
+                            val totalScale = baseScale * cropScale
+
+                            val matrix = android.graphics.Matrix().apply {
+                                postTranslate(-cropBmp.width / 2f, -cropBmp.height / 2f)
+                                postRotate(cropRotationDegrees)
+                                postScale(totalScale, totalScale)
+                                postTranslate(
+                                    (stageW / 2f) + cropOffset.x,
+                                    (stageH / 2f) + cropOffset.y
+                                )
+                            }
+                            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+                            drawIntoCanvas { canvas ->
+                                canvas.nativeCanvas.drawBitmap(cropBmp, matrix, paint)
+                            }
+
+                            // Circular Cutout Mask & crisp circular border
+                            val r = stageW / 2f
+                            val cx = stageW / 2f
+                            val cy = stageH / 2f
+                            val mask = android.graphics.Path().apply {
+                                fillType = android.graphics.Path.FillType.EVEN_ODD
+                                addRect(0f, 0f, stageW, stageH, android.graphics.Path.Direction.CW)
+                                addCircle(cx, cy, r, android.graphics.Path.Direction.CW)
+                            }
+                            drawContext.canvas.nativeCanvas.drawPath(
+                                mask,
+                                android.graphics.Paint().apply {
+                                    color = android.graphics.Color.argb((0.68f * 255).roundToInt(), 0, 0, 0)
+                                    style = android.graphics.Paint.Style.FILL
+                                }
                             )
-                            Text(
-                                text = "${String.format(Locale.US, "%.1f", cropScale)}x",
-                                color = palette.textMain,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold
+                            drawCircle(
+                                color = Color.White.copy(alpha = 0.85f),
+                                radius = r - 1f,
+                                center = Offset(cx, cy),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.25.dp.toPx())
                             )
                         }
+                    }
 
-                        // Rotate 90° button
+                    // Combined Zoom + Rotate Control Row (Single compact row, height = 36.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "${String.format(Locale.US, "%.1f", cropScale)}x",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = palette.textSecondary,
+                            modifier = Modifier.width(34.dp)
+                        )
+                        LlunevieThinSlider(
+                            value = cropScale,
+                            onValueChange = { newScale ->
+                                cropScale = newScale
+                                cropOffset = clampCropPan(
+                                    panX = cropOffset.x,
+                                    panY = cropOffset.y,
+                                    stageSizePx = stageSizePx,
+                                    bmpW = cropBmp.width,
+                                    bmpH = cropBmp.height,
+                                    zoom = newScale,
+                                    rotationDeg = cropRotationDegrees
+                                )
+                            },
+                            valueRange = 1f..3f,
+                            modifier = Modifier.weight(1f)
+                        )
                         Surface(
                             onClick = {
                                 val newRot = (cropRotationDegrees + 90f) % 360f
@@ -849,66 +881,81 @@ fun SettingsScreen(
                                 )
                             },
                             shape = CircleShape,
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft)
+                            color = palette.bgCard,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.height(30.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text("↻", color = palette.textMain, fontSize = 14.sp)
+                                Text("↻", color = palette.textPrimary, fontSize = 12.sp)
                                 Text(
-                                    text = if (strings.isId) "Putar 90°" else "Rotate 90°",
-                                    color = palette.textMain,
+                                    text = "90°",
+                                    color = palette.textPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // Bottom Action Row (height = 38.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            onClick = {
+                                onResetPhoto()
+                                pendingCropBitmap = null
+                            },
+                            shape = CircleShape,
+                            color = palette.bgCard,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.height(38.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (isEn) "Default" else "Ikon Default",
+                                    color = palette.textSecondary,
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
                         }
 
-                        HorizontalDivider(color = palette.borderSoft)
-
-                        // Action Buttons: Ikon Default, Batal, Terapkan Foto
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
-                                onClick = {
-                                    onResetPhoto()
-                                    pendingCropBitmap = null
-                                },
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    text = if (strings.isId) "Ikon Default" else "Default Icon",
-                                    color = palette.textMuted,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(vertical = 10.dp)
-                                )
-                            }
                             Surface(
                                 onClick = { pendingCropBitmap = null },
                                 shape = CircleShape,
-                                color = palette.bgSurface,
+                                color = palette.bgCard,
                                 border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.height(38.dp)
                             ) {
-                                Text(
-                                    text = strings.cancelBtn,
-                                    color = palette.textMain,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(vertical = 10.dp)
-                                )
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = strings.cancelBtn,
+                                        color = palette.textPrimary,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
+
                             Surface(
                                 onClick = {
                                     val out = renderCroppedBitmapWithExactMatrix(
@@ -929,23 +976,27 @@ fun SettingsScreen(
                                     pendingCropBitmap = null
                                 },
                                 shape = CircleShape,
-                                color = palette.accentDark,
-                                modifier = Modifier.weight(1.2f)
+                                color = palette.textPrimary,
+                                modifier = Modifier.height(38.dp)
                             ) {
-                                Text(
-                                    text = if (strings.isId) "Terapkan Foto" else "Apply Photo",
-                                    color = palette.bgApp,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(vertical = 10.dp)
-                                )
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = if (isEn) "Apply" else "Terapkan",
+                                        color = palette.bgApp,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
 
 }
 

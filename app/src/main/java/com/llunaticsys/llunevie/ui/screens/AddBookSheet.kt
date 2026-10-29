@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
@@ -144,62 +148,87 @@ fun AddBookSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = strings.addBookHeader,
-                            color = palette.textMain,
-                            fontSize = 24.sp,
+                            text = if (strings.isEn) "Add book" else "Tambah buku",
+                            color = palette.textPrimary,
+                            fontSize = 22.sp,
                             fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Normal
                         )
                         Surface(
                             onClick = onDismiss,
                             shape = CircleShape,
-                            color = palette.bgSurface,
+                            color = palette.bgCard.copy(alpha = 0.55f),
                             border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Text("✕", color = palette.textMain, fontSize = 13.sp)
+                                Canvas(modifier = Modifier.size(11.dp)) {
+                                    val strokePx = 1.5.dp.toPx()
+                                    drawLine(
+                                        color = palette.textPrimary,
+                                        start = Offset(0f, 0f),
+                                        end = Offset(size.width, size.height),
+                                        strokeWidth = strokePx,
+                                        cap = StrokeCap.Round
+                                    )
+                                    drawLine(
+                                        color = palette.textPrimary,
+                                        start = Offset(size.width, 0f),
+                                        end = Offset(0f, size.height),
+                                        strokeWidth = strokePx,
+                                        cap = StrokeCap.Round
+                                    )
+                                }
                             }
                         }
                     }
 
-                    // 4 Mode Selector Tabs (`grid-cols-4 gap-1 p-1 rounded-full lg-surface`)
+                    // 4 Mode Selector Tabs (`Cari | Pindai ISBN | Batch Scan | Manual`) (1793303330541.jpg)
                     Spacer(modifier = Modifier.height(14.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp)
+                            .clip(CircleShape)
+                            .background(palette.bgCard)
+                            .border(1.dp, palette.borderSoft, CircleShape)
+                            .padding(3.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            val tabs = listOf(
-                                "search" to strings.tabSearch,
-                                "isbn" to strings.tabIsbn,
-                                "batch" to strings.tabBatch,
-                                "manual" to strings.tabManual
-                            )
-                            tabs.forEach { (key, label) ->
-                                val active = uiState.addModalTab == key
-                                Surface(
-                                    onClick = { onSelectTab(key) },
-                                    shape = CircleShape,
-                                    color = if (active) palette.pillActiveBg else Color.Transparent,
-                                    shadowElevation = if (active) 1.dp else 0.dp,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        text = label,
-                                        color = if (active) palette.textMain else palette.textMuted,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        modifier = Modifier.padding(vertical = 8.dp)
+                        val tabs = listOf(
+                            "search" to strings.tabSearch,
+                            "isbn" to strings.tabIsbn,
+                            "batch" to strings.tabBatch,
+                            "manual" to strings.tabManual
+                        )
+                        tabs.forEach { (tabKey, label) ->
+                            val isSelected = (uiState.addModalTab == tabKey)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .then(
+                                        if (isSelected) {
+                                            Modifier
+                                                .shadow(elevation = 1.dp, shape = CircleShape, clip = false)
+                                                .clip(CircleShape)
+                                                .background(palette.bgSurface, CircleShape)
+                                                .border(0.75.dp, palette.borderSoft, CircleShape)
+                                        } else {
+                                            Modifier.clip(CircleShape)
+                                        }
                                     )
-                                }
+                                    .clickable { onSelectTab(tabKey) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (isSelected) palette.textPrimary else palette.textSecondary,
+                                    maxLines = 1,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                )
                             }
                         }
                     }
@@ -438,50 +467,64 @@ fun AddBookSheet(
                     } else {
                         // SUB-VIEW A: UNIFIED PARALLEL SEARCH (`#addTabSearchView` in `llunevie_prototype.html`)
                         Column(modifier = Modifier.weight(1f)) {
-                            Surface(
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.fillMaxWidth()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.bgCard.copy(alpha = 0.45f))
+                                    .border(1.dp, palette.borderSoft, CircleShape)
+                                    .padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    PrototypeSvgIcon(
-                                        type = PrototypeIconType.SEARCH,
-                                        tint = palette.textMuted.copy(alpha = 0.65f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Box(modifier = Modifier.weight(1f)) {
-                                        if (uiState.catalogSearchQuery.isEmpty()) {
-                                            Text(
-                                                text = strings.catalogSearchHint,
-                                                color = palette.textMuted,
-                                                fontSize = 13.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                        BasicTextField(
-                                            value = uiState.catalogSearchQuery,
-                                            onValueChange = onQueryChange,
-                                            singleLine = true,
-                                            textStyle = TextStyle(color = palette.textMain, fontSize = 13.sp),
-                                            cursorBrush = SolidColor(palette.textMain),
-                                            modifier = Modifier.fillMaxWidth()
+                                PrototypeSvgIcon(
+                                    type = PrototypeIconType.SEARCH,
+                                    tint = palette.textMuted.copy(alpha = 0.65f),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Box(modifier = Modifier.weight(1f)) {
+                                    if (uiState.catalogSearchQuery.isEmpty()) {
+                                        Text(
+                                            text = strings.catalogSearchHint,
+                                            color = palette.textMuted,
+                                            fontSize = 12.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    if (uiState.catalogSearchQuery.isNotEmpty()) {
-                                        Text(
-                                            text = "✕",
-                                            color = palette.textMuted,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier
-                                                .clickable { onQueryChange("") }
-                                                .padding(start = 6.dp)
-                                        )
+                                    BasicTextField(
+                                        value = uiState.catalogSearchQuery,
+                                        onValueChange = onQueryChange,
+                                        singleLine = true,
+                                        textStyle = TextStyle(color = palette.textPrimary, fontSize = 12.5.sp),
+                                        cursorBrush = SolidColor(palette.textPrimary),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                if (uiState.catalogSearchQuery.isNotEmpty()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clickable { onQueryChange("") }
+                                            .padding(start = 6.dp)
+                                    ) {
+                                        Canvas(modifier = Modifier.size(10.dp)) {
+                                            val strokePx = 1.4.dp.toPx()
+                                            drawLine(
+                                                color = palette.textMuted,
+                                                start = Offset(0f, 0f),
+                                                end = Offset(size.width, size.height),
+                                                strokeWidth = strokePx,
+                                                cap = StrokeCap.Round
+                                            )
+                                            drawLine(
+                                                color = palette.textMuted,
+                                                start = Offset(size.width, 0f),
+                                                end = Offset(0f, size.height),
+                                                strokeWidth = strokePx,
+                                                cap = StrokeCap.Round
+                                            )
+                                        }
                                     }
                                 }
                             }
