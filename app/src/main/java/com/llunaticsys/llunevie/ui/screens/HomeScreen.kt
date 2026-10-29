@@ -221,10 +221,14 @@ fun HomeScreen(
                         shape = RoundedCornerShape(16.dp),
                         color = palette.bgCard,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.width(236.dp)
+                        modifier = Modifier
+                            .width(236.dp)
+                            .height(88.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(8.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
@@ -233,15 +237,15 @@ fun HomeScreen(
                                 showTitleInsideFallback = false,
                                 importProgress = importingBooksProgress[book.id],
                                 modifier = Modifier
-                                    .width(46.dp)
-                                    .height(66.dp)
+                                    .width(50.dp)
+                                    .height(72.dp)
                                     .clip(RoundedCornerShape(8.dp))
                             )
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(66.dp),
-                                verticalArrangement = Arrangement.SpaceBetween
+                                    .fillMaxHeight(),
+                                verticalArrangement = Arrangement.Center
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -249,7 +253,7 @@ fun HomeScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = strings.localizeShelfName(book.shelf).uppercase(),
+                                        text = book.displayCollectionTag(strings.isEn).uppercase(),
                                         color = palette.textMuted,
                                         fontSize = 9.sp,
                                         fontFamily = FontFamily.Monospace,
@@ -261,41 +265,43 @@ fun HomeScreen(
                                     Text(
                                         text = "${book.progress}%",
                                         color = palette.textMuted,
-                                        fontSize = 9.5.sp,
+                                        fontSize = 10.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Medium
                                     )
                                 }
-                                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                    Text(
-                                        text = book.title,
-                                        color = palette.textMain,
-                                        fontSize = 14.sp,
-                                        fontFamily = FontFamily.Serif,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = book.author,
-                                        color = palette.textMuted,
-                                        fontSize = 11.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = book.title,
+                                    color = palette.textMain,
+                                    fontSize = 14.sp,
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Text(
+                                    text = book.displayAuthor(strings.isEn),
+                                    color = palette.textMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(7.dp))
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(3.dp)
+                                        .height(3.5.dp)
                                         .clip(CircleShape)
-                                        .background(palette.borderSoft)
+                                        .background(palette.textMain.copy(alpha = 0.10f))
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .fillMaxWidth((book.progress / 100f).coerceIn(0f, 1f))
+                                            .fillMaxWidth((book.progress / 100f).coerceIn(0.02f, 1f))
                                             .fillMaxHeight()
-                                            .background(palette.textMain)
+                                            .clip(CircleShape)
+                                            .background(palette.accentDark)
                                     )
                                 }
                             }
@@ -570,7 +576,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = strings.localizeShelfName(book.shelf),
+                                    text = book.displayCollectionTag(strings.isEn),
                                     color = palette.textMuted,
                                     fontSize = 10.sp,
                                     fontFamily = FontFamily.Monospace
@@ -616,7 +622,7 @@ fun HomeScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${book.author} · ${book.year} · ${strings.localizeShelfName(book.shelf)}",
+                                    text = "${book.displayAuthor(strings.isEn)} · ${book.year} · ${book.displayCollectionTag(strings.isEn)}",
                                     color = palette.textMuted,
                                     fontSize = 11.5.sp,
                                     maxLines = 1,

@@ -5,6 +5,7 @@ import androidx.compose.runtime.Immutable
 @Immutable
 data class LlunevieStrings(
     val isId: Boolean,
+    val isEn: Boolean = !isId,
     val navHome: String,
     val navLibrary: String,
     val navStats: String,

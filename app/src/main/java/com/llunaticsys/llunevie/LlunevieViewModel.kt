@@ -162,6 +162,18 @@ class LlunevieViewModel(
 
     init {
         startActiveReadingSessionTicker()
+        viewModelScope.launch {
+            runCatching {
+                val all = dao.getAllBooks()
+                all.forEach { b ->
+                    val rawShelf = b.shelf.trim()
+                    if (rawShelf.isEmpty() || rawShelf.equals("All", true) || rawShelf.equals("Semua", true)) {
+                        val fixed = if (b.format.equals("Physical", true) || b.format.equals("Fisik", true)) "Koleksi Fisik" else "eReader"
+                        dao.updateBook(b.copy(shelf = fixed))
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -591,15 +603,38 @@ class LlunevieViewModel(
                         }
                     }.getOrDefault(book.pagesCount)
 
+                    val isEn = preferences.value.lang == "en"
                     val totalPagesInChapters = parsedChapters.sumOf { it.pages.size }
                     if (parsedChapters.isEmpty() || totalPagesInChapters != actualPageCount) {
-                        val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title)
+                        val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
                         dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), rebuilt)
                         parsedChapters.clear()
                         rebuilt.forEach { ce ->
                             val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
                             val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }
                             parsedChapters.add(BookChapter(index = ce.chapterIndex, title = ce.title, pages = pagesList))
+                        }
+                    }
+
+                    // Launch background smart scanner for chapter headings & illustrations
+                    viewModelScope.launch(Dispatchers.Default) {
+                        PdfNativeRenderer.scanPdfChaptersAndIllustrationsAsync(
+                            context = appContext,
+                            bookId = bookId,
+                            pdfFile = pdfFile,
+                            totalPages = actualPageCount,
+                            defaultTitle = book.title,
+                            isEn = isEn
+                        ) { updatedChapters, updatedIllusts ->
+                            dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), updatedChapters)
+                            if (_uiState.value.activeBookId == bookId) {
+                                val liveChs = updatedChapters.map { ce ->
+                                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
+                                }
+                                _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
+                            }
                         }
                     }
                 }
@@ -896,7 +931,11 @@ class LlunevieViewModel(
             val fileName = queryFileName(uri)
             val ext = fileName.substringAfterLast('.', "").lowercase()
             val isId = preferences.value.lang != "en"
-            val targetShelf = canonicalShelfKey(preferences.value.libShelf.ifBlank { "eReader" })
+            val targetShelf = if (preferences.value.libShelf.equals("all", true) || preferences.value.libShelf.isBlank()) {
+                "eReader"
+            } else {
+                canonicalShelfKey(preferences.value.libShelf)
+            }
 
             // Validation: Only import supported files (PDF, EPUB, TXT) or JSON backup
             if (ext !in setOf("pdf", "epub", "txt", "json")) {
@@ -919,6 +958,7 @@ class LlunevieViewModel(
                             uri = uri,
                             fallbackFileName = fileName,
                             targetShelf = targetShelf,
+                            isEn = !isId,
                             onInitialBookCreated = { partialBook ->
                                 trackedBookId = partialBook.id
                                 dao.upsertBook(partialBook)
@@ -940,6 +980,7 @@ class LlunevieViewModel(
                             uri = uri,
                             fallbackFileName = fileName,
                             targetShelf = targetShelf,
+                            isEn = !isId,
                             onInitialBookCreated = { partialBook ->
                                 trackedBookId = partialBook.id
                                 dao.upsertBook(partialBook)
@@ -1253,7 +1294,11 @@ class LlunevieViewModel(
     }
 
     fun saveCandidateToShelf(candidate: CatalogBookCandidate, shelfName: String, format: String = "PHYSICAL") {
-        val canonicalShelf = canonicalShelfKey(shelfName)
+        val canonicalShelf = if (shelfName.equals("all", true) || shelfName.equals("semua", true) || shelfName.isBlank()) {
+            if (format.equals("Physical", true)) "Koleksi Fisik" else "eReader"
+        } else {
+            canonicalShelfKey(shelfName)
+        }
         viewModelScope.launch {
             val id = "book-${System.currentTimeMillis()}"
             val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())

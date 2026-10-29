@@ -14,6 +14,9 @@ interface LlunevieDao {
     @Query("SELECT * FROM books ORDER BY createdAtMillis DESC")
     fun observeAllBooks(): Flow<List<BookEntity>>
 
+    @Query("SELECT * FROM books")
+    suspend fun getAllBooks(): List<BookEntity>
+
     @Query("SELECT * FROM books WHERE id = :bookId LIMIT 1")
     suspend fun getBookById(bookId: String): BookEntity?
 

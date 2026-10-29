@@ -75,6 +75,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.unit.TextUnit
 import com.llunaticsys.llunevie.MainNavTab
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
@@ -606,8 +612,8 @@ fun <T> ClassicGlassSegmentedControl(
 ) {
     val palette = LocalLluneviePalette.current
     if (palette.isGlass) {
-        val activeBg = if (palette.isDark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.68f)
-        val activeBorder = if (palette.isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.75f)
+        val activeBg = if (palette.isDark) Color.White.copy(alpha = 0.14f) else palette.pillActiveBg
+        val activeBorder = if (palette.isDark) Color.White.copy(alpha = 0.18f) else palette.pillActiveBorder
 
         Surface(
             shape = CircleShape,
@@ -693,7 +699,7 @@ fun Modifier.llunevieSurface(
     shadowElevation: androidx.compose.ui.unit.Dp = if (isGlass) 10.dp else 4.dp
 ): Modifier {
     return if (isGlass) {
-        val glassBg = if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface.copy(alpha = 0.65f)
+        val glassBg = if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface
         val glassBorderBrush = if (palette.isDark) {
             Brush.linearGradient(
                 colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
@@ -702,7 +708,7 @@ fun Modifier.llunevieSurface(
             )
         } else {
             Brush.linearGradient(
-                colors = listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.15f)),
+                colors = listOf(palette.textMain.copy(alpha = 0.12f), palette.textMain.copy(alpha = 0.04f)),
                 start = Offset.Zero,
                 end = Offset.Infinite
             )
@@ -731,7 +737,7 @@ fun GlassSurface(
     val palette = LocalLluneviePalette.current
     val isGlass = palette.isGlass
     val glassBg = if (isGlass) {
-        if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface.copy(alpha = 0.65f)
+        if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface
     } else {
         palette.bgCard
     }
@@ -744,7 +750,7 @@ fun GlassSurface(
             )
         } else {
             Brush.linearGradient(
-                colors = listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.15f)),
+                colors = listOf(palette.textMain.copy(alpha = 0.12f), palette.textMain.copy(alpha = 0.04f)),
                 start = Offset.Zero,
                 end = Offset.Infinite
             )
@@ -789,13 +795,13 @@ fun BottomFloatingNavDock(
 
     val dockBg = if (palette.isGlass) {
         if (palette.isDark) Color(0xFF1C1F26).copy(alpha = 0.88f)
-        else Color(0xFFEEF1F6).copy(alpha = 0.88f)
+        else palette.dockBg
     } else {
         palette.dockBg
     }
     val dockBorder = if (palette.isGlass) {
         if (palette.isDark) Color.White.copy(alpha = 0.14f)
-        else Color.White.copy(alpha = 0.72f)
+        else palette.dockBorder
     } else {
         palette.dockBorder
     }
@@ -828,12 +834,12 @@ fun BottomFloatingNavDock(
                 items.forEach { (tab, label, iconType) ->
                     val isSelected = activeTab == tab
                     val activePillBg = if (palette.isGlass) {
-                        if (palette.isDark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.68f)
+                        if (palette.isDark) Color.White.copy(alpha = 0.14f) else palette.pillActiveBg
                     } else {
                         palette.pillActiveBg
                     }
                     val activePillBorder = if (palette.isGlass) {
-                        if (palette.isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.75f)
+                        if (palette.isDark) Color.White.copy(alpha = 0.18f) else palette.pillActiveBorder
                     } else {
                         palette.pillActiveBorder
                     }
@@ -937,6 +943,19 @@ fun BottomFloatingNavDock(
 
 fun normalizeBookTitle(fileName: String): String {
     var s = fileName.substringBeforeLast(".")
+    // Decode common HTML entities and URL encoding first
+    s = s.replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&ndash;", "–")
+        .replace("&mdash;", "—")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+    s = runCatching { java.net.URLDecoder.decode(s, "UTF-8") }.getOrDefault(s)
+    s = s.replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
     // Replace " - " or " _ " or " -- " with ": "
     s = s.replace(Regex("""\s*[-_–—]{2,}\s*|\s+[-–—]\s+"""), ": ")
     // Replace remaining single underscores and dashes with spaces
@@ -956,13 +975,15 @@ fun normalizeBookTitle(fileName: String): String {
         val core = if (hasColon) cleanWord.dropLast(1) else cleanWord
         val coreLower = core.lowercase(java.util.Locale.ROOT)
 
-        val res = if (i > 0 && coreLower in minorWords) {
+        val res = if (core == "&") {
+            "&"
+        } else if (i > 0 && coreLower in minorWords) {
             coreLower
         } else {
             core.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() }
         }
         if (hasColon) "$res:" else res
-    }.joinToString(" ").ifBlank { "Buku Tanpa Judul" }
+    }.joinToString(" ").ifBlank { "Untitled" }
 }
 
 /**
@@ -1029,5 +1050,59 @@ fun LlunevieThinSlider(
         valueRange = valueRange,
         steps = steps,
         modifier = modifier
+    )
+}
+
+/**
+ * Centered text field with PlatformTextStyle and LineHeightStyle
+ * guaranteeing the blinking cursor | is 100% vertically centered on the baseline.
+ */
+@Composable
+fun LlunevieCenteredTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    fontSize: TextUnit = 13.sp,
+    fontFamily: FontFamily = FontFamily.Default,
+    textColor: Color = LocalLluneviePalette.current.textMain,
+    placeholderColor: Color = LocalLluneviePalette.current.textMuted
+) {
+    val palette = LocalLluneviePalette.current
+    val alignedInputTextStyle = TextStyle(
+        fontSize = fontSize,
+        lineHeight = fontSize * 1.25f,
+        fontFamily = fontFamily,
+        color = textColor,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.Both
+        )
+    )
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = singleLine,
+        textStyle = alignedInputTextStyle,
+        cursorBrush = SolidColor(palette.accentDark),
+        modifier = modifier,
+        decorationBox = { innerTextField ->
+            Box(
+                modifier = Modifier.fillMaxHeight(),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (value.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        style = alignedInputTextStyle.copy(color = placeholderColor),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                innerTextField()
+            }
+        }
     )
 }

@@ -47,6 +47,7 @@ object EpubNativeParser {
         uri: Uri,
         fallbackFileName: String,
         targetShelf: String = "eReader",
+        isEn: Boolean = false,
         onInitialBookCreated: suspend (BookEntity) -> Unit = {},
         onProgressUpdate: (String, Int) -> Unit = { _, _ -> }
     ): ParsedBookBundle = withContext(Dispatchers.IO) {
@@ -290,19 +291,26 @@ object EpubNativeParser {
                 val chDir = if (href.contains("/")) href.substringBeforeLast("/") else ""
                 val baseName = href.substringAfterLast('/').lowercase()
 
-                var chTitle = tocTitlesByHref[href]
+                val body = doc.body() ?: doc
+                val isCoverDoc = (idx == 0 && doc.select("img, image").isNotEmpty() && body.text().trim().length < 30)
+                val rawTitle = tocTitlesByHref[href]
                     ?: tocTitlesByHref[href.lowercase()]
                     ?: tocTitlesByHref[baseName]
-                    ?: doc.selectFirst("h1, h2, h3, title")?.text()?.trim()?.takeIf {
+                    ?: doc.selectFirst("h1, h2, h3, [class*='title'], [class*='chapter'], b, strong, title")?.text()?.trim()?.takeIf {
                         it.isNotBlank() && !it.equals("untitled", true) && !it.equals("chapter", true)
                     }
-                    ?: "Bab ${chapterEntities.size + 1}"
+
+                var chTitle = if (isCoverDoc) {
+                    if (isEn) "Cover" else "Sampul"
+                } else if (!rawTitle.isNullOrBlank()) {
+                    normalizeBookTitle(rawTitle)
+                } else {
+                    if (isEn) "Chapter ${chapterEntities.size + 1}" else "Bab ${chapterEntities.size + 1}"
+                }
 
                 val chapterParagraphs = mutableListOf<String>()
                 val chapterIllustrations = JSONArray()
                 val seenImages = mutableSetOf<String>()
-
-                val body = doc.body() ?: doc
                 // Collect images inside this chapter
                 for (imgEl in body.select("img, image")) {
                     val rawSrc = imgEl.attr("src").ifBlank { imgEl.attr("xlink:href") }.ifBlank { imgEl.attr("href") }

@@ -76,6 +76,7 @@ import com.llunaticsys.llunevie.model.LibraryViewMode
 import com.llunaticsys.llunevie.ui.components.BookCoverCard
 import com.llunaticsys.llunevie.ui.components.ClassicGlassSegmentedControl
 import com.llunaticsys.llunevie.ui.components.CustomThemeDropdown
+import com.llunaticsys.llunevie.ui.components.LlunevieCenteredTextField
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
@@ -244,25 +245,15 @@ fun LibraryScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (uiState.libSearchQuery.isEmpty()) {
-                                Text(
-                                    text = strings.searchHint,
-                                    color = palette.textMuted,
-                                    fontSize = 13.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            BasicTextField(
-                                value = uiState.libSearchQuery,
-                                onValueChange = onSearchQueryChange,
-                                singleLine = true,
-                                textStyle = TextStyle(color = palette.textMain, fontSize = 13.sp),
-                                cursorBrush = SolidColor(palette.textMain),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
+                        LlunevieCenteredTextField(
+                            value = uiState.libSearchQuery,
+                            onValueChange = onSearchQueryChange,
+                            placeholder = strings.searchHint,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        )
                         if (uiState.libSearchQuery.isNotEmpty()) {
                             Text(
                                 text = "✕",
@@ -1120,22 +1111,21 @@ fun LibraryScreen(
                                         shape = CircleShape,
                                         color = palette.bgSurface,
                                         border = BorderStroke(1.dp, palette.borderSoft),
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(38.dp)
                                     ) {
-                                        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                                            if (newShelfText.isEmpty()) {
-                                                Text(
-                                                    text = strings.newShelfHint,
-                                                    color = palette.textMuted,
-                                                    fontSize = 12.sp
-                                                )
-                                            }
-                                            BasicTextField(
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 16.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            LlunevieCenteredTextField(
                                                 value = newShelfText,
                                                 onValueChange = { newShelfText = it },
-                                                singleLine = true,
-                                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp),
-                                                cursorBrush = SolidColor(palette.textMain),
+                                                placeholder = strings.newShelfHint,
+                                                fontSize = 12.sp,
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         }
@@ -1877,24 +1867,36 @@ fun PrototypeFormInput(
             Box(
                 modifier = Modifier.padding(
                     horizontal = 14.dp,
-                    vertical = if (singleLine) 10.dp else 12.dp
+                    vertical = if (singleLine) 6.dp else 12.dp
                 )
             ) {
-                if (value.isEmpty() && placeholder.isNotEmpty()) {
-                    Text(
-                        text = placeholder,
-                        color = palette.textMuted.copy(alpha = 0.7f),
-                        fontSize = 12.sp
+                if (singleLine) {
+                    LlunevieCenteredTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        placeholder = placeholder,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(28.dp)
+                    )
+                } else {
+                    if (value.isEmpty() && placeholder.isNotEmpty()) {
+                        Text(
+                            text = placeholder,
+                            color = palette.textMuted.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
+                    }
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        singleLine = false,
+                        textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp),
+                        cursorBrush = SolidColor(palette.textMain),
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    singleLine = singleLine,
-                    textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp),
-                    cursorBrush = SolidColor(palette.textMain),
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
         }
     }

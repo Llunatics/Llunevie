@@ -38,7 +38,57 @@ data class BookEntity(
     val lengthCm: Float = 20f,
     val weightGrams: Float = 300f,
     val createdAtMillis: Long = System.currentTimeMillis()
-)
+) {
+    fun displayAuthor(isEn: Boolean): String {
+        val a = author.trim()
+        val isGeneric = a.isEmpty() || a.equals("Dokumen PDF", true) || a.equals("PDF Document", true) ||
+            a.equals("Berkas EPUB", true) || a.equals("EPUB Book", true) || a.equals("Penulis EPUB", true) ||
+            a.equals("EPUB Author", true)
+        if (!isGeneric) return a
+        return when (format.uppercase()) {
+            "PDF" -> if (isEn) "PDF Document" else "Dokumen PDF"
+            "EPUB" -> if (isEn) "EPUB Book" else "Berkas EPUB"
+            "TXT" -> if (isEn) "Text Document" else "Dokumen Teks"
+            else -> if (isEn) "Physical Collection" else "Koleksi Fisik"
+        }
+    }
+
+    fun displayFormatLabel(isEn: Boolean): String {
+        return when (format.uppercase()) {
+            "PDF" -> "PDF"
+            "EPUB" -> "EPUB"
+            "TXT" -> "TXT"
+            else -> if (isEn) "Physical" else "Fisik"
+        }
+    }
+
+    fun displayCollectionTag(isEn: Boolean): String {
+        val rawShelf = shelf.trim()
+        val isGenericAll = rawShelf.isEmpty() || rawShelf.equals("All", true) || rawShelf.equals("Semua", true)
+        if (!isGenericAll) {
+            if (rawShelf.equals("Koleksi Fisik", true) || rawShelf.equals("Physical Collection", true) || rawShelf.equals("Physical", true)) {
+                return if (isEn) "Physical" else "Koleksi Fisik"
+            }
+            return rawShelf
+        }
+        val isPhys = format.equals("Physical", true) || format.equals("Fisik", true)
+        return if (isPhys) (if (isEn) "Physical" else "Koleksi Fisik") else "eReader"
+    }
+}
+
+fun localizeChapterTitle(title: String, isEn: Boolean): String {
+    val idMatch = Regex("""Bagian\s+(\d+)\s*\((?:Hal|Halaman)\s*(\d+)[–-](\d+)\)""", RegexOption.IGNORE_CASE).find(title)
+    if (idMatch != null) {
+        val (num, p1, p2) = idMatch.destructured
+        return if (isEn) "Section $num (pp. $p1–$p2)" else "Bagian $num (Hal $p1–$p2)"
+    }
+    val enMatch = Regex("""Section\s+(\d+)\s*\((?:pp\.|pages)\s*(\d+)[–-](\d+)\)""", RegexOption.IGNORE_CASE).find(title)
+    if (enMatch != null) {
+        val (num, p1, p2) = enMatch.destructured
+        return if (isEn) "Section $num (pp. $p1–$p2)" else "Bagian $num (Hal $p1–$p2)"
+    }
+    return title
+}
 
 @Entity(
     tableName = "book_chapters",
