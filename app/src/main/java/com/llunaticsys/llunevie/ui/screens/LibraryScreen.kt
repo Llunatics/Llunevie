@@ -43,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -383,6 +384,7 @@ fun LibraryScreen(
                 when (prefs.libViewMode) {
                     // 1. SPINE SHELF MODE (1:1 with `llunevie_prototype.html`: ✦ top, vertical title, page count, vertical author first name, 3D spine gradient, swipe wave lift, 14dp rounded-full plank)
                     LibraryViewMode.SPINE -> {
+                        val spineColorCache = remember { mutableStateMapOf<String, Color>() }
                         val shelvesRows = remember(filteredBooks) {
                             val rows = mutableListOf<List<Pair<Int, BookEntity>>>()
                             var currentRow = mutableListOf<Pair<Int, BookEntity>>()
@@ -481,11 +483,8 @@ fun LibraryScreen(
 
                                                val spineContext = LocalContext.current
                                                LaunchedEffect(book.id, book.coverImagePath) {
-                                                   val isFallbackColor = book.spineColorHex == 0L ||
-                                                                         book.spineColorHex == 0xFF1E3A5FL ||
-                                                                         book.spineColorHex == 0xFF2B3A4AL
                                                    val coverPath = book.coverImagePath
-                                                   if (isFallbackColor && !coverPath.isNullOrBlank()) {
+                                                   if (!coverPath.isNullOrBlank()) {
                                                        withContext(Dispatchers.IO) {
                                                            runCatching {
                                                                val bmp = if (coverPath.startsWith("http://") || coverPath.startsWith("https://")) {
@@ -501,12 +500,17 @@ fun LibraryScreen(
                                                                }
                                                                if (bmp != null) {
                                                                    val extracted = SpineColorExtractor.extractDominantSpineHex(bmp)
-                                                                   onUpdateSpineColor(book.id, extracted)
+                                                                   spineColorCache[book.id] = Color(extracted)
+                                                                   if (book.spineColorHex != extracted) {
+                                                                       onUpdateSpineColor(book.id, extracted)
+                                                                   }
                                                                }
                                                            }
                                                        }
                                                    }
                                                }
+
+                                               val effectiveSpineColor = spineColorCache[book.id] ?: (if (book.spineColorHex != 0L) Color(book.spineColorHex) else palette.textPrimary)
 
                                                Box(
                                                    modifier = Modifier
@@ -520,8 +524,8 @@ fun LibraryScreen(
                                                            rowSpineBoundsMap[globalIdx] = Pair(left, left + coords.size.width)
                                                        }
                                                       .shadow(if (isHovered || isSelected) 14.dp else 6.dp, spineShape)
-                                                     .clip(spineShape)
-                                                     .background(Color(book.spineColorHex))
+                                                      .clip(spineShape)
+                                                      .background(effectiveSpineColor)
                                                      .background(
                                                          Brush.horizontalGradient(
                                                              colors = listOf(

@@ -86,6 +86,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -266,21 +268,21 @@ fun IsbnCameraScannerScreen(
             )
         }
 
-        // Dimmed camera mask with clear rounded cutout (260.dp x 168.dp, RoundedCornerShape(24.dp))
+        var viewfinderRectInParent by remember { mutableStateOf(Rect.Zero) }
+
+        // Dimmed camera mask with clear rounded cutout locked to viewfinderRectInParent
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val rw = 260.dp.toPx()
-            val rh = 168.dp.toPx()
-            val rx = (size.width - rw) / 2f
-            val ry = (size.height - rh) / 2f - 44.dp.toPx()
             val mask = Path().apply {
                 fillType = PathFillType.EvenOdd
                 addRect(Rect(0f, 0f, size.width, size.height))
-                addRoundRect(
-                    RoundRect(
-                        rect = Rect(rx, ry, rx + rw, ry + rh),
-                        cornerRadius = CornerRadius(24.dp.toPx(), 24.dp.toPx())
+                if (viewfinderRectInParent != Rect.Zero) {
+                    addRoundRect(
+                        RoundRect(
+                            rect = viewfinderRectInParent,
+                            cornerRadius = CornerRadius(20.dp.toPx(), 20.dp.toPx())
+                        )
                     )
-                )
+                }
             }
             drawPath(mask, color = Color.Black.copy(alpha = 0.48f))
         }
@@ -395,16 +397,53 @@ fun IsbnCameraScannerScreen(
                 label = "emeraldPulse"
             )
 
+            // Floating glass status pill placed 14.dp above the Box
+            Surface(
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.58f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .alpha(pulseAlpha)
+                            .clip(CircleShape)
+                            .background(Color(0xFF34D399))
+                    )
+                    Text(
+                        text = if (uiState.isLookingUpIsbn) {
+                            if (strings.isId) "MENCARI ISBN..." else "LOOKING UP ISBN..."
+                        } else {
+                            lastScannedCode.ifBlank { "ISBN / QR READY" }
+                        },
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.4.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
             Box(
                 modifier = Modifier
-                    .width(260.dp)
-                    .height(168.dp),
+                    .size(248.dp, 180.dp)
+                    .onGloballyPositioned { coords ->
+                        viewfinderRectInParent = coords.boundsInParent()
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                // Sculpted 2.5dp rounded corner brackets (28dp arm length, 20dp corner radius)
+                // Sculpted 2.5dp rounded corner brackets (26dp arm length, 20dp corner radius)
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val strokeW = 2.5.dp.toPx()
-                    val arm = 28.dp.toPx()
+                    val arm = 26.dp.toPx()
                     val r = 20.dp.toPx()
                     val c = Color.White.copy(alpha = 0.92f)
                     val s = Stroke(width = strokeW, cap = StrokeCap.Round)
@@ -461,7 +500,7 @@ fun IsbnCameraScannerScreen(
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp)
-                        .offset(y = (168.dp - 16.dp) * laserProgress)
+                        .offset(y = (180.dp - 16.dp) * laserProgress)
                         .height(16.dp)
                         .background(
                             Brush.verticalGradient(
@@ -475,42 +514,6 @@ fun IsbnCameraScannerScreen(
                             shape = RoundedCornerShape(2.dp)
                         )
                 )
-
-                // Floating glass status pill at the top edge of reticle
-                Surface(
-                    shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.58f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .offset(y = (-14).dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .alpha(pulseAlpha)
-                                .clip(CircleShape)
-                                .background(Color(0xFF34D399))
-                        )
-                        Text(
-                            text = if (uiState.isLookingUpIsbn) {
-                                if (strings.isId) "MENCARI ISBN..." else "LOOKING UP ISBN..."
-                            } else {
-                                lastScannedCode.ifBlank { "ISBN / QR READY" }
-                            },
-                            color = Color.White.copy(alpha = 0.95f),
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 1.4.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

@@ -751,37 +751,40 @@ class LlunevieViewModel(
         if (!pdfFile.exists()) return
 
         viewModelScope.launch(Dispatchers.Default) {
-            val actualPageCount = runCatching {
-                android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                    android.graphics.pdf.PdfRenderer(pfd).use { it.pageCount }
-                }
-            }.getOrDefault(book.pagesCount)
-
-            val isEn = preferences.value.lang == "en"
-            _pdfIndexingState.update { it + (book.id to 0) }
-            _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 0)) }
-
-            PdfNativeRenderer.scanPdfChaptersAndIllustrationsAsync(
-                context = appContext,
-                bookId = book.id,
-                pdfFile = pdfFile,
-                totalPages = actualPageCount,
-                defaultTitle = book.title,
-                isEn = isEn,
-                onProgress = { pct ->
-                    _pdfIndexingState.update { it + (book.id to pct) }
-                    _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
-                }
-            ) { updatedChapters, updatedIllusts ->
-                dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), updatedChapters)
-                if (_uiState.value.activeBookId == book.id) {
-                    val liveChs = updatedChapters.map { ce ->
-                        val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                        val pList = (0 until pArr.length()).map { pArr.optString(it) }
-                        BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
+            try {
+                val actualPageCount = runCatching {
+                    android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                        android.graphics.pdf.PdfRenderer(pfd).use { it.pageCount }
                     }
-                    _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
+                }.getOrDefault(book.pagesCount)
+
+                val isEn = preferences.value.lang == "en"
+                _pdfIndexingState.update { it + (book.id to 5) }
+                _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 5)) }
+
+                PdfNativeRenderer.scanPdfChaptersAndIllustrationsAsync(
+                    context = appContext,
+                    bookId = book.id,
+                    pdfFile = pdfFile,
+                    totalPages = actualPageCount,
+                    defaultTitle = book.title,
+                    isEn = isEn,
+                    onProgress = { pct ->
+                        _pdfIndexingState.update { it + (book.id to pct) }
+                        _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
+                    }
+                ) { updatedChapters, updatedIllusts ->
+                    dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), updatedChapters)
+                    if (_uiState.value.activeBookId == book.id) {
+                        val liveChs = updatedChapters.map { ce ->
+                            val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                            val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                            BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
+                        }
+                        _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
+                    }
                 }
+            } finally {
                 _pdfIndexingState.update { it - book.id }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState - book.id) }
             }
@@ -1379,18 +1382,48 @@ class LlunevieViewModel(
         runCatching {
             val coversDir = File(appContext.filesDir, "covers").apply { mkdirs() }
             val targetFile = File(coversDir, "isbn_${isbn}.jpg")
-            val url = URL(coverUrl)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 7000
-                instanceFollowRedirects = true
+            var currentUrl = coverUrl.trim().replace("http://", "https://", ignoreCase = true)
+            var hops = 0
+            var finalConn: HttpURLConnection? = null
+
+            while (hops < 5) {
+                val url = URL(currentUrl)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 6000
+                    readTimeout = 8000
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile) Llunevie/1.0")
+                }
+                val code = conn.responseCode
+                if (code in 301..308) {
+                    val location = conn.getHeaderField("Location")
+                    if (!location.isNullOrBlank()) {
+                        currentUrl = if (location.startsWith("http://") || location.startsWith("https://")) {
+                            location.replace("http://", "https://", ignoreCase = true)
+                        } else {
+                            URL(url, location).toString().replace("http://", "https://", ignoreCase = true)
+                        }
+                        conn.disconnect()
+                        hops++
+                        continue
+                    }
+                }
+                if (code in 200..299) {
+                    finalConn = conn
+                    break
+                } else {
+                    conn.disconnect()
+                    break
+                }
             }
-            if (conn.responseCode in 200..299) {
-                conn.inputStream.use { input ->
+
+            if (finalConn != null) {
+                finalConn.inputStream.use { input ->
                     FileOutputStream(targetFile).use { output ->
                         input.copyTo(output)
                     }
                 }
+                finalConn.disconnect()
                 val bmp = BitmapFactory.decodeFile(targetFile.absolutePath)
                 if (bmp != null) {
                     val spineColor = SpineColorExtractor.extractDominantSpineHex(bmp)
