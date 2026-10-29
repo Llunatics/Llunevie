@@ -702,6 +702,9 @@ class LlunevieViewModel(
 
                     val isEn = preferences.value.lang == "en"
                     val totalPagesInChapters = parsedChapters.sumOf { it.pages.size }
+                    val hasGenericChapters = parsedChapters.isEmpty() ||
+                        parsedChapters.any { it.title.startsWith("Bagian ", ignoreCase = true) || it.title.startsWith("Section ", ignoreCase = true) }
+
                     if (parsedChapters.isEmpty() || totalPagesInChapters != actualPageCount) {
                         val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
                         dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), rebuilt)
@@ -713,8 +716,10 @@ class LlunevieViewModel(
                         }
                     }
 
-                    // Launch background smart scanner for chapter headings & illustrations
-                    indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
+                    // Force replace generic Bagian 1.. / Section 1.. chapters by launching indexing immediately
+                    if (hasGenericChapters || _pdfIndexingState.value[bookId] == null) {
+                        indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
+                    }
                 }
             } else if (parsedChapters.isEmpty()) {
                 parsedChapters.addAll(buildStructuredChaptersFromSynopsis(book))

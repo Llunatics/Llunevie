@@ -616,54 +616,217 @@ object PdfNativeRenderer {
         }
     }
 
-    fun readPdfHeaderAndTrailer(pdfFile: File): String {
-        val fileLen = pdfFile.length()
-        if (fileLen <= 0) return ""
-        val maxHead = 3 * 1024 * 1024L // 3 MB
-        val maxTail = 512 * 1024L // 512 KB
+    fun readPdfContentString(pdfFile: File): String {
         return runCatching {
-            java.io.RandomAccessFile(pdfFile, "r").use { raf ->
-                val headLen = minOf(fileLen, maxHead).toInt()
-                val headBytes = ByteArray(headLen)
-                raf.seek(0)
-                raf.readFully(headBytes)
-                val headStr = String(headBytes, Charsets.ISO_8859_1)
+            String(pdfFile.readBytes(), Charsets.ISO_8859_1)
+        }.getOrDefault("")
+    }
 
-                if (fileLen > maxHead + maxTail) {
-                    val tailLen = maxTail.toInt()
-                    val tailBytes = ByteArray(tailLen)
-                    raf.seek(fileLen - tailLen)
-                    raf.readFully(tailBytes)
-                    val tailStr = String(tailBytes, Charsets.ISO_8859_1)
-                    headStr + "\n" + tailStr
+    fun readPdfHeaderAndTrailer(pdfFile: File): String = readPdfContentString(pdfFile)
+
+    fun isImageStreamHeader(header: String): Boolean {
+        return header.contains("/Subtype /Image") ||
+            header.contains("/Subtype/Image") ||
+            header.contains("/DCTDecode") ||
+            header.contains("/JPXDecode") ||
+            header.contains("/CCITTFaxDecode") ||
+            header.contains("/BitsPerComponent") ||
+            (header.contains("/Width") && header.contains("/Height") && !header.contains("/ObjStm"))
+    }
+
+    fun decodePdfLiteral(raw: String): String {
+        val decoded = java.lang.StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            if (c == '\\' && i + 1 < raw.length) {
+                val next = raw[i + 1]
+                if (next in '0'..'7') {
+                    var octalLen = 1
+                    while (octalLen < 3 && i + 1 + octalLen < raw.length && raw[i + 1 + octalLen] in '0'..'7') {
+                        octalLen++
+                    }
+                    val octalStr = raw.substring(i + 1, i + 1 + octalLen)
+                    val code = octalStr.toIntOrNull(8) ?: 32
+                    val ch = when (code) {
+                        0x91, 0x92 -> '\''
+                        0x93, 0x94 -> '"'
+                        0x96, 0x97 -> '–'
+                        0x85 -> '…'
+                        0xA0 -> ' '
+                        else -> code.toChar()
+                    }
+                    decoded.append(ch)
+                    i += 1 + octalLen
+                    continue
                 } else {
-                    headStr
+                    when (next) {
+                        'n' -> decoded.append('\n')
+                        'r' -> decoded.append(' ')
+                        't' -> decoded.append('\t')
+                        '(' -> decoded.append('(')
+                        ')' -> decoded.append(')')
+                        '\\' -> decoded.append('\\')
+                        else -> decoded.append(next)
+                    }
+                    i += 2
+                    continue
                 }
+            } else {
+                val code = c.code
+                val ch = when (code) {
+                    0x91, 0x92 -> '\''
+                    0x93, 0x94 -> '"'
+                    0x96, 0x97 -> '–'
+                    0x85 -> '…'
+                    0xA0 -> ' '
+                    else -> c
+                }
+                decoded.append(ch)
+                i++
+            }
+        }
+        return decoded.toString()
+    }
+
+    fun decodeHexLiteral(rawHex: String): String {
+        val clean = rawHex.replace(Regex("[^0-9a-fA-F]"), "")
+        if (clean.length < 2) return ""
+        return runCatching {
+            val bytes = clean.chunked(2).mapNotNull { it.toIntOrNull(16)?.toByte() }.toByteArray()
+            if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+                String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+            } else {
+                String(bytes, Charsets.UTF_8)
             }
         }.getOrDefault("")
     }
 
-    fun extractPdfBookmarksFromPdfFile(
-        destPdfFile: File,
+    fun extractTextLinesFromContentStream(streamText: String): List<String> {
+        val lines = mutableListOf<String>()
+        val currentLine = java.lang.StringBuilder()
+
+        fun flushLine() {
+            val s = currentLine.toString().trim()
+            if (s.isNotEmpty()) {
+                lines.add(s)
+            }
+            currentLine.setLength(0)
+        }
+
+        val opRegex = Regex("""(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F\s]+>)\s*(\'|\"|Tj)|\[([\s\S]*?)\]\s*TJ|(\bT\*\b|\bET\b|\bTd\b|\bTD\b|\bTm\b)""")
+
+        for (m in opRegex.findAll(streamText)) {
+            val tjStr = m.groupValues[1]
+            val tjOp = m.groupValues[2]
+            val arrayContent = m.groupValues[3]
+            val lineBreakOp = m.groupValues[4]
+
+            if (lineBreakOp.isNotEmpty()) {
+                flushLine()
+                continue
+            }
+
+            if (tjStr.isNotEmpty()) {
+                val text = if (tjStr.startsWith("(")) {
+                    decodePdfLiteral(tjStr.removeSurrounding("(", ")"))
+                } else if (tjStr.startsWith("<")) {
+                    decodeHexLiteral(tjStr.removeSurrounding("<", ">"))
+                } else ""
+
+                if (tjOp == "'" || tjOp == "\"") {
+                    flushLine()
+                }
+                currentLine.append(text)
+                if (tjOp == "'" || tjOp == "\"") {
+                    flushLine()
+                }
+            } else if (arrayContent.isNotEmpty()) {
+                val elemRegex = Regex("""(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F\s]+>|[-+]?[0-9]*\.?[0-9]+)""")
+                for (em in elemRegex.findAll(arrayContent)) {
+                    val token = em.groupValues[1]
+                    if (token.startsWith("(")) {
+                        currentLine.append(decodePdfLiteral(token.removeSurrounding("(", ")")))
+                    } else if (token.startsWith("<")) {
+                        currentLine.append(decodeHexLiteral(token.removeSurrounding("<", ">")))
+                    } else {
+                        val spacing = token.toFloatOrNull()
+                        if (spacing != null && spacing < -120f) {
+                            if (currentLine.isNotEmpty() && !currentLine.endsWith(" ")) {
+                                currentLine.append(" ")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        flushLine()
+        return lines.map { it.trim() }.filter { it.length >= 2 }
+    }
+
+    fun extractAllPdfChaptersAndOutlines(
+        pdfFile: File,
         totalPages: Int,
         defaultTitle: String
     ): List<PdfBookmark> {
         val detectedBookmarks = mutableListOf<PdfBookmark>()
+        val tocBookmarks = mutableListOf<PdfBookmark>()
+
         runCatching {
-            val contentStr = readPdfHeaderAndTrailer(destPdfFile)
+            val contentStr = readPdfContentString(pdfFile)
             if (contentStr.isEmpty()) return emptyList()
 
             val objBodies = mutableMapOf<Int, String>()
             val objRegex = Regex("""(\d+)\s+0\s+obj\b([\s\S]*?)\bendobj\b""")
             for (m in objRegex.findAll(contentStr)) {
-                val objId = m.groupValues[1].toIntOrNull()
-                if (objId != null) {
-                    objBodies[objId] = m.groupValues[2]
+                val objId = m.groupValues[1].toIntOrNull() ?: continue
+                objBodies[objId] = m.groupValues[2]
+            }
+
+            val inflatedStreams = mutableMapOf<Int, ByteArray>()
+            val objStmTexts = mutableListOf<String>()
+
+            for ((objId, body) in objBodies) {
+                val streamIdx = body.indexOf("stream")
+                if (streamIdx == -1) continue
+                val dictHeader = body.substring(0, streamIdx)
+                if (isImageStreamHeader(dictHeader)) continue
+
+                val isCandidate = dictHeader.contains("/ObjStm") ||
+                    dictHeader.contains("/Contents") ||
+                    dictHeader.contains("/Outlines") ||
+                    dictHeader.contains("/Annot") ||
+                    dictHeader.contains("/Title") ||
+                    !dictHeader.contains("/Subtype")
+
+                if (!isCandidate) continue
+
+                val endStreamIdx = body.lastIndexOf("endstream")
+                if (endStreamIdx <= streamIdx) continue
+
+                var start = streamIdx + 6
+                if (start < body.length && body[start] == '\r') start++
+                if (start < body.length && body[start] == '\n') start++
+                var end = endStreamIdx
+                if (end > start && body[end - 1] == '\n') end--
+                if (end > start && body[end - 1] == '\r') end--
+                if (end <= start) continue
+
+                val rawData = body.substring(start, end).toByteArray(Charsets.ISO_8859_1)
+                val inflated = if (dictHeader.contains("/FlateDecode")) {
+                    inflatePdfStream(rawData) ?: rawData
+                } else {
+                    rawData
+                }
+                inflatedStreams[objId] = inflated
+
+                if (dictHeader.contains("/ObjStm")) {
+                    objStmTexts.add(String(inflated, Charsets.ISO_8859_1))
                 }
             }
 
             var pagesRootId: Int? = null
-            for ((id, body) in objBodies) {
+            for ((_, body) in objBodies) {
                 if (body.contains("/Type") && body.contains("/Catalog")) {
                     val rootPagesMatch = Regex("""/Pages\s+(\d+)\s+0\s+R""").find(body)
                     if (rootPagesMatch != null) {
@@ -707,70 +870,228 @@ object PdfNativeRenderer {
 
             val pageObjToZero = orderedPageObjIds.mapIndexed { idx, objId -> objId to idx }.toMap()
 
-            for ((_, body) in objBodies) {
-                if (!body.contains("/Title")) continue
-                val titleMatch = Regex("""/Title\s*(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F]+>)""").find(body) ?: continue
-                val raw = titleMatch.groupValues[1]
-                val parsed = if (raw.startsWith("(")) {
-                    raw.removeSurrounding("(", ")")
-                        .replace("\\(", "(")
-                        .replace("\\)", ")")
-                        .replace("\\n", " ")
-                        .replace("\\r", " ")
-                        .trim()
-                } else if (raw.startsWith("<") && raw.endsWith(">")) {
-                    val hex = raw.removeSurrounding("<", ">").trim()
-                    runCatching {
-                        val byteArray = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                        if (byteArray.size >= 2 && byteArray[0] == 0xFE.toByte() && byteArray[1] == 0xFF.toByte()) {
-                            String(byteArray, 2, byteArray.size - 2, Charsets.UTF_16BE)
+            fun parseBookmarksFromText(text: String) {
+                val titleRegex = Regex("""/Title\s*(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F]+>)([\s\S]*?)(?=/Title|\bendobj\b|>>)""")
+                for (m in titleRegex.findAll(text)) {
+                    val raw = m.groupValues[1]
+                    val context = m.groupValues[2]
+
+                    val parsed = if (raw.startsWith("(")) {
+                        decodePdfLiteral(raw.removeSurrounding("(", ")"))
+                    } else if (raw.startsWith("<")) {
+                        decodeHexLiteral(raw.removeSurrounding("<", ">"))
+                    } else ""
+
+                    val clean = sanitizeBookOrChapterText(normalizeBookTitle(parsed.trim()))
+                    if (clean.length in 2..80 &&
+                        !clean.contains("Microsoft Word", true) &&
+                        !clean.contains("Acrobat", true) &&
+                        !clean.contains("untitled", true) &&
+                        !clean.matches(Regex("""^page\s*\d+$""", RegexOption.IGNORE_CASE))
+                    ) {
+                        val destMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(context)
+                        var destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
+                            ?: destMatch?.groupValues?.get(2)?.toIntOrNull()
+                        if (destObj == null) {
+                            val aInlineMatch = Regex("""/A\s*<<[^>]*?/(?:Dest|D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(context)
+                            destObj = aInlineMatch?.groupValues?.get(1)?.toIntOrNull() ?: aInlineMatch?.groupValues?.get(2)?.toIntOrNull()
+                        }
+                        if (destObj == null) {
+                            val aRefMatch = Regex("""/A\s+(\d+)\s+0\s+R""").find(context)
+                            val aObjId = aRefMatch?.groupValues?.get(1)?.toIntOrNull()
+                            if (aObjId != null) {
+                                val aBody = objBodies[aObjId].orEmpty()
+                                val aDestMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(aBody)
+                                destObj = aDestMatch?.groupValues?.get(1)?.toIntOrNull() ?: aDestMatch?.groupValues?.get(2)?.toIntOrNull()
+                            }
+                        }
+
+                        val targetPageZero = destObj?.let { pageObjToZero[it] }
+                        if (targetPageZero != null && targetPageZero in 0 until totalPages) {
+                            if (detectedBookmarks.none { it.title.equals(clean, ignoreCase = true) && it.startPageZero == targetPageZero }) {
+                                detectedBookmarks.add(PdfBookmark(clean, targetPageZero))
+                            }
                         } else {
-                            String(byteArray, Charsets.UTF_8)
-                        }
-                    }.getOrDefault("")
-                } else ""
-
-                val clean = sanitizeBookOrChapterText(normalizeBookTitle(parsed.trim()))
-                if (clean.length in 3..80 &&
-                    !clean.contains("Microsoft Word", true) &&
-                    !clean.contains("Acrobat", true) &&
-                    !clean.contains("untitled", true) &&
-                    !clean.matches(Regex("""^page\s*\d+$""", RegexOption.IGNORE_CASE))
-                ) {
-                    val destMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
-                    var destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
-                        ?: destMatch?.groupValues?.get(2)?.toIntOrNull()
-                    if (destObj == null) {
-                        val aInlineMatch = Regex("""/A\s*<<[^>]*?/(?:Dest|D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
-                        destObj = aInlineMatch?.groupValues?.get(1)?.toIntOrNull() ?: aInlineMatch?.groupValues?.get(2)?.toIntOrNull()
-                    }
-                    if (destObj == null) {
-                        val aRefMatch = Regex("""/A\s+(\d+)\s+0\s+R""").find(body)
-                        val aObjId = aRefMatch?.groupValues?.get(1)?.toIntOrNull()
-                        if (aObjId != null) {
-                            val aBody = objBodies[aObjId].orEmpty()
-                            val aDestMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(aBody)
-                            destObj = aDestMatch?.groupValues?.get(1)?.toIntOrNull() ?: aDestMatch?.groupValues?.get(2)?.toIntOrNull()
-                        }
-                    }
-                    val targetPageZero = destObj?.let { pageObjToZero[it] }
-
-                    if (targetPageZero != null && targetPageZero in 0 until totalPages) {
-                        if (detectedBookmarks.none { it.startPageZero == targetPageZero }) {
-                            detectedBookmarks.add(PdfBookmark(clean, targetPageZero))
-                        }
-                    } else {
-                        val pageMatch = Regex("""(?:hal|page|p\.?)\s*(\d+)""", RegexOption.IGNORE_CASE).find(parsed)
-                        val num = pageMatch?.groupValues?.get(1)?.toIntOrNull()
-                        val pZero = if (num != null && num in 1..totalPages) num - 1 else null
-                        if (pZero != null && detectedBookmarks.none { it.startPageZero == pZero }) {
-                            detectedBookmarks.add(PdfBookmark(clean, pZero))
+                            val pageMatch = Regex("""(?:hal|page|p\.?)\s*(\d+)""", RegexOption.IGNORE_CASE).find(parsed)
+                            val num = pageMatch?.groupValues?.get(1)?.toIntOrNull()
+                            val pZero = if (num != null && num in 1..totalPages) num - 1 else null
+                            if (pZero != null && detectedBookmarks.none { it.title.equals(clean, ignoreCase = true) && it.startPageZero == pZero }) {
+                                detectedBookmarks.add(PdfBookmark(clean, pZero))
+                            }
                         }
                     }
                 }
             }
+
+            for ((_, body) in objBodies) {
+                if (body.contains("/Title")) {
+                    parseBookmarksFromText(body)
+                }
+            }
+            for (stmText in objStmTexts) {
+                if (stmText.contains("/Title")) {
+                    parseBookmarksFromText(stmText)
+                }
+            }
+
+            val pageTexts = mutableMapOf<Int, List<String>>()
+            for (p in 0 until minOf(totalPages, orderedPageObjIds.size)) {
+                val pageObjId = orderedPageObjIds[p]
+                val pageBody = objBodies[pageObjId].orEmpty()
+
+                val contentObjIds = mutableListOf<Int>()
+                val contentsArrayMatch = Regex("""/Contents\s*\[([\s\S]*?)\]""").find(pageBody)
+                if (contentsArrayMatch != null) {
+                    val refRegex = Regex("""(\d+)\s+0\s+R""")
+                    for (ref in refRegex.findAll(contentsArrayMatch.groupValues[1])) {
+                        ref.groupValues[1].toIntOrNull()?.let { contentObjIds.add(it) }
+                    }
+                } else {
+                    val singleRefMatch = Regex("""/Contents\s+(\d+)\s+0\s+R""").find(pageBody)
+                    singleRefMatch?.groupValues?.get(1)?.toIntOrNull()?.let { contentObjIds.add(it) }
+                }
+
+                val pageLines = mutableListOf<String>()
+                for (cId in contentObjIds) {
+                    val streamData = inflatedStreams[cId]
+                    if (streamData != null) {
+                        val streamStr = String(streamData, Charsets.ISO_8859_1)
+                        pageLines.addAll(extractTextLinesFromContentStream(streamStr))
+                    }
+                }
+                pageTexts[p] = pageLines
+            }
+
+            val tocHeaderRegex = Regex("""(?i)^\s*(contents|table of contents|daftar isi|isi buku)\s*$""")
+            var tocStartPage: Int? = null
+
+            for (p in 0 until minOf(25, totalPages)) {
+                val lines = pageTexts[p] ?: emptyList()
+                if (lines.any { tocHeaderRegex.matches(it.trim()) }) {
+                    tocStartPage = p
+                    break
+                }
+            }
+
+            if (tocStartPage != null) {
+                val tocPages = mutableListOf(tocStartPage)
+                var curP = tocStartPage + 1
+                while (curP < minOf(tocStartPage + 4, totalPages)) {
+                    val lines = pageTexts[curP] ?: emptyList()
+                    if (lines.isEmpty()) break
+                    val shortLines = lines.count { it.trim().length in 3..68 }
+                    val hasLongParagraphs = lines.any { it.trim().length > 130 }
+                    if (!hasLongParagraphs && shortLines >= (lines.size * 0.60).toInt().coerceAtLeast(3)) {
+                        tocPages.add(curP)
+                        curP++
+                    } else {
+                        break
+                    }
+                }
+
+                val rawTocLines = tocPages.flatMap { pageTexts[it] ?: emptyList() }
+                val tocLineWithNumRegex = Regex("""^(.*?)(?:[.\u2026_\s]{2,}|\t+)\s*(\d{1,4})\s*$""")
+                val numberedCount = rawTocLines.count { tocLineWithNumRegex.matches(it.trim()) }
+
+                if (numberedCount >= 3) {
+                    val entries = mutableListOf<Pair<String, Int>>()
+                    for (line in rawTocLines) {
+                        val m = tocLineWithNumRegex.find(line.trim()) ?: continue
+                        val rawTitle = m.groupValues[1].trim()
+                        val printedPage = m.groupValues[2].toIntOrNull() ?: continue
+                        if (rawTitle.length in 3..75 && !tocHeaderRegex.matches(rawTitle)) {
+                            entries.add(rawTitle to printedPage)
+                        }
+                    }
+                    if (entries.isNotEmpty()) {
+                        val minPrinted = entries.minOf { it.second }
+                        val offset = if (minPrinted > 0 && minPrinted < 25) (tocStartPage - minPrinted + 1).coerceAtLeast(0) else 0
+                        for ((title, pNum) in entries) {
+                            val targetZero = (pNum - 1 + offset).coerceIn(0, totalPages - 1)
+                            tocBookmarks.add(PdfBookmark(title, targetZero))
+                        }
+                    }
+                } else {
+                    val noiseTitles = setOf(
+                        "cover", "title page", "copyright", "a note about this ebook",
+                        "contents", "table of contents", "daftar isi", "isi buku"
+                    )
+                    val candidateTitles = rawTocLines.map { it.trim() }.filter { line ->
+                        line.length in 3..68 &&
+                            !line.all { it.isDigit() || it.isWhitespace() || it == '.' } &&
+                            line.lowercase().replace(Regex("[^a-z0-9]"), "") !in noiseTitles
+                    }
+
+                    var lastFoundPage = (tocPages.last() + 1).coerceAtMost(totalPages - 1)
+                    for (tocTitle in candidateTitles) {
+                        val normToc = tocTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
+                        if (normToc.length < 3) continue
+
+                        val existingBm = detectedBookmarks.find {
+                            it.title.lowercase().replace(Regex("[^a-z0-9]"), "") == normToc
+                        }
+                        if (existingBm != null) {
+                            tocBookmarks.add(existingBm)
+                            lastFoundPage = existingBm.startPageZero
+                            continue
+                        }
+
+                        var matchedPage: Int? = null
+                        for (searchP in lastFoundPage until totalPages) {
+                            val linesOnPage = pageTexts[searchP] ?: emptyList()
+                            val topLines = linesOnPage.take(15)
+                            val matched = topLines.any { line ->
+                                val normLine = line.lowercase().replace(Regex("[^a-z0-9]"), "")
+                                normLine == normToc ||
+                                    (normToc.length >= 6 && normLine.contains(normToc)) ||
+                                    (normToc.length >= 6 && normLine.length >= 6 && normToc.contains(normLine))
+                            }
+                            if (matched) {
+                                matchedPage = searchP
+                                break
+                            }
+                        }
+                        if (matchedPage != null) {
+                            tocBookmarks.add(PdfBookmark(tocTitle, matchedPage))
+                            lastFoundPage = matchedPage
+                        }
+                    }
+                }
+            }
+
+            if (detectedBookmarks.isEmpty() && tocBookmarks.isEmpty()) {
+                for (p in 0 until totalPages) {
+                    val lines = pageTexts[p] ?: emptyList()
+                    val topLines = lines.take(6)
+                    val heading = topLines.firstOrNull { line ->
+                        val t = line.trim()
+                        val isKeyword = t.startsWith("Chapter", ignoreCase = true) ||
+                            t.startsWith("Bab ", ignoreCase = true) ||
+                            t.startsWith("Part ", ignoreCase = true) ||
+                            t.startsWith("Bagian ", ignoreCase = true) ||
+                            t.startsWith("Book ", ignoreCase = true) ||
+                            t.startsWith("Prologue", ignoreCase = true) ||
+                            t.startsWith("Epilogue", ignoreCase = true) ||
+                            t.startsWith("Act ", ignoreCase = true)
+                        isKeyword || (t.length in 4..40 && t.all { it.isUpperCase() || it.isWhitespace() || it == '-' || it == '&' || it == '\'' })
+                    }
+                    if (heading != null) {
+                        tocBookmarks.add(PdfBookmark(heading.trim(), p))
+                    }
+                }
+            }
         }
-        return detectedBookmarks.distinctBy { it.startPageZero }.sortedBy { it.startPageZero }
+
+        val allChapters = detectedBookmarks + tocBookmarks
+        return deduplicateChapters(allChapters, totalPages, defaultTitle)
+    }
+
+    fun extractPdfBookmarksFromPdfFile(
+        destPdfFile: File,
+        totalPages: Int,
+        defaultTitle: String
+    ): List<PdfBookmark> {
+        return extractAllPdfChaptersAndOutlines(destPdfFile, totalPages, defaultTitle)
     }
 
     fun isTrueIllustrationPage(bmp: Bitmap): Boolean = isTrueIllustrationPageBitmap(bmp)
@@ -1134,44 +1455,7 @@ object PdfNativeRenderer {
     }
 
     fun extractBookmarksFromTableOfContentsPage(pdfFile: File, totalPages: Int): List<PdfBookmark> {
-        val result = mutableListOf<PdfBookmark>()
-        runCatching {
-            val contentStr = readPdfHeaderAndTrailer(pdfFile)
-            if (contentStr.isEmpty()) return emptyList()
-
-            val tocRegex = Regex("""(?i)\b(table of contents|contents|daftar isi|isi buku)\b""")
-            val tocLineRegex = Regex("""^\s*(?:(?:chapter|bab|bagian|part)\s+[0-9IVXLCDM]+[:.\s\-–—]*)?([A-Za-z0-9][A-Za-z0-9\s'’:,;&\-–—()]{2,70}?)\s*(?:[.\u2026_\s]{2,}|\t+)\s*(\d{1,4})\s*$""", RegexOption.IGNORE_CASE)
-
-            val streamRegex = Regex("""stream\r?\n([\s\S]*?)\r?\nendstream""")
-            val streams = streamRegex.findAll(contentStr).take(20).mapNotNull { m ->
-                val rawBytes = m.groupValues[1].toByteArray(Charsets.ISO_8859_1)
-                val inflated = inflatePdfStream(rawBytes) ?: rawBytes
-                String(inflated, Charsets.ISO_8859_1)
-            }.toList()
-
-            for (streamText in streams) {
-                if (tocRegex.containsMatchIn(streamText) || streamText.lines().count { tocLineRegex.containsMatchIn(it) } >= 3) {
-                    val entries = mutableListOf<Pair<String, Int>>()
-                    for (line in streamText.lines()) {
-                        val m = tocLineRegex.find(line.trim()) ?: continue
-                        val rawTitle = m.groupValues[1].trim()
-                        val printedPage = m.groupValues[2].toIntOrNull() ?: continue
-                        entries.add(rawTitle to printedPage)
-                    }
-
-                    if (entries.isNotEmpty()) {
-                        val minPrinted = entries.minOf { it.second }
-                        val offset = if (minPrinted > 0 && minPrinted < 15) (minPrinted + 4).coerceAtMost(totalPages / 4) else 0
-                        for ((title, pNum) in entries) {
-                            val targetZero = (pNum - 1 + offset).coerceIn(0, totalPages - 1)
-                            result.add(PdfBookmark(title, targetZero))
-                        }
-                        if (result.isNotEmpty()) break
-                    }
-                }
-            }
-        }
-        return result
+        return extractAllPdfChaptersAndOutlines(pdfFile, totalPages, "PDF Document")
     }
 
     fun deduplicateChapters(
@@ -1181,11 +1465,10 @@ object PdfNativeRenderer {
     ): List<PdfBookmark> {
         val noiseWords = setOf("contents", "tableofcontents", "daftarisi", "isibuku", "copyright", "hakcipta", "cover", "sampul")
         val seenKeys = mutableSetOf<String>()
-        val seenPages = mutableSetOf<Int>()
         val result = mutableListOf<PdfBookmark>()
 
         for (ch in rawChapters) {
-            val clean = sanitizeBookOrChapterText(ch.title).trim()
+            val clean = sanitizeBookOrChapterText(normalizeBookTitle(ch.title)).trim()
             if (clean.length < 2) continue
             if (clean.all { it.isDigit() || it.isWhitespace() || it == '.' }) continue
             val normKey = clean.lowercase().replace(Regex("[^a-z0-9]"), "")
@@ -1193,10 +1476,8 @@ object PdfNativeRenderer {
             if (normKey.isEmpty()) continue
             if (seenKeys.contains(normKey)) continue
             val page = ch.startPageZero.coerceIn(0, totalPages - 1)
-            if (seenPages.contains(page)) continue
 
             seenKeys.add(normKey)
-            seenPages.add(page)
             result.add(PdfBookmark(clean, page))
         }
 
@@ -1224,13 +1505,8 @@ object PdfNativeRenderer {
         val detectedIllusts = mutableListOf<BookIllustration>()
 
         onProgress(5)
-        kotlinx.coroutines.withTimeoutOrNull(700L) {
-            val existingOutline = extractPdfBookmarksFromPdfFile(pdfFile, totalPages, defaultTitle)
-            detectedChapters.addAll(existingOutline)
-
-            val tocBookmarks = extractBookmarksFromTableOfContentsPage(pdfFile, totalPages)
-            detectedChapters.addAll(tocBookmarks)
-        }
+        val allChapters = extractAllPdfChaptersAndOutlines(pdfFile, totalPages, defaultTitle)
+        detectedChapters.addAll(allChapters)
 
         onProgress(20)
         val finalBookmarks = deduplicateChapters(detectedChapters, totalPages, defaultTitle)
