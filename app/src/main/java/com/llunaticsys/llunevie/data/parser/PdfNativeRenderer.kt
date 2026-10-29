@@ -616,6 +616,33 @@ object PdfNativeRenderer {
         }
     }
 
+    fun readPdfHeaderAndTrailer(pdfFile: File): String {
+        val fileLen = pdfFile.length()
+        if (fileLen <= 0) return ""
+        val maxHead = 3 * 1024 * 1024L // 3 MB
+        val maxTail = 512 * 1024L // 512 KB
+        return runCatching {
+            java.io.RandomAccessFile(pdfFile, "r").use { raf ->
+                val headLen = minOf(fileLen, maxHead).toInt()
+                val headBytes = ByteArray(headLen)
+                raf.seek(0)
+                raf.readFully(headBytes)
+                val headStr = String(headBytes, Charsets.ISO_8859_1)
+
+                if (fileLen > maxHead + maxTail) {
+                    val tailLen = maxTail.toInt()
+                    val tailBytes = ByteArray(tailLen)
+                    raf.seek(fileLen - tailLen)
+                    raf.readFully(tailBytes)
+                    val tailStr = String(tailBytes, Charsets.ISO_8859_1)
+                    headStr + "\n" + tailStr
+                } else {
+                    headStr
+                }
+            }
+        }.getOrDefault("")
+    }
+
     fun extractPdfBookmarksFromPdfFile(
         destPdfFile: File,
         totalPages: Int,
@@ -623,8 +650,8 @@ object PdfNativeRenderer {
     ): List<PdfBookmark> {
         val detectedBookmarks = mutableListOf<PdfBookmark>()
         runCatching {
-            val bytes = destPdfFile.readBytes()
-            val contentStr = String(bytes, Charsets.ISO_8859_1)
+            val contentStr = readPdfHeaderAndTrailer(destPdfFile)
+            if (contentStr.isEmpty()) return emptyList()
 
             val objBodies = mutableMapOf<Int, String>()
             val objRegex = Regex("""(\d+)\s+0\s+obj\b([\s\S]*?)\bendobj\b""")
@@ -1082,49 +1109,47 @@ object PdfNativeRenderer {
     }
 
     fun inflatePdfStream(compressed: ByteArray): ByteArray? {
-        return runCatching {
-            val inflater = java.util.zip.Inflater(false)
-            inflater.setInput(compressed)
-            val baos = java.io.ByteArrayOutputStream()
-            val buf = ByteArray(4096)
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buf)
-                if (count <= 0) break
-                baos.write(buf, 0, count)
+        fun tryInflate(nowrap: Boolean): ByteArray? {
+            val inflater = java.util.zip.Inflater(nowrap)
+            return try {
+                inflater.setInput(compressed)
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(4096)
+                var iterations = 0
+                while (!inflater.finished() && !inflater.needsInput() && !inflater.needsDictionary() && iterations < 128) {
+                    val count = inflater.inflate(buffer)
+                    if (count <= 0) break // CRITICAL: prevents infinite loop when inflate() returns 0!
+                    out.write(buffer, 0, count)
+                    if (out.size() > 64 * 1024) break
+                    iterations++
+                }
+                out.toByteArray()
+            } catch (_: Exception) {
+                null
+            } finally {
+                inflater.end()
             }
-            inflater.end()
-            baos.toByteArray()
-        }.getOrNull() ?: runCatching {
-            val inflater = java.util.zip.Inflater(true)
-            inflater.setInput(compressed)
-            val baos = java.io.ByteArrayOutputStream()
-            val buf = ByteArray(4096)
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buf)
-                if (count <= 0) break
-                baos.write(buf, 0, count)
-            }
-            inflater.end()
-            baos.toByteArray()
-        }.getOrNull()
+        }
+        return tryInflate(false) ?: tryInflate(true)
     }
 
     fun extractBookmarksFromTableOfContentsPage(pdfFile: File, totalPages: Int): List<PdfBookmark> {
         val result = mutableListOf<PdfBookmark>()
         runCatching {
-            val bytes = pdfFile.readBytes()
-            val contentStr = String(bytes, Charsets.ISO_8859_1)
+            val contentStr = readPdfHeaderAndTrailer(pdfFile)
+            if (contentStr.isEmpty()) return emptyList()
+
             val tocRegex = Regex("""(?i)\b(table of contents|contents|daftar isi|isi buku)\b""")
             val tocLineRegex = Regex("""^\s*(?:(?:chapter|bab|bagian|part)\s+[0-9IVXLCDM]+[:.\s\-–—]*)?([A-Za-z0-9][A-Za-z0-9\s'’:,;&\-–—()]{2,70}?)\s*(?:[.\u2026_\s]{2,}|\t+)\s*(\d{1,4})\s*$""", RegexOption.IGNORE_CASE)
 
             val streamRegex = Regex("""stream\r?\n([\s\S]*?)\r?\nendstream""")
-            val streams = streamRegex.findAll(contentStr).mapNotNull { m ->
+            val streams = streamRegex.findAll(contentStr).take(20).mapNotNull { m ->
                 val rawBytes = m.groupValues[1].toByteArray(Charsets.ISO_8859_1)
                 val inflated = inflatePdfStream(rawBytes) ?: rawBytes
                 String(inflated, Charsets.ISO_8859_1)
             }.toList()
 
-            for (streamText in streams.take(35)) {
+            for (streamText in streams) {
                 if (tocRegex.containsMatchIn(streamText) || streamText.lines().count { tocLineRegex.containsMatchIn(it) } >= 3) {
                     val entries = mutableListOf<Pair<String, Int>>()
                     for (line in streamText.lines()) {
@@ -1199,29 +1224,30 @@ object PdfNativeRenderer {
         val detectedIllusts = mutableListOf<BookIllustration>()
 
         onProgress(5)
-        val existingOutline = extractPdfBookmarksFromPdfFile(pdfFile, totalPages, defaultTitle)
-        detectedChapters.addAll(existingOutline)
+        kotlinx.coroutines.withTimeoutOrNull(700L) {
+            val existingOutline = extractPdfBookmarksFromPdfFile(pdfFile, totalPages, defaultTitle)
+            detectedChapters.addAll(existingOutline)
 
-        onProgress(15)
-        val tocBookmarks = extractBookmarksFromTableOfContentsPage(pdfFile, totalPages)
-        detectedChapters.addAll(tocBookmarks)
+            val tocBookmarks = extractBookmarksFromTableOfContentsPage(pdfFile, totalPages)
+            detectedChapters.addAll(tocBookmarks)
+        }
 
-        onProgress(25)
+        onProgress(20)
         val finalBookmarks = deduplicateChapters(detectedChapters, totalPages, defaultTitle)
 
-        // Throttled Illustration Scanning with delay(12)
+        // Fast, Non-Blocking Visual Page Scan (20% -> 100%) Using Dedicated PdfRenderer
         runCatching {
             ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
                     val pageCount = renderer.pageCount
-                    val step = if (pageCount <= 60) 1 else (pageCount / 60).coerceAtLeast(1)
+                    val step = if (pageCount <= 60) 1 else if (pageCount <= 120) 2 else (pageCount / 60).coerceAtLeast(1)
                     val pagesToInspect = (1 until minOf(totalPages, pageCount) step step).toList()
 
                     for ((idx, pIdx) in pagesToInspect.withIndex()) {
-                        kotlinx.coroutines.delay(12L)
+                        kotlinx.coroutines.delay(6L)
                         renderer.openPage(pIdx).use { page ->
-                            val thumbW = 320
-                            val thumbH = 450
+                            val thumbW = 200
+                            val thumbH = 280
                             val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
                             val smallCanvas = Canvas(smallBmp)
                             smallCanvas.drawColor(Color.WHITE)
@@ -1245,8 +1271,8 @@ object PdfNativeRenderer {
                             }
                             smallBmp.recycle()
                         }
-                        val pct = 25 + ((idx + 1) * 70 / pagesToInspect.size.coerceAtLeast(1))
-                        onProgress(pct)
+                        val pct = 20 + ((idx + 1) * 80 / pagesToInspect.size.coerceAtLeast(1))
+                        onProgress(pct.coerceIn(20, 99))
                     }
                 }
             }

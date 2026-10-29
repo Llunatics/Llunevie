@@ -5,7 +5,12 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.llunaticsys.llunevie.LlunevieViewModel
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -94,6 +99,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -298,86 +304,33 @@ fun ReaderScreen(
     val isPdfBook = (book.format.equals("PDF", ignoreCase = true) || currentPageRaw.startsWith("[PDF_PAGE:")) &&
         !book.localFilePath.isNullOrBlank()
 
+    val context = LocalContext.current
+    val view = LocalView.current
+    val showReaderChrome = !uiState.readerFullView
+    val isTwoPageSpread = isSpread
+    DisposableEffect(isTwoPageSpread, showReaderChrome) {
+        val window = (context as? android.app.Activity)?.window
+        val controller = if (window != null) WindowCompat.getInsetsController(window, view) else null
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (isTwoPageSpread || !showReaderChrome) {
+            controller?.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        } else {
+            controller?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        }
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(palette.bgApp)
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // 1. TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
-            if (!uiState.readerFullView) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 10.dp, bottom = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        onClick = onBack,
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.ARROW_LEFT,
-                                tint = palette.textMain,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
-
-                    // Compact single-line Title Pill (`#readerTitlePill`: max-w-[200px] height=30.dp, px-3.5, rounded-full, text-[11.5px])
-                    Surface(
-                        onClick = { onToggleTocDrawer(true) },
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier
-                            .height(30.dp)
-                            .widthIn(max = 200.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = book.title,
-                                color = palette.textMain,
-                                fontSize = 11.5.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 14.dp)
-                            )
-                        }
-                    }
-
-                    Surface(
-                        onClick = { onToggleNotesDrawer(true) },
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = if (bookHighlights.isNotEmpty()) PrototypeIconType.BOOKMARK_FILLED else PrototypeIconType.BOOKMARK_OUTLINE,
-                                tint = palette.textMain,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 2. MAIN READER VIEWPORT (`#readerViewport`)
-            BoxWithConstraints(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
+        // 1. MAIN READER VIEWPORT (`#readerViewport`) - Always fills full screen Box!
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize()
+        ) {
                 val stageW = with(density) { maxWidth.roundToPx() }.coerceIn(320, 1920)
                 val stageH = with(density) { maxHeight.roundToPx() }.coerceIn(360, 2400)
                 val fontPx = with(density) { prefs.fontSizeSp.sp.toPx() }
@@ -1445,39 +1398,109 @@ fun ReaderScreen(
                 }
             }
 
-            // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
-            if (!uiState.readerFullView && !isSpread) {
-                val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
-                val pageIndicatorLabel = when (prefs.readingFlowMode) {
-                    ReadingFlowMode.WEBTOON -> {
-                        if (strings.isId) "WEBTOON · ${metrics.totalBookPages} HAL (${chapters.size.coerceAtLeast(1)} BAB)"
-                        else "WEBTOON · ${metrics.totalBookPages} P (${chapters.size.coerceAtLeast(1)} CH)"
-                    }
-                    ReadingFlowMode.SCROLL -> {
-                        if (strings.isId) "GULIR · ${metrics.totalBookPages} HAL (${chapters.size.coerceAtLeast(1)} BAB)"
-                        else "SCROLL · ${metrics.totalBookPages} P (${chapters.size.coerceAtLeast(1)} CH)"
-                    }
-                    ReadingFlowMode.SPREAD -> {
-                        val rightNum = (metrics.currentGlobalPage + 1).coerceAtMost(metrics.totalBookPages)
-                        val rangeStr = if (rightNum > metrics.currentGlobalPage) "${metrics.currentGlobalPage}–$rightNum" else "${metrics.currentGlobalPage}"
-                        if (strings.isId) "HAL $rangeStr DARI ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                        else "PAGE $rangeStr OF ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                    }
-                    ReadingFlowMode.PAGINATED -> {
-                        if (strings.isId) "HAL ${metrics.currentGlobalPage} DARI ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                        else "PAGE ${metrics.currentGlobalPage} OF ${metrics.totalBookPages} · ${metrics.globalPct}%"
+        // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
+        if (!uiState.readerFullView) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = onBack,
+                    shape = CircleShape,
+                    color = palette.bgSurface,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        PrototypeSvgIcon(
+                            type = PrototypeIconType.ARROW_LEFT,
+                            tint = palette.textMain,
+                            modifier = Modifier.size(15.dp)
+                        )
                     }
                 }
 
-                Row(
+                // Compact single-line Title Pill (`#readerTitlePill`: max-w-[200px] height=30.dp, px-3.5, rounded-full, text-[11.5px])
+                Surface(
+                    onClick = { onToggleTocDrawer(true) },
+                    shape = CircleShape,
+                    color = palette.bgSurface,
+                    border = BorderStroke(1.dp, palette.borderSoft),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 4.dp, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .height(30.dp)
+                        .widthIn(max = 200.dp)
                 ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = book.title,
+                            color = palette.textMain,
+                            fontSize = 11.5.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        )
+                    }
+                }
+
+                Surface(
+                    onClick = { onToggleNotesDrawer(true) },
+                    shape = CircleShape,
+                    color = palette.bgSurface,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        PrototypeSvgIcon(
+                            type = if (bookHighlights.isNotEmpty()) PrototypeIconType.BOOKMARK_FILLED else PrototypeIconType.BOOKMARK_OUTLINE,
+                            tint = palette.textMain,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
+        if (!uiState.readerFullView && !isSpread) {
+            val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
+            val pageIndicatorLabel = when (prefs.readingFlowMode) {
+                ReadingFlowMode.WEBTOON -> {
+                    if (strings.isId) "WEBTOON · ${metrics.totalBookPages} HAL (${chapters.size.coerceAtLeast(1)} BAB)"
+                    else "WEBTOON · ${metrics.totalBookPages} P (${chapters.size.coerceAtLeast(1)} CH)"
+                }
+                ReadingFlowMode.SCROLL -> {
+                    if (strings.isId) "GULIR · ${metrics.totalBookPages} HAL (${chapters.size.coerceAtLeast(1)} BAB)"
+                    else "SCROLL · ${metrics.totalBookPages} P (${chapters.size.coerceAtLeast(1)} CH)"
+                }
+                ReadingFlowMode.SPREAD -> {
+                    val rightNum = (metrics.currentGlobalPage + 1).coerceAtMost(metrics.totalBookPages)
+                    val rangeStr = if (rightNum > metrics.currentGlobalPage) "${metrics.currentGlobalPage}–$rightNum" else "${metrics.currentGlobalPage}"
+                    if (strings.isId) "HAL $rangeStr DARI ${metrics.totalBookPages} · ${metrics.globalPct}%"
+                    else "PAGE $rangeStr OF ${metrics.totalBookPages} · ${metrics.globalPct}%"
+                }
+                ReadingFlowMode.PAGINATED -> {
+                    if (strings.isId) "HAL ${metrics.currentGlobalPage} DARI ${metrics.totalBookPages} · ${metrics.globalPct}%"
+                    else "PAGE ${metrics.currentGlobalPage} OF ${metrics.totalBookPages} · ${metrics.globalPct}%"
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 4.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                     Surface(
                         onClick = { onToggleTocDrawer(true) },
                         shape = CircleShape,
@@ -1643,23 +1666,20 @@ fun ReaderScreen(
                     }
                 }
             }
-        }
 
-        // Left Vertical Page Bar in 2-Page Spread Mode (width = 40.dp capsule at CenterStart)
+        // Left Vertical Page Bar in 2-Page Spread Mode (width = 44.dp capsule at CenterStart)
         if (!uiState.readerFullView && isSpread) {
-            val leftPage = ((metrics.currentGlobalPage - 1) / 2) * 2
-            val rightPage = (leftPage + 1).coerceAtMost(metrics.totalBookPages - 1)
             var showVerticalScrubber by remember { mutableStateOf(false) }
 
             Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = palette.bgSurface.copy(alpha = 0.95f),
+                shape = RoundedCornerShape(50),
+                color = palette.bgSurface.copy(alpha = 0.96f),
                 border = BorderStroke(1.dp, palette.borderSoft),
                 shadowElevation = 8.dp,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 12.dp)
-                    .width(40.dp)
+                    .width(44.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(vertical = 8.dp),
@@ -1700,21 +1720,39 @@ fun ReaderScreen(
                         }
                     }
 
-                    // 3. Compact Page Indicator / Vertical Scrubber
-                    Box(
+                    // 3. Compact Page Indicator (two clean single-number lines separated by hairline)
+                    Column(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .fillMaxWidth()
                             .clickable { showVerticalScrubber = !showVerticalScrubber }
-                            .padding(horizontal = 2.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "${leftPage + 1}-${rightPage + 1}\n/${metrics.totalBookPages}",
-                            color = palette.textMuted,
-                            fontSize = 8.5.sp,
+                            text = "${metrics.currentGlobalPage}",
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 11.sp
+                            color = palette.textPrimary,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(vertical = 3.dp)
+                                .width(14.dp)
+                                .height(1.dp)
+                                .background(palette.borderSoft)
+                        )
+                        Text(
+                            text = "${metrics.totalBookPages}",
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = palette.textMuted,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
                         )
                     }
 
@@ -2366,34 +2404,27 @@ fun ReaderScreen(
                     ) { onToggleTypeSheet(false, null) }
             ) {
                 Surface(
-                    shape = if (isSpread || isLandscape) RoundedCornerShape(22.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                    color = palette.sheetBg,
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    color = palette.bgSurface,
                     border = BorderStroke(1.dp, palette.borderSoft),
                     shadowElevation = 24.dp,
-                    modifier = if (isSpread || isLandscape) {
-                        Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 16.dp)
-                            .widthIn(max = 320.dp)
-                            .fillMaxWidth(0.40f)
-                            .heightIn(max = 360.dp)
-                    } else {
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .heightIn(max = 480.dp)
-                    }.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {}
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .widthIn(min = 340.dp, max = 420.dp)
+                        .fillMaxWidth()
+                        .heightIn(max = if (isLandscape) 310.dp else 460.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {}
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(horizontal = 18.dp, vertical = 14.dp)
                     ) {
-                        // Top Tab Switcher (TEKS / TEMA / ALUR) + Close Button (✕)
+                        // Top Tab Switcher (TEXT | THEME | FLOW / ALUR | TEMA) + Close Button (✕)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
@@ -2412,23 +2443,74 @@ fun ReaderScreen(
                             }
                             val effectiveTab = if (isPdfBook && uiState.activeReaderSheetTab == "text") "turn" else uiState.activeReaderSheetTab
 
-                            ClassicGlassSegmentedControl(
-                                items = availableTabs,
-                                selectedItem = effectiveTab,
-                                onItemSelected = { onToggleTypeSheet(true, it) },
-                                height = 32.dp,
-                                modifier = Modifier.weight(1f)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.bgCard)
+                                    .border(1.dp, palette.borderSoft, CircleShape)
+                                    .padding(3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                availableTabs.forEach { (tabKey, label) ->
+                                    val isSelected = (effectiveTab == tabKey)
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .then(
+                                                if (isSelected) {
+                                                    Modifier
+                                                        .shadow(elevation = 1.dp, shape = CircleShape, clip = false)
+                                                        .clip(CircleShape)
+                                                        .background(palette.bgSurface, CircleShape)
+                                                        .border(0.75.dp, palette.borderSoft, CircleShape)
+                                                } else {
+                                                    Modifier.clip(CircleShape)
+                                                }
+                                            )
+                                            .clickable { onToggleTypeSheet(true, tabKey) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                            color = if (isSelected) palette.textPrimary else palette.textSecondary,
+                                            maxLines = 1,
+                                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.width(10.dp))
                             Surface(
                                 onClick = { onToggleTypeSheet(false, null) },
                                 shape = CircleShape,
                                 color = palette.bgSurface,
                                 border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(32.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
+                                    Canvas(modifier = Modifier.size(11.dp)) {
+                                        val strokePx = 1.5.dp.toPx()
+                                        drawLine(
+                                            color = palette.textPrimary,
+                                            start = Offset(0f, 0f),
+                                            end = Offset(size.width, size.height),
+                                            strokeWidth = strokePx,
+                                            cap = StrokeCap.Round
+                                        )
+                                        drawLine(
+                                            color = palette.textPrimary,
+                                            start = Offset(size.width, 0f),
+                                            end = Offset(0f, size.height),
+                                            strokeWidth = strokePx,
+                                            cap = StrokeCap.Round
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2816,61 +2898,57 @@ fun ReaderScreen(
                                                   }
                                                   val titleColor = if (selected && !palette.isGlass) palette.bgApp else palette.textMain
                                                   val subtitleColor = if (selected && !palette.isGlass) palette.bgApp.copy(alpha = 0.75f) else palette.textMuted
-                                                  val modeIcon = when (mode) {
-                                                      ReadingFlowMode.PAGINATED -> PrototypeIconType.CHEVRON_RIGHT
-                                                      ReadingFlowMode.SCROLL -> PrototypeIconType.CHEVRON_DOWN
-                                                      ReadingFlowMode.WEBTOON -> PrototypeIconType.LIST_BULLETS
-                                                      ReadingFlowMode.SPREAD -> PrototypeIconType.FULL_COVER
-                                                  }
+                                                   val modeIcon = when (mode) {
+                                                       ReadingFlowMode.PAGINATED -> PrototypeIconType.CHEVRON_RIGHT
+                                                       ReadingFlowMode.SCROLL -> PrototypeIconType.CHEVRON_DOWN
+                                                       ReadingFlowMode.WEBTOON -> PrototypeIconType.LIST_BULLETS
+                                                       ReadingFlowMode.SPREAD -> PrototypeIconType.FULL_COVER
+                                                   }
 
-                                                   Surface(
-                                                       onClick = { onSetReadingFlowMode(mode) },
-                                                       shape = RoundedCornerShape(12.dp),
-                                                       color = cardBg,
-                                                       border = BorderStroke(1.dp, cardBorder),
-                                                       shadowElevation = if (selected) 2.dp else 0.dp,
+                                                   Row(
                                                        modifier = Modifier
                                                            .weight(1f)
-                                                           .height(48.dp)
+                                                           .heightIn(min = 62.dp)
+                                                           .clip(RoundedCornerShape(14.dp))
+                                                           .background(if (selected) palette.textPrimary else palette.bgCard)
+                                                           .border(1.dp, if (selected) palette.textPrimary else palette.borderSoft, RoundedCornerShape(14.dp))
+                                                           .clickable { onSetReadingFlowMode(mode) }
+                                                           .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                       verticalAlignment = Alignment.CenterVertically
                                                    ) {
-                                                       Row(
-                                                           modifier = Modifier
-                                                               .fillMaxSize()
-                                                               .padding(horizontal = 8.dp, vertical = 6.dp),
-                                                           verticalAlignment = Alignment.CenterVertically,
-                                                           horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                       ) {
-                                                           PrototypeSvgIcon(
-                                                               type = modeIcon,
-                                                               tint = titleColor,
-                                                               modifier = Modifier.size(15.dp),
-                                                               strokeWidthDp = 1.8f
+                                                       PrototypeSvgIcon(
+                                                           type = modeIcon,
+                                                           tint = if (selected) palette.bgApp else palette.textSecondary,
+                                                           modifier = Modifier.size(16.dp),
+                                                           strokeWidthDp = 1.8f
+                                                       )
+                                                       Spacer(modifier = Modifier.width(10.dp))
+                                                       Column(modifier = Modifier.weight(1f)) {
+                                                           Text(
+                                                               text = mode.localizedLabel(prefs.lang),
+                                                               fontSize = 12.5.sp,
+                                                               lineHeight = 15.sp,
+                                                               fontWeight = FontWeight.SemiBold,
+                                                               color = if (selected) palette.bgApp else palette.textPrimary,
+                                                               maxLines = 1,
+                                                               overflow = TextOverflow.Ellipsis,
+                                                               style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
                                                            )
-                                                           Column(
-                                                               modifier = Modifier.weight(1f),
-                                                               verticalArrangement = Arrangement.Center
-                                                           ) {
-                                                               Text(
-                                                                   text = mode.localizedLabel(prefs.lang),
-                                                                   color = titleColor,
-                                                                   fontSize = 11.5.sp,
-                                                                   fontWeight = FontWeight.SemiBold,
-                                                                   maxLines = 1,
-                                                                   overflow = TextOverflow.Ellipsis
-                                                               )
-                                                               Text(
-                                                                   text = mode.localizedDesc(prefs.lang),
-                                                                   color = subtitleColor,
-                                                                   fontSize = 9.5.sp,
-                                                                   maxLines = 1,
-                                                                   overflow = TextOverflow.Ellipsis
-                                                               )
-                                                           }
+                                                           Spacer(modifier = Modifier.height(2.dp))
+                                                           Text(
+                                                               text = mode.localizedDesc(prefs.lang),
+                                                               fontSize = 10.sp,
+                                                               lineHeight = 13.sp,
+                                                               color = if (selected) palette.bgApp.copy(alpha = 0.78f) else palette.textSecondary,
+                                                               maxLines = 1,
+                                                               overflow = TextOverflow.Ellipsis,
+                                                               style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                                           )
                                                        }
                                                    }
-                                              }
-                                          }
-                                      }
+                                               }
+                                           }
+                                       }
 
                                       HorizontalDivider(color = palette.borderSoft)
 
