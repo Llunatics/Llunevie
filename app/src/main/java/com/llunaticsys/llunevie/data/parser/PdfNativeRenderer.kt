@@ -33,8 +33,8 @@ object PdfNativeRenderer {
 
     private val renderMutex = Mutex()
 
-    // High-speed in-memory Bitmap LRU Cache capped to at most 12 page bitmaps
-    private val pageBitmapCache = object : LruCache<String, Bitmap>(12) {
+    // High-speed in-memory Bitmap LRU Cache capped to at most 8 page bitmaps
+    private val pageBitmapCache = object : LruCache<String, Bitmap>(8) {
         override fun sizeOf(key: String, value: Bitmap): Int = 1
     }
 
@@ -304,7 +304,7 @@ object PdfNativeRenderer {
                             renderer.openPage(pIdx).use { page ->
                                 val thumbW = 360
                                 val thumbH = (page.height.toFloat() / page.width.toFloat() * thumbW).toInt().coerceIn(360, 600)
-                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.RGB_565)
+                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
                                 val smallCanvas = Canvas(smallBmp)
                                 smallCanvas.drawColor(Color.WHITE)
                                 page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -314,7 +314,7 @@ object PdfNativeRenderer {
                                     if (!illustFile.exists()) {
                                         val hiW = 540
                                         val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
-                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.RGB_565)
+                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.ARGB_8888)
                                         val hiCanvas = Canvas(hiBmp)
                                         hiCanvas.drawColor(Color.WHITE)
                                         page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -436,8 +436,21 @@ object PdfNativeRenderer {
                     !clean.matches(Regex("""^page\s*\d+$""", RegexOption.IGNORE_CASE))
                 ) {
                     val destMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
-                    val destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
+                    var destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
                         ?: destMatch?.groupValues?.get(2)?.toIntOrNull()
+                    if (destObj == null) {
+                        val aInlineMatch = Regex("""/A\s*<<[^>]*?/(?:Dest|D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
+                        destObj = aInlineMatch?.groupValues?.get(1)?.toIntOrNull() ?: aInlineMatch?.groupValues?.get(2)?.toIntOrNull()
+                    }
+                    if (destObj == null) {
+                        val aRefMatch = Regex("""/A\s+(\d+)\s+0\s+R""").find(body)
+                        val aObjId = aRefMatch?.groupValues?.get(1)?.toIntOrNull()
+                        if (aObjId != null) {
+                            val aBody = objBodies[aObjId].orEmpty()
+                            val aDestMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(aBody)
+                            destObj = aDestMatch?.groupValues?.get(1)?.toIntOrNull() ?: aDestMatch?.groupValues?.get(2)?.toIntOrNull()
+                        }
+                    }
                     val targetPageZero = destObj?.let { pageObjToZero[it] }
 
                     if (targetPageZero != null && targetPageZero in 0 until totalPages) {
@@ -586,10 +599,10 @@ object PdfNativeRenderer {
                             val rawW = page.width.coerceAtLeast(1)
                             val rawH = page.height.coerceAtLeast(1)
                             aspectRatioCache[pdfFilePath] = (rawW.toFloat() / rawH.toFloat()).coerceIn(0.45f, 1.6f)
-                            val scale = (widthBucket.toFloat() / rawW.toFloat()).coerceIn(0.75f, 2.0f)
+                            val scale = minOf(1.8f, 1080f / rawW.toFloat()).coerceAtLeast(0.5f)
                             val bmpW = (rawW * scale).toInt().coerceIn(240, 1080)
                             val bmpH = (rawH * scale).toInt().coerceIn(320, 1920)
-                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.RGB_565)
+                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
                             val canvas = Canvas(bitmap)
                             // Always fill PDF page background with pure white paper (#FFFFFF)
                             canvas.drawColor(Color.WHITE)
@@ -698,8 +711,21 @@ object PdfNativeRenderer {
                     !clean.matches(Regex("""^page\s*\d+$""", RegexOption.IGNORE_CASE))
                 ) {
                     val destMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
-                    val destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
+                    var destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
                         ?: destMatch?.groupValues?.get(2)?.toIntOrNull()
+                    if (destObj == null) {
+                        val aInlineMatch = Regex("""/A\s*<<[^>]*?/(?:Dest|D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
+                        destObj = aInlineMatch?.groupValues?.get(1)?.toIntOrNull() ?: aInlineMatch?.groupValues?.get(2)?.toIntOrNull()
+                    }
+                    if (destObj == null) {
+                        val aRefMatch = Regex("""/A\s+(\d+)\s+0\s+R""").find(body)
+                        val aObjId = aRefMatch?.groupValues?.get(1)?.toIntOrNull()
+                        if (aObjId != null) {
+                            val aBody = objBodies[aObjId].orEmpty()
+                            val aDestMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(aBody)
+                            destObj = aDestMatch?.groupValues?.get(1)?.toIntOrNull() ?: aDestMatch?.groupValues?.get(2)?.toIntOrNull()
+                        }
+                    }
                     val targetPageZero = destObj?.let { pageObjToZero[it] }
 
                     if (targetPageZero != null && targetPageZero in 0 until totalPages) {
@@ -1089,7 +1115,7 @@ object PdfNativeRenderer {
                             renderer.openPage(pIdx).use { page ->
                                 val thumbW = 360
                                 val thumbH = (page.height.toFloat() / page.width.toFloat() * thumbW).toInt().coerceIn(360, 600)
-                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.RGB_565)
+                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
                                 val smallCanvas = Canvas(smallBmp)
                                 smallCanvas.drawColor(Color.WHITE)
                                 page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -1099,7 +1125,7 @@ object PdfNativeRenderer {
                                     if (!illustFile.exists()) {
                                         val hiW = 540
                                         val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
-                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.RGB_565)
+                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.ARGB_8888)
                                         val hiCanvas = Canvas(hiBmp)
                                         hiCanvas.drawColor(Color.WHITE)
                                         page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
