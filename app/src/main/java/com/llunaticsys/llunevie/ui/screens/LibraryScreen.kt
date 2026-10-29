@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,12 +79,14 @@ import com.llunaticsys.llunevie.ui.components.BookCoverCard
 import com.llunaticsys.llunevie.ui.components.ClassicGlassSegmentedControl
 import com.llunaticsys.llunevie.ui.components.CustomThemeDropdown
 import com.llunaticsys.llunevie.ui.components.LlunevieCenteredTextField
+import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import com.llunaticsys.llunevie.ui.theme.shelfMatchesFilter
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1020,7 +1024,9 @@ fun LibraryScreen(
                         // 1. RAK BUKU + Inline Expandable "Kelola Rak"
                         Column {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(26.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1034,65 +1040,69 @@ fun LibraryScreen(
                                 Surface(
                                     onClick = { showManageShelves = !showManageShelves },
                                     shape = CircleShape,
-                                    color = if (showManageShelves) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface,
-                                    border = BorderStroke(1.dp, if (showManageShelves) (if (palette.isGlass) palette.pillActiveBorder else palette.accentDark) else palette.borderSoft)
+                                    color = if (showManageShelves) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (showManageShelves) palette.accentDark else palette.borderSoft)
                                 ) {
                                     Text(
                                         text = strings.manageShelvesBtn,
-                                        color = if (showManageShelves) (if (palette.isGlass) palette.textMain else palette.bgApp) else palette.textMain,
-                                        fontSize = 11.sp,
+                                        color = if (showManageShelves) palette.bgApp else palette.textMain,
+                                        fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 // "Semua" (All) as the very first shelf chip
                                 val isAllSelected = prefs.libShelf.equals("all", ignoreCase = true) || prefs.libShelf.isBlank()
-                                val allChipBg = if (isAllSelected) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface
-                                val allChipBorder = if (isAllSelected) (if (palette.isGlass) palette.pillActiveBorder else palette.accentDark) else palette.borderSoft
-                                val allChipText = if (isAllSelected) (if (palette.isGlass) palette.textMain else palette.bgApp) else palette.textMuted
+                                val allChipBg = if (isAllSelected) palette.accentDark else palette.bgSurface
+                                val allChipBorder = if (isAllSelected) palette.accentDark else palette.borderSoft
+                                val allChipText = if (isAllSelected) palette.bgApp else palette.textMuted
 
-                                Surface(
-                                    onClick = { onSetShelf("all") },
-                                    shape = CircleShape,
-                                    color = allChipBg,
-                                    border = BorderStroke(1.dp, allChipBorder),
-                                    shadowElevation = if (isAllSelected) 1.5.dp else 0.dp
-                                ) {
-                                    Text(
-                                        text = strings.shelfAll,
-                                        color = allChipText,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (isAllSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                    )
+                                item(key = "shelf_all") {
+                                    Surface(
+                                        onClick = { onSetShelf("all") },
+                                        shape = CircleShape,
+                                        color = allChipBg,
+                                        border = BorderStroke(1.dp, allChipBorder),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 14.dp)) {
+                                            Text(
+                                                text = strings.shelfAll,
+                                                color = allChipText,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (isAllSelected) FontWeight.SemiBold else FontWeight.Medium
+                                            )
+                                        }
+                                    }
                                 }
 
-                                shelves.forEach { shelf ->
+                                items(shelves, key = { it.name }) { shelf ->
                                     val selected = !isAllSelected && shelfMatchesFilter(shelf.name, prefs.libShelf)
-                                    val chipBg = if (selected) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface
-                                    val chipBorder = if (selected) (if (palette.isGlass) palette.pillActiveBorder else palette.accentDark) else palette.borderSoft
-                                    val chipText = if (selected) (if (palette.isGlass) palette.textMain else palette.bgApp) else palette.textMuted
+                                    val chipBg = if (selected) palette.accentDark else palette.bgSurface
+                                    val chipBorder = if (selected) palette.accentDark else palette.borderSoft
+                                    val chipText = if (selected) palette.bgApp else palette.textMuted
 
                                     Surface(
                                         onClick = { onSetShelf(shelf.name) },
                                         shape = CircleShape,
                                         color = chipBg,
                                         border = BorderStroke(1.dp, chipBorder),
-                                        shadowElevation = if (selected) 1.5.dp else 0.dp
+                                        modifier = Modifier.height(32.dp)
                                     ) {
-                                        Text(
-                                            text = strings.localizeShelfName(shelf.name),
-                                            color = chipText,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                        )
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 14.dp)) {
+                                            Text(
+                                                text = strings.localizeShelfName(shelf.name),
+                                                color = chipText,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1281,7 +1291,7 @@ fun LibraryScreen(
                                 fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace,
                                 letterSpacing = 1.2.sp,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                modifier = Modifier.padding(bottom = 6.dp)
                             )
                             ClassicGlassSegmentedControl(
                                 items = listOf(
@@ -1303,7 +1313,7 @@ fun LibraryScreen(
                                 fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace,
                                 letterSpacing = 1.2.sp,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                modifier = Modifier.padding(bottom = 6.dp)
                             )
                             ClassicGlassSegmentedControl(
                                 items = listOf(
@@ -1324,7 +1334,7 @@ fun LibraryScreen(
                                 fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace,
                                 letterSpacing = 1.2.sp,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                modifier = Modifier.padding(bottom = 6.dp)
                             )
                             ClassicGlassSegmentedControl(
                                 items = LibrarySortOption.entries.map { opt -> opt to opt.localizedLabel(prefs.lang) },
@@ -1333,26 +1343,55 @@ fun LibraryScreen(
                             )
                         }
 
-                        // 5. BUKU PER BARIS (GRID / COVER) Segmented Control (2, 3, 4, 5)
-                        Column {
-                            val activeColsHighlight = if (prefs.libGridCols in 2..5) {
+                        // 5. BUKU PER BARIS (GRID / COVER) Clean 2–5 Slider
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            val activeCols = if (prefs.libGridCols in 2..5) {
                                 prefs.libGridCols
                             } else {
                                 if (prefs.libViewMode == LibraryViewMode.COVERS) 3 else 2
                             }
-                            Text(
-                                text = strings.colsPerRowLabel,
-                                color = palette.textMuted,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = 1.2.sp,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (strings.isEn) "BOOKS PER ROW (GRID / COVER)" else "BUKU PER BARIS (GRID / SAMPUL)",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 0.8.sp,
+                                    color = palette.textMuted,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = if (strings.isEn) "$activeCols per row" else "$activeCols buku",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textMain
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LlunevieThinSlider(
+                                value = activeCols.toFloat(),
+                                onValueChange = { onSetGridCols(it.roundToInt().coerceIn(2, 5)) },
+                                valueRange = 2f..5f,
+                                steps = 2
                             )
-                            ClassicGlassSegmentedControl(
-                                items = listOf(2 to "2", 3 to "3", 4 to "4", 5 to "5"),
-                                selectedItem = activeColsHighlight,
-                                onItemSelected = onSetGridCols
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                listOf(2, 3, 4, 5).forEach { n ->
+                                    Text(
+                                        text = "$n",
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = if (activeCols == n) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (activeCols == n) palette.textMain else palette.textMuted
+                                    )
+                                }
+                            }
                         }
                     }
                 }

@@ -907,7 +907,9 @@ class LlunevieViewModel(
         quoteText: String,
         noteText: String,
         colorKey: HighlightColorKey,
-        existingId: String? = null
+        existingId: String? = null,
+        startCharIndex: Int = -1,
+        endCharIndex: Int = -1
     ) {
         val st = _uiState.value
         val bookId = st.activeBookId ?: return
@@ -923,7 +925,9 @@ class LlunevieViewModel(
                 chapterTitle = chTitle,
                 quoteText = quoteText.trim(),
                 noteText = noteText.trim(),
-                colorKey = colorKey.key
+                colorKey = colorKey.key,
+                startCharIndex = startCharIndex,
+                endCharIndex = endCharIndex
             )
             dao.upsertHighlight(entity)
             showToast(if (isId) "Catatan & sorotan disimpan" else "Highlight & note saved")
@@ -1152,17 +1156,18 @@ class LlunevieViewModel(
         val existingInBatch = isBatch && _uiState.value.batchScanQueue.any { it.isbn == clean }
         if (existingInBatch) return
 
+        val isEn = preferences.value.lang == "en"
         val currentYear = SimpleDateFormat("yyyy", Locale.US).format(Date())
         val fallbackCandidate = CatalogBookCandidate(
             id = "isbn-$clean-${System.currentTimeMillis()}",
-            title = "Novel ISBN $clean",
+            title = if (isEn) "Searching ISBN $clean..." else "Mencari ISBN $clean...",
             author = "ISBN $clean",
             year = currentYear,
             pages = 280,
             rating = "4.5",
             edition = "Edisi Fisik",
             publisher = "Penerbit",
-            lang = if (preferences.value.lang == "en") "en" else "id",
+            lang = if (isEn) "en" else "id",
             isbn = clean,
             category = "Novel",
             coverUrl = null,

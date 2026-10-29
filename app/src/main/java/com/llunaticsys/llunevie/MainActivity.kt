@@ -366,8 +366,8 @@ private fun LlunevieMainContainer(
                             onOpenIllustViewer = { viewModel.openIllustrationViewer(it) },
                             onSetIllustZoom = { viewModel.setIllustZoom(it) },
                             onCloseIllustViewer = { viewModel.closeIllustrationViewer() },
-                            onSaveHighlightNote = { quote, note, color, id ->
-                                viewModel.saveHighlightNote(quote, note, color, id)
+                            onSaveHighlightNote = { quote, note, color, id, startIdx, endIdx ->
+                                viewModel.saveHighlightNote(quote, note, color, id, startIdx, endIdx)
                             },
                             onDeleteHighlightNote = { viewModel.deleteHighlightNote(it) },
                             onSearchInLibrary = { query ->

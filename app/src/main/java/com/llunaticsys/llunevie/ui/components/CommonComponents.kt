@@ -608,70 +608,30 @@ fun <T> ClassicGlassSegmentedControl(
     selectedItem: T,
     onItemSelected: (T) -> Unit,
     modifier: Modifier = Modifier,
-    height: Dp = 38.dp
+    height: Dp = 36.dp
 ) {
     val palette = LocalLluneviePalette.current
-    if (palette.isGlass) {
-        val activeBg = if (palette.isDark) Color.White.copy(alpha = 0.14f) else palette.pillActiveBg
-        val activeBorder = if (palette.isDark) Color.White.copy(alpha = 0.18f) else palette.pillActiveBorder
-
-        Surface(
-            shape = CircleShape,
-            color = palette.bgCard,
-            border = BorderStroke(1.dp, palette.borderSoft),
-            modifier = modifier
-                .fillMaxWidth()
-                .height(height)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                items.forEach { (item, label) ->
-                    val isSelected = item == selectedItem
-                    Surface(
-                        onClick = { onItemSelected(item) },
-                        shape = CircleShape,
-                        color = if (isSelected) activeBg else Color.Transparent,
-                        border = if (isSelected) BorderStroke(1.dp, activeBorder) else null,
-                        shadowElevation = if (isSelected) 1.5.dp else 0.dp,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = label,
-                                color = if (isSelected) palette.textMain else palette.textMuted,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                maxLines = 1,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    } else {
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = palette.bgCard,
+        border = BorderStroke(1.dp, palette.borderSoft),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+    ) {
         Row(
-            modifier = modifier
-                .fillMaxWidth()
-                .height(height),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             items.forEach { (item, label) ->
                 val isSelected = item == selectedItem
                 Surface(
                     onClick = { onItemSelected(item) },
-                    shape = CircleShape,
-                    color = if (isSelected) palette.accentDark else palette.bgSurface,
-                    border = BorderStroke(1.dp, if (isSelected) palette.accentDark else palette.borderSoft),
-                    shadowElevation = if (isSelected) 2.dp else 0.dp,
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) palette.accentDark else Color.Transparent,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
@@ -680,7 +640,7 @@ fun <T> ClassicGlassSegmentedControl(
                         Text(
                             text = label,
                             color = if (isSelected) palette.bgApp else palette.textMuted,
-                            fontSize = 12.sp,
+                            fontSize = 11.5.sp,
                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                             maxLines = 1,
                             textAlign = TextAlign.Center

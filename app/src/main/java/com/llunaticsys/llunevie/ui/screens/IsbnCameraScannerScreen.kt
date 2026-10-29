@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -52,6 +53,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -303,55 +305,35 @@ fun IsbnCameraScannerScreen(
 
             // Theme-adaptive 40dp capsule switcher
             val isBatchMode = uiState.cameraMode == "batch"
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = palette.bgSurface.copy(alpha = 0.92f),
-                border = BorderStroke(1.dp, palette.borderSoft),
+            Row(
                 modifier = Modifier
+                    .width(220.dp)
                     .height(40.dp)
-                    .widthIn(min = 210.dp)
+                    .clip(CircleShape)
+                    .background(palette.bgSurface.copy(alpha = 0.94f))
+                    .border(1.dp, palette.borderSoft, CircleShape)
+                    .padding(3.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(3.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        onClick = { onSetCameraMode("isbn") },
-                        shape = RoundedCornerShape(50),
-                        color = if (!isBatchMode) palette.textMain else Color.Transparent,
-                        modifier = Modifier.fillMaxHeight()
+                listOf(false to strings.tabIsbn, true to strings.tabBatch).forEach { (batchTab, label) ->
+                    val selected = (isBatchMode == batchTab)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(if (selected) palette.textMain else Color.Transparent)
+                            .clickable { onSetCameraMode(if (batchTab) "batch" else "isbn") },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.padding(horizontal = 14.dp)
-                        ) {
-                            Text(
-                                text = strings.tabIsbn,
-                                color = if (!isBatchMode) palette.bgApp else palette.textMuted,
-                                fontSize = 11.5.sp,
-                                fontWeight = if (!isBatchMode) FontWeight.SemiBold else FontWeight.Medium
-                            )
-                        }
-                    }
-                    Surface(
-                        onClick = { onSetCameraMode("batch") },
-                        shape = RoundedCornerShape(50),
-                        color = if (isBatchMode) palette.textMain else Color.Transparent,
-                        modifier = Modifier.fillMaxHeight()
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.padding(horizontal = 14.dp)
-                        ) {
-                            Text(
-                                text = strings.tabBatch,
-                                color = if (isBatchMode) palette.bgApp else palette.textMuted,
-                                fontSize = 11.5.sp,
-                                fontWeight = if (isBatchMode) FontWeight.SemiBold else FontWeight.Medium
-                            )
-                        }
+                        Text(
+                            text = label,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected) palette.bgApp else palette.textMuted,
+                            maxLines = 1,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                        )
                     }
                 }
             }
@@ -638,56 +620,77 @@ fun IsbnCameraScannerScreen(
                         )
                     }
                 } else {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 56.dp, max = 188.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(batchScannedBooks, key = { it.id }) { bookItem ->
+                        items(items = batchScannedBooks, key = { it.isbn }) { item ->
                             Row(
                                 modifier = Modifier
-                                    .height(48.dp)
+                                    .fillMaxWidth()
+                                    .height(54.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(palette.bgCard)
                                     .border(1.dp, palette.borderSoft, RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    .padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (!bookItem.coverUrl.isNullOrBlank()) {
+                                if (!item.coverUrl.isNullOrBlank()) {
                                     AsyncImage(
-                                        model = bookItem.coverUrl,
-                                        contentDescription = bookItem.title,
+                                        model = item.coverUrl,
+                                        contentDescription = item.title,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
-                                            .size(width = 24.dp, height = 34.dp)
+                                            .size(width = 26.dp, height = 38.dp)
                                             .clip(RoundedCornerShape(4.dp))
                                     )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(width = 26.dp, height = 38.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(palette.borderSoft),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "📖",
+                                            fontSize = 12.sp
+                                        )
+                                    }
                                 }
-                                Column(modifier = Modifier.widthIn(max = 120.dp)) {
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = bookItem.title,
+                                        text = item.title,
                                         color = palette.textMain,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = bookItem.author,
+                                        text = "${item.author} · ${item.isbn}",
                                         color = palette.textMuted,
-                                        fontSize = 9.5.sp,
+                                        fontSize = 11.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Text(
-                                    text = "✕",
-                                    color = palette.textMuted,
-                                    fontSize = 11.sp,
+                                Box(
                                     modifier = Modifier
-                                        .clickable { onRemoveBatchItem(bookItem.id) }
-                                        .padding(4.dp)
-                                )
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .clickable { onRemoveBatchItem(item.id) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "✕",
+                                        color = palette.textMuted,
+                                        fontSize = 12.sp
+                                    )
+                                }
                             }
                         }
                     }
