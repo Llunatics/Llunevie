@@ -19,6 +19,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -317,7 +326,24 @@ fun StatsScreen(
             fontWeight = FontWeight.Medium
         )
         Spacer(modifier = Modifier.height(12.dp))
-        if (books.isEmpty()) {
+
+        val sortedBooks = remember(books) {
+            books.filter { b ->
+                val t = b.title.trim()
+                !t.startsWith("Searching ISBN", ignoreCase = true) &&
+                !t.startsWith("Mencari ISBN", ignoreCase = true) &&
+                !t.startsWith("ISBN Not Found", ignoreCase = true) &&
+                !t.startsWith("ISBN Tidak Ditemukan", ignoreCase = true)
+            }.sortedWith(
+                compareByDescending<BookEntity> { it.timeMinutes }
+                    .thenByDescending { it.readingProgress }
+            )
+        }
+        var showCompleteBookList by remember { mutableStateOf(false) }
+        val displayedBooks = if (showCompleteBookList) sortedBooks else sortedBooks.take(5)
+        val isEn = !strings.isId
+
+        if (sortedBooks.isEmpty()) {
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = palette.bgCard,
@@ -333,7 +359,7 @@ fun StatsScreen(
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                books.forEach { book ->
+                displayedBooks.forEach { book ->
                     val ratio = if (totalMinutes > 0) (book.timeMinutes.toFloat() / totalMinutes.toFloat()).coerceIn(0f, 1f) else (book.progress / 100f)
                     Surface(
                         shape = RoundedCornerShape(18.dp),
@@ -375,6 +401,37 @@ fun StatsScreen(
                                     .clip(CircleShape)
                             )
                         }
+                    }
+                }
+
+                if (sortedBooks.size > 5) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { showCompleteBookList = !showCompleteBookList }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (showCompleteBookList) {
+                                if (isEn) "Show less" else "Tampilkan lebih sedikit"
+                            } else {
+                                if (isEn) "Show complete list (${sortedBooks.size - 5} more)" else "Lihat daftar lengkap (${sortedBooks.size - 5} lainnya)"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.textSecondary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = if (showCompleteBookList) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = palette.textSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }

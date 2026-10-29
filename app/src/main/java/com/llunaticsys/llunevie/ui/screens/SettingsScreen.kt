@@ -52,7 +52,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.roundToInt
+import kotlin.math.max
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -719,38 +723,60 @@ fun SettingsScreen(
                         }
 
                         // Interactive 240.dp x 240.dp Crop Stage
+                        val stageSizeDp = 240.dp
+                        val stageSizePx = with(LocalDensity.current) { stageSizeDp.toPx() }
                         Box(
                             modifier = Modifier
-                                .size(240.dp)
+                                .size(stageSizeDp)
                                 .clip(RoundedCornerShape(20.dp))
                                 .background(Color.Black)
-                                .pointerInput(Unit) {
+                                .pointerInput(cropBmp) {
                                     detectTransformGestures { _, pan, zoom, _ ->
-                                        cropScale = (cropScale * zoom).coerceIn(1f, 3.5f)
-                                        cropOffset += pan
+                                        val newScale = (cropScale * zoom).coerceIn(1f, 3.5f)
+                                        cropScale = newScale
+                                        cropOffset = clampCropPan(
+                                            panX = cropOffset.x + pan.x,
+                                            panY = cropOffset.y + pan.y,
+                                            stageSizePx = stageSizePx,
+                                            bmpW = cropBmp.width,
+                                            bmpH = cropBmp.height,
+                                            zoom = newScale,
+                                            rotationDeg = cropRotationDegrees
+                                        )
                                     }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Image(
-                                bitmap = cropBmp.asImageBitmap(),
-                                contentDescription = null,
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .offset { IntOffset(cropOffset.x.roundToInt(), cropOffset.y.roundToInt()) }
-                                    .scale(cropScale)
-                                    .rotate(cropRotationDegrees)
-                            )
-
-                            // Circular Cutout Mask & crisp circular border
                             Canvas(modifier = Modifier.fillMaxSize()) {
-                                val r = 105.dp.toPx()
-                                val cx = size.width / 2f
-                                val cy = size.height / 2f
+                                val stageW = size.width
+                                val stageH = size.height
+                                val isQuarterTurn = ((cropRotationDegrees.roundToInt() / 90) % 2) != 0
+                                val rotW = if (isQuarterTurn) cropBmp.height.toFloat() else cropBmp.width.toFloat()
+                                val rotH = if (isQuarterTurn) cropBmp.width.toFloat() else cropBmp.height.toFloat()
+                                val baseScale = max(stageW / rotW.coerceAtLeast(1f), stageH / rotH.coerceAtLeast(1f))
+                                val totalScale = baseScale * cropScale
+
+                                val matrix = android.graphics.Matrix().apply {
+                                    postTranslate(-cropBmp.width / 2f, -cropBmp.height / 2f)
+                                    postRotate(cropRotationDegrees)
+                                    postScale(totalScale, totalScale)
+                                    postTranslate(
+                                        (stageW / 2f) + cropOffset.x,
+                                        (stageH / 2f) + cropOffset.y
+                                    )
+                                }
+                                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+                                drawIntoCanvas { canvas ->
+                                    canvas.nativeCanvas.drawBitmap(cropBmp, matrix, paint)
+                                }
+
+                                // Circular Cutout Mask & crisp circular border
+                                val r = stageW / 2f
+                                val cx = stageW / 2f
+                                val cy = stageH / 2f
                                 val mask = android.graphics.Path().apply {
                                     fillType = android.graphics.Path.FillType.EVEN_ODD
-                                    addRect(0f, 0f, size.width, size.height, android.graphics.Path.Direction.CW)
+                                    addRect(0f, 0f, stageW, stageH, android.graphics.Path.Direction.CW)
                                     addCircle(cx, cy, r, android.graphics.Path.Direction.CW)
                                 }
                                 drawContext.canvas.nativeCanvas.drawPath(
@@ -762,7 +788,7 @@ fun SettingsScreen(
                                 )
                                 drawCircle(
                                     color = Color.White.copy(alpha = 0.95f),
-                                    radius = r,
+                                    radius = r - 1f,
                                     center = Offset(cx, cy),
                                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
                                 )
@@ -783,7 +809,18 @@ fun SettingsScreen(
                             )
                             LlunevieThinSlider(
                                 value = cropScale,
-                                onValueChange = { cropScale = it },
+                                onValueChange = { newScale ->
+                                    cropScale = newScale
+                                    cropOffset = clampCropPan(
+                                        panX = cropOffset.x,
+                                        panY = cropOffset.y,
+                                        stageSizePx = stageSizePx,
+                                        bmpW = cropBmp.width,
+                                        bmpH = cropBmp.height,
+                                        zoom = newScale,
+                                        rotationDeg = cropRotationDegrees
+                                    )
+                                },
                                 valueRange = 1f..3.5f,
                                 modifier = Modifier.weight(1f)
                             )
@@ -798,7 +835,19 @@ fun SettingsScreen(
 
                         // Rotate 90° button
                         Surface(
-                            onClick = { cropRotationDegrees = (cropRotationDegrees + 90f) % 360f },
+                            onClick = {
+                                val newRot = (cropRotationDegrees + 90f) % 360f
+                                cropRotationDegrees = newRot
+                                cropOffset = clampCropPan(
+                                    panX = cropOffset.x,
+                                    panY = cropOffset.y,
+                                    stageSizePx = stageSizePx,
+                                    bmpW = cropBmp.width,
+                                    bmpH = cropBmp.height,
+                                    zoom = cropScale,
+                                    rotationDeg = newRot
+                                )
+                            },
                             shape = CircleShape,
                             color = palette.bgSurface,
                             border = BorderStroke(1.dp, palette.borderSoft)
@@ -862,20 +911,15 @@ fun SettingsScreen(
                             }
                             Surface(
                                 onClick = {
-                                    val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
-                                    val c = android.graphics.Canvas(out)
-                                    val clipP = android.graphics.Path().apply {
-                                        addCircle(256f, 256f, 256f, android.graphics.Path.Direction.CW)
-                                    }
-                                    c.clipPath(clipP)
-                                    val matrix = android.graphics.Matrix().apply {
-                                        postTranslate(-cropBmp.width / 2f, -cropBmp.height / 2f)
-                                        postRotate(cropRotationDegrees)
-                                        val fitScale = 512f / maxOf(cropBmp.width, cropBmp.height).toFloat()
-                                        postScale(fitScale * cropScale, fitScale * cropScale)
-                                        postTranslate(256f + cropOffset.x * (512f / 240f), 256f + cropOffset.y * (512f / 240f))
-                                    }
-                                    c.drawBitmap(cropBmp, matrix, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG))
+                                    val out = renderCroppedBitmapWithExactMatrix(
+                                        src = cropBmp,
+                                        outputSizePx = 512,
+                                        stageSizePx = stageSizePx,
+                                        zoom = cropScale,
+                                        clampedPanStagePx = cropOffset,
+                                        rotationDeg = cropRotationDegrees,
+                                        circularMask = true
+                                    )
                                     val dir = File(context.filesDir, "profile").apply { mkdirs() }
                                     val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
                                     FileOutputStream(outFile).use { fos ->
@@ -903,4 +947,70 @@ fun SettingsScreen(
             }
         }
 
+}
+
+fun clampCropPan(
+    panX: Float,
+    panY: Float,
+    stageSizePx: Float,
+    bmpW: Int,
+    bmpH: Int,
+    zoom: Float,
+    rotationDeg: Float
+): Offset {
+    val isQuarterTurn = ((rotationDeg.roundToInt() / 90) % 2) != 0
+    val rotW = if (isQuarterTurn) bmpH.toFloat() else bmpW.toFloat()
+    val rotH = if (isQuarterTurn) bmpW.toFloat() else bmpH.toFloat()
+    val baseScale = max(stageSizePx / rotW.coerceAtLeast(1f), stageSizePx / rotH.coerceAtLeast(1f))
+    val drawnW = rotW * baseScale * zoom
+    val drawnH = rotH * baseScale * zoom
+    val maxPanX = ((drawnW - stageSizePx) * 0.5f).coerceAtLeast(0f)
+    val maxPanY = ((drawnH - stageSizePx) * 0.5f).coerceAtLeast(0f)
+    return Offset(
+        x = panX.coerceIn(-maxPanX, maxPanX),
+        y = panY.coerceIn(-maxPanY, maxPanY)
+    )
+}
+
+fun renderCroppedBitmapWithExactMatrix(
+    src: Bitmap,
+    outputSizePx: Int,
+    stageSizePx: Float,
+    zoom: Float,
+    clampedPanStagePx: Offset,
+    rotationDeg: Float,
+    circularMask: Boolean = true
+): Bitmap {
+    val out = Bitmap.createBitmap(outputSizePx, outputSizePx, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(out)
+    val ratio = outputSizePx.toFloat() / stageSizePx.coerceAtLeast(1f)
+    val isQuarterTurn = ((rotationDeg.roundToInt() / 90) % 2) != 0
+    val rotW = if (isQuarterTurn) src.height.toFloat() else src.width.toFloat()
+    val rotH = if (isQuarterTurn) src.width.toFloat() else src.height.toFloat()
+    val baseScale = max(outputSizePx / rotW.coerceAtLeast(1f), outputSizePx / rotH.coerceAtLeast(1f))
+    val totalScale = baseScale * zoom
+
+    if (circularMask) {
+        val clipPath = android.graphics.Path().apply {
+            addCircle(outputSizePx / 2f, outputSizePx / 2f, outputSizePx / 2f, android.graphics.Path.Direction.CW)
+        }
+        canvas.clipPath(clipPath)
+    }
+
+    val matrix = android.graphics.Matrix().apply {
+        // 1. Center source bitmap at origin (0, 0)
+        postTranslate(-src.width / 2f, -src.height / 2f)
+        // 2. Rotate around origin
+        postRotate(rotationDeg)
+        // 3. Scale by baseScale * zoom around origin
+        postScale(totalScale, totalScale)
+        // 4. Translate to center of output canvas + scaled user pan offset
+        postTranslate(
+            (outputSizePx / 2f) + (clampedPanStagePx.x * ratio),
+            (outputSizePx / 2f) + (clampedPanStagePx.y * ratio)
+        )
+    }
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+    canvas.drawBitmap(src, matrix, paint)
+    return out
 }
