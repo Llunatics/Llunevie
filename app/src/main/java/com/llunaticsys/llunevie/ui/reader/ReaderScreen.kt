@@ -306,9 +306,8 @@ fun ReaderScreen(
     var showInlineNoteInput by remember { mutableStateOf(false) }
     var inlineNoteText by remember { mutableStateOf("") }
     var showPageScrubber by remember { mutableStateOf(false) }
+    var showInlinePageSlider by remember { mutableStateOf(false) }
     var scrubberPageValue by remember { mutableFloatStateOf(metrics.currentGlobalPage.toFloat()) }
-    var isFullViewBtnDocked by remember { mutableStateOf(false) }
-    var fullViewBtnLastActive by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var inBookSearchQuery by remember { mutableStateOf<String?>(null) }
     var lastTurnDirection by remember { mutableIntStateOf(1) }
     var slideDragOffsetPx by remember { mutableFloatStateOf(0f) }
@@ -325,11 +324,6 @@ fun ReaderScreen(
         if (!isFlippingInProgress) {
             displayPageIndex = curZeroFromMetrics
         }
-    }
-
-    LaunchedEffect(fullViewBtnLastActive, uiState.readerFullView) {
-        kotlinx.coroutines.delay(3500L)
-        isFullViewBtnDocked = true
     }
 
     LaunchedEffect(metrics.currentGlobalPage) {
@@ -1032,15 +1026,14 @@ fun ReaderScreen(
                                 }
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                        .fillMaxSize(),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Image(
                                         bitmap = spreadBmp,
                                         contentDescription = null,
                                         modifier = Modifier
-                                            .fillMaxHeight()
+                                            .fillMaxHeight(0.92f)
                                             .aspectRatio(1.414f)
                                             .shadow(14.dp, RoundedCornerShape(6.dp))
                                             .clip(RoundedCornerShape(6.dp))
@@ -1383,7 +1376,7 @@ fun ReaderScreen(
             }
 
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
-        if (!uiState.readerFullView) {
+        if (!uiState.readerFullView || isSpread) {
             val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
             val topBarStartPad = if (isSpread) maxOf(36.dp, cutoutStart + 18.dp) else 16.dp
             Row(
@@ -1412,27 +1405,29 @@ fun ReaderScreen(
                     }
                 }
 
-                // Compact single-line Title Pill (`#readerTitlePill`: max-w-[200px] height=30.dp, px-3.5, rounded-full, text-[11.5px])
-                Surface(
-                    onClick = { onToggleTocDrawer(true) },
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier
-                        .height(30.dp)
-                        .widthIn(max = 200.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = book.title,
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 14.dp)
-                        )
+                // Compact single-line Title Pill (`#readerTitlePill`) - only in 1-Page mode (never covers top center in 2-Page mode!)
+                if (!isSpread) {
+                    Surface(
+                        onClick = { onToggleTocDrawer(true) },
+                        shape = CircleShape,
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier
+                            .height(30.dp)
+                            .widthIn(max = 200.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = book.title,
+                                color = palette.textMain,
+                                fontSize = 11.5.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            )
+                        }
                     }
                 }
 
@@ -1655,10 +1650,9 @@ fun ReaderScreen(
             }
 
         // Left Vertical Page Bar in 2-Page Spread Mode (Notch-safe with in-place transition to vertical page slider)
-        if (!uiState.readerFullView && isSpread) {
+        if (isSpread) {
             val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
             val leftBarStartPad = maxOf(36.dp, cutoutStart + 18.dp)
-            var showInlinePageSlider by remember { mutableStateOf(false) }
             var scrubPage by remember(metrics.currentGlobalPage) {
                 mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
             }
@@ -1961,65 +1955,26 @@ fun ReaderScreen(
             }
         }
 
-        // MIDDLE-RIGHT FLOATING FULL-VIEW TOGGLE BUTTON (`#readerFullViewToggleBtn` in `llunevie_prototype.html`)
-        // Dynamically docks against the right edge as a sleek semi-circle after a few seconds of idle time.
-        val fullViewBtnWidth by animateDpAsState(
-            targetValue = if (isFullViewBtnDocked) 16.dp else 34.dp,
-            animationSpec = spring(stiffness = Spring.StiffnessMedium),
-            label = "fullViewBtnW"
-        )
-        val fullViewBtnHeight by animateDpAsState(
-            targetValue = if (isFullViewBtnDocked) 38.dp else 34.dp,
-            animationSpec = spring(stiffness = Spring.StiffnessMedium),
-            label = "fullViewBtnH"
-        )
-        val fullViewBtnEndPad by animateDpAsState(
-            targetValue = if (isFullViewBtnDocked) 0.dp else 12.dp,
-            animationSpec = spring(stiffness = Spring.StiffnessMedium),
-            label = "fullViewBtnPad"
-        )
-        val fullViewBtnShape = if (isFullViewBtnDocked) {
-            RoundedCornerShape(topStart = 19.dp, bottomStart = 19.dp, topEnd = 0.dp, bottomEnd = 0.dp)
-        } else {
-            CircleShape
-        }
-
+        // Middle-Right Quick Notes Drawer Handle Tab
         Surface(
-            onClick = {
-                if (isFullViewBtnDocked) {
-                    isFullViewBtnDocked = false
-                    fullViewBtnLastActive = System.currentTimeMillis()
-                } else {
-                    fullViewBtnLastActive = System.currentTimeMillis()
-                    onToggleFullView()
-                }
-            },
-            shape = fullViewBtnShape,
-            color = palette.bgSurface.copy(alpha = if (isFullViewBtnDocked) 0.75f else 0.92f),
+            onClick = { onToggleNotesDrawer(true) },
+            shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 0.dp, bottomEnd = 0.dp),
+            color = palette.bgSurface.copy(alpha = 0.88f),
             border = BorderStroke(1.dp, palette.borderSoft),
-            shadowElevation = if (isFullViewBtnDocked) 3.dp else 6.dp,
+            shadowElevation = 3.dp,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = fullViewBtnEndPad)
-                .width(fullViewBtnWidth)
-                .height(fullViewBtnHeight)
+                .width(18.dp)
+                .height(40.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
-                if (isFullViewBtnDocked) {
-                    Text(
-                        text = "‹",
-                        color = palette.textMain.copy(alpha = 0.75f),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(end = 2.dp)
-                    )
-                } else {
-                    PrototypeSvgIcon(
-                        type = if (uiState.readerFullView) PrototypeIconType.COLLAPSE_FULL else PrototypeIconType.EXPAND_FULL,
-                        tint = palette.textMain,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                Text(
+                    text = "‹",
+                    color = palette.textMain.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(end = 2.dp)
+                )
             }
         }
 
