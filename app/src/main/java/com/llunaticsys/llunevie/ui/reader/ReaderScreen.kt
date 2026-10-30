@@ -527,8 +527,8 @@ fun ReaderScreen(
                                 val curPInCh = curTriple?.second ?: uiState.activePageIndex
 
                                 value = if (isSpread) {
-                                    val leftZero = (curZero / 2) * 2
-                                    val rightZero = leftZero + 1
+                                    val leftZero = spreadStart
+                                    val rightZero = spreadStart + 1
                                     val leftTriple = getPageAtGlobalZero(leftZero)
                                     val rightTriple = getPageAtGlobalZero(rightZero)
                                     val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
@@ -542,7 +542,7 @@ fun ReaderScreen(
                                         rightPageIndex = rightZero,
                                         leftHeader = leftCh?.title.orEmpty(),
                                         rightHeader = rightCh?.title.orEmpty(),
-                                        leftText = leftTriple?.third.orEmpty().ifBlank { currentPageRaw },
+                                        leftText = leftTriple?.third.orEmpty().ifBlank { if (leftZero == curZero) currentPageRaw else "" },
                                         rightText = rightTriple?.third.orEmpty(),
                                         leftPdfBitmap = curLeftPdfBmp,
                                         rightPdfBitmap = curRightPdfBmp,
@@ -577,7 +577,14 @@ fun ReaderScreen(
                                 }
                             }
 
-                            val nextTriple = remember(chapters, curZero, step) { getPageAtGlobalZero(curZero + step) }
+                            val nextSpreadStart = spreadStart + 2
+                            val nextTriple = remember(chapters, curZero, isSpread, spreadStart) {
+                                if (isSpread) {
+                                    if (nextSpreadStart < metrics.totalBookPages) getPageAtGlobalZero(nextSpreadStart) else null
+                                } else {
+                                    getPageAtGlobalZero(curZero + 1)
+                                }
+                            }
                             val nextBitmap by produceState<ImageBitmap?>(
                                 initialValue = null,
                                 curZero, isSpread, isPdfBook, nextTriple, nextLeftPdfBmp, nextRightPdfBmp,
@@ -588,40 +595,42 @@ fun ReaderScreen(
                                 activeDraggingSliderKey == null
                             ) {
                                 if (activeDraggingSliderKey != null) return@produceState
-                                val nextCh = nextTriple?.let { chapters.getOrNull(it.first) }
-                                val nextText = nextTriple?.third.orEmpty()
-                                val nextChIdx = nextTriple?.first ?: 0
-                                val nextPInCh = nextTriple?.second ?: 0
-
-                                value = if (nextTriple == null) null
-                                else if (isSpread) {
-                                    val leftZero = curZero + step
-                                    val rightZero = leftZero + 1
-                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
-                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
-                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    renderTwoPageSpreadSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                        heightPx = stageH,
-                                        density = density,
-                                        leftPageIndex = leftZero,
-                                        rightPageIndex = rightZero,
-                                        leftHeader = leftCh?.title.orEmpty(),
-                                        rightHeader = rightCh?.title.orEmpty(),
-                                        leftText = leftTripleSpread?.third.orEmpty(),
-                                        rightText = rightTripleSpread?.third.orEmpty(),
-                                        leftPdfBitmap = nextLeftPdfBmp,
-                                        rightPdfBitmap = nextRightPdfBmp,
-                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
-                                        pageTextStyle = spreadTextStyle,
-                                        palette = palette,
-                                        prefs = prefs
-                                    )
-                                } else if (isPdfBook) {
+                                value = if (isSpread) {
+                                    if (nextSpreadStart >= metrics.totalBookPages) null
+                                    else {
+                                        val leftZero = nextSpreadStart
+                                        val rightZero = leftZero + 1
+                                        val leftTripleSpread = getPageAtGlobalZero(leftZero)
+                                        val rightTripleSpread = getPageAtGlobalZero(rightZero)
+                                        val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
+                                        val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
+                                        renderTwoPageSpreadSnapshot(
+                                            textMeasurer = textMeasurer,
+                                            widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
+                                            heightPx = stageH,
+                                            density = density,
+                                            leftPageIndex = leftZero,
+                                            rightPageIndex = rightZero,
+                                            leftHeader = leftCh?.title.orEmpty(),
+                                            rightHeader = rightCh?.title.orEmpty(),
+                                            leftText = leftTripleSpread?.third.orEmpty(),
+                                            rightText = rightTripleSpread?.third.orEmpty(),
+                                            leftPdfBitmap = nextLeftPdfBmp,
+                                            rightPdfBitmap = nextRightPdfBmp,
+                                            bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                            pageTextStyle = spreadTextStyle,
+                                            palette = palette,
+                                            prefs = prefs
+                                        )
+                                    }
+                                } else if (nextTriple == null) null
+                                else if (isPdfBook) {
                                     nextLeftPdfBmp?.asImageBitmap()
                                 } else {
+                                    val nextCh = nextTriple.let { chapters.getOrNull(it.first) }
+                                    val nextText = nextTriple.third.orEmpty()
+                                    val nextChIdx = nextTriple.first
+                                    val nextPInCh = nextTriple.second
                                     renderEpubPageSnapshot(
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
@@ -635,7 +644,7 @@ fun ReaderScreen(
                                         padTop = padTop,
                                         padBottom = padBottom,
                                         showChapterHeader = nextPInCh == 0,
-                                        isCover = (curZero + step == 0),
+                                        isCover = (curZero + 1 == 0),
                                         highlights = bookHighlights,
                                         chapterIndex = nextChIdx,
                                         pageIndex = nextPInCh,
@@ -645,7 +654,14 @@ fun ReaderScreen(
                                 }
                             }
 
-                            val prevTriple = remember(chapters, curZero, step) { getPageAtGlobalZero(curZero - step) }
+                            val prevSpreadStart = spreadStart - 2
+                            val prevTriple = remember(chapters, curZero, isSpread, spreadStart) {
+                                if (isSpread) {
+                                    if (prevSpreadStart >= 0) getPageAtGlobalZero(prevSpreadStart) else null
+                                } else {
+                                    getPageAtGlobalZero(curZero - 1)
+                                }
+                            }
                             val prevBitmap by produceState<ImageBitmap?>(
                                 initialValue = null,
                                 curZero, isSpread, isPdfBook, prevTriple, prevLeftPdfBmp, prevRightPdfBmp,
@@ -656,40 +672,42 @@ fun ReaderScreen(
                                 activeDraggingSliderKey == null
                             ) {
                                 if (activeDraggingSliderKey != null) return@produceState
-                                val prevCh = prevTriple?.let { chapters.getOrNull(it.first) }
-                                val prevText = prevTriple?.third.orEmpty()
-                                val prevChIdx = prevTriple?.first ?: 0
-                                val prevPInCh = prevTriple?.second ?: 0
-
-                                value = if (prevTriple == null) null
-                                else if (isSpread) {
-                                    val leftZero = curZero - step
-                                    val rightZero = leftZero + 1
-                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
-                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
-                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    renderTwoPageSpreadSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                        heightPx = stageH,
-                                        density = density,
-                                        leftPageIndex = leftZero,
-                                        rightPageIndex = rightZero,
-                                        leftHeader = leftCh?.title.orEmpty(),
-                                        rightHeader = rightCh?.title.orEmpty(),
-                                        leftText = leftTripleSpread?.third.orEmpty(),
-                                        rightText = rightTripleSpread?.third.orEmpty(),
-                                        leftPdfBitmap = prevLeftPdfBmp,
-                                        rightPdfBitmap = prevRightPdfBmp,
-                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
-                                        pageTextStyle = spreadTextStyle,
-                                        palette = palette,
-                                        prefs = prefs
-                                    )
-                                } else if (isPdfBook) {
+                                value = if (isSpread) {
+                                    if (prevSpreadStart < 0) null
+                                    else {
+                                        val leftZero = prevSpreadStart
+                                        val rightZero = leftZero + 1
+                                        val leftTripleSpread = getPageAtGlobalZero(leftZero)
+                                        val rightTripleSpread = getPageAtGlobalZero(rightZero)
+                                        val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
+                                        val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
+                                        renderTwoPageSpreadSnapshot(
+                                            textMeasurer = textMeasurer,
+                                            widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
+                                            heightPx = stageH,
+                                            density = density,
+                                            leftPageIndex = leftZero,
+                                            rightPageIndex = rightZero,
+                                            leftHeader = leftCh?.title.orEmpty(),
+                                            rightHeader = rightCh?.title.orEmpty(),
+                                            leftText = leftTripleSpread?.third.orEmpty(),
+                                            rightText = rightTripleSpread?.third.orEmpty(),
+                                            leftPdfBitmap = prevLeftPdfBmp,
+                                            rightPdfBitmap = prevRightPdfBmp,
+                                            bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                            pageTextStyle = spreadTextStyle,
+                                            palette = palette,
+                                            prefs = prefs
+                                        )
+                                    }
+                                } else if (prevTriple == null) null
+                                else if (isPdfBook) {
                                     prevLeftPdfBmp?.asImageBitmap()
                                 } else {
+                                    val prevCh = prevTriple.let { chapters.getOrNull(it.first) }
+                                    val prevText = prevTriple.third.orEmpty()
+                                    val prevChIdx = prevTriple.first
+                                    val prevPInCh = prevTriple.second
                                     renderEpubPageSnapshot(
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
@@ -703,7 +721,7 @@ fun ReaderScreen(
                                         padTop = padTop,
                                         padBottom = padBottom,
                                         showChapterHeader = prevPInCh == 0,
-                                        isCover = (curZero - step == 0),
+                                        isCover = (curZero - 1 == 0),
                                         highlights = bookHighlights,
                                         chapterIndex = prevChIdx,
                                         pageIndex = prevPInCh,
@@ -775,10 +793,12 @@ fun ReaderScreen(
                                                             liveDragProgress = value
                                                         }
                                                         val dir = flipTurnDir
-                                                        val targetPage = if (dir > 0) {
-                                                            (displayPageIndex + step).coerceAtMost(metrics.totalBookPages - 1)
+                                                        val targetPage = if (isSpread) {
+                                                            val spreadStart = (displayPageIndex / 2) * 2
+                                                            val maxSpread = (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
+                                                            if (dir > 0) (spreadStart + 2).coerceAtMost(maxSpread) else (spreadStart - 2).coerceAtLeast(0)
                                                         } else {
-                                                            (displayPageIndex - step).coerceAtLeast(0)
+                                                            if (dir > 0) (displayPageIndex + 1).coerceAtMost(metrics.totalBookPages - 1) else (displayPageIndex - 1).coerceAtLeast(0)
                                                         }
                                                         val nextB = lockedNextBmp ?: nextBitmap
                                                         val prevB = lockedPrevBmp ?: prevBitmap
@@ -822,7 +842,8 @@ fun ReaderScreen(
                                             } else if (!dragLocked) {
                                                 val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
                                                 if (relX >= 0.76f) {
-                                                    if (curZero + step < metrics.totalBookPages && nextBitmap != null) {
+                                                    val canGoNext = if (isSpread) ((curZero / 2) * 2 + 2 < metrics.totalBookPages) else (curZero + 1 < metrics.totalBookPages)
+                                                    if (canGoNext && nextBitmap != null) {
                                                         lockedCurrBmp = curBitmap
                                                         lockedNextBmp = nextBitmap
                                                         lockedPrevBmp = prevBitmap
@@ -830,7 +851,8 @@ fun ReaderScreen(
                                                         externalFlipTrigger = 1
                                                     }
                                                 } else if (relX <= 0.24f) {
-                                                    if (curZero - step >= 0 && prevBitmap != null) {
+                                                    val canGoPrev = if (isSpread) ((curZero / 2) * 2 - 2 >= 0) else (curZero - 1 >= 0)
+                                                    if (canGoPrev && prevBitmap != null) {
                                                         lockedCurrBmp = curBitmap
                                                         lockedNextBmp = nextBitmap
                                                         lockedPrevBmp = prevBitmap
@@ -854,8 +876,13 @@ fun ReaderScreen(
                                         if (!dragLocked) {
                                             if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * 1.15f) {
                                                 val candidateDir = if (totalDx < 0f) 1 else -1
-                                                if (candidateDir > 0 && curZero >= metrics.totalBookPages - 1) break
-                                                if (candidateDir < 0 && curZero <= 0) break
+                                                if (candidateDir > 0) {
+                                                    val isAtEnd = if (isSpread) ((curZero / 2) * 2 >= (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)) else (curZero >= metrics.totalBookPages - 1)
+                                                    if (isAtEnd) break
+                                                } else {
+                                                    val isAtStart = if (isSpread) ((curZero / 2) * 2 <= 0) else (curZero <= 0)
+                                                    if (isAtStart) break
+                                                }
                                                 dragLocked = true
                                                 flipTurnDir = candidateDir
                                                 lockedCurrBmp = curBitmap
@@ -902,7 +929,13 @@ fun ReaderScreen(
                                             scope.launch {
                                                 isTurnCommitting = true
                                                 isFlippingInProgress = true
-                                                val targetPage = (displayPageIndex + dir * step).coerceIn(0, metrics.totalBookPages - 1)
+                                                val targetPage = if (isSpread) {
+                                                    val spreadStart = (displayPageIndex / 2) * 2
+                                                    val maxSpread = (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
+                                                    if (dir > 0) (spreadStart + 2).coerceAtMost(maxSpread) else (spreadStart - 2).coerceAtLeast(0)
+                                                } else {
+                                                    (displayPageIndex + dir).coerceIn(0, metrics.totalBookPages - 1)
+                                                }
                                                 val nextB = lockedNextBmp ?: nextBitmap
                                                 val prevB = lockedPrevBmp ?: prevBitmap
                                                 val currB = lockedCurrBmp ?: curBitmap

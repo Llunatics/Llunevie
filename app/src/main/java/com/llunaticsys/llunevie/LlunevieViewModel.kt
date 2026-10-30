@@ -937,8 +937,14 @@ class LlunevieViewModel(
         val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
         val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
         val currentZero = metrics.currentGlobalPage - 1
-        val stepSize = if (isSpread) 2 else 1
-        val targetZero = currentZero + deltaSteps * stepSize
+        val spreadStart = if (isSpread) (currentZero / 2) * 2 else currentZero
+        val maxSpread = if (isSpread) (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0) else (metrics.totalBookPages - 1).coerceAtLeast(0)
+        val targetZero = if (isSpread) {
+            if (deltaSteps > 0) (spreadStart + 2 * deltaSteps).coerceAtMost(maxSpread)
+            else (spreadStart + 2 * deltaSteps).coerceAtLeast(0)
+        } else {
+            currentZero + deltaSteps
+        }
 
         if (targetZero < 0) {
             if (currentZero > 0) {

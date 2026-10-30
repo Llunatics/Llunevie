@@ -694,15 +694,18 @@ fun CylindricalFlipbookCanvas(
         ColorFilter.colorMatrix(cm)
     }
 
-    // Sync from parent props only when idle
-    LaunchedEffect(currentPageBitmap, nextPageBitmap, prevPageBitmap) {
-        if (isWaitingForParentPageSync && currentPageBitmap == displayedCurrentBmp) {
-            isWaitingForParentPageSync = false
-        }
-        if (!isDragging && progressAnim.value == 0f && (manualProgress == null || manualProgress == 0f) && !isWaitingForParentPageSync) {
+    // Sync from parent props: update nextPageBitmap and prevPageBitmap immediately so next spread is never stuck!
+    LaunchedEffect(nextPageBitmap) {
+        if (nextPageBitmap != null) displayedNextBmp = nextPageBitmap
+    }
+    LaunchedEffect(prevPageBitmap) {
+        if (prevPageBitmap != null) displayedPrevBmp = prevPageBitmap
+    }
+    LaunchedEffect(currentPageBitmap) {
+        // Only update displayedCurrentBmp when idle and when currentPageBitmap is NOT the old previous page:
+        if (currentPageBitmap != null && progressAnim.value == 0f && currentPageBitmap !== displayedPrevBmp) {
             displayedCurrentBmp = currentPageBitmap
-            displayedNextBmp = nextPageBitmap
-            displayedPrevBmp = prevPageBitmap
+            isWaitingForParentPageSync = false
         }
     }
 
