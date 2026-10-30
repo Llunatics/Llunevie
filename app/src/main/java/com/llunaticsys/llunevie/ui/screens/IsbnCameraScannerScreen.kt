@@ -80,6 +80,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -298,184 +299,7 @@ fun IsbnCameraScannerScreen(
             )
         }
 
-        // 2. Top Camera Overlay Chrome (statusBarsPadding(), Minimalist Underline Tab Selector & Semi-Transparent Buttons)
-        val density = LocalDensity.current
-        val isBatchMode = uiState.cameraMode == "batch"
-        val isbnInteractionSource = remember { MutableInteractionSource() }
-        val batchInteractionSource = remember { MutableInteractionSource() }
-        val isIsbnPressed by isbnInteractionSource.collectIsPressedAsState()
-        val isBatchPressed by batchInteractionSource.collectIsPressedAsState()
-
-        var tab0CenterX by remember { mutableFloatStateOf(0f) }
-        var tab1CenterX by remember { mutableFloatStateOf(0f) }
-        var rowWidthPx by remember { mutableFloatStateOf(0f) }
-
-        val indicatorWidth = 28.dp
-        val indicatorWidthPx = with(density) { indicatorWidth.toPx() }
-        val targetCenterX = if (isBatchMode) tab1CenterX else tab0CenterX
-        val targetOffsetDp = with(density) {
-            if (targetCenterX > 0f) {
-                (targetCenterX - indicatorWidthPx / 2f).coerceAtLeast(0f).toDp()
-            } else {
-                0.dp
-            }
-        }
-        val animatedIndicatorOffset by animateDpAsState(
-            targetValue = targetOffsetDp,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioLowBouncy,
-                stiffness = Spring.StiffnessMediumLow
-            ),
-            label = "tabIndicatorOffset"
-        )
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .align(Alignment.TopCenter)
-        ) {
-            Surface(
-                onClick = onClose,
-                shape = CircleShape,
-                color = Color.Black.copy(alpha = 0.34f),
-                border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.18f)),
-                modifier = Modifier
-                    .size(40.dp)
-                    .align(Alignment.CenterStart)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    PrototypeSvgIcon(
-                        type = PrototypeIconType.CLOSE_X,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
-                        strokeWidthDp = 1.8f
-                    )
-                }
-            }
-
-            // Minimalist borderless transparent text tab bar with animated underline indicator (strictly centered)
-            Column(
-                modifier = Modifier
-                    .wrapContentWidth()
-                    .align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row(
-                    modifier = Modifier
-                        .onGloballyPositioned { coords ->
-                            rowWidthPx = coords.size.width.toFloat()
-                        }
-                        .background(Color.Transparent),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val selected0 = !isBatchMode
-                    Box(
-                        modifier = Modifier
-                            .onGloballyPositioned { coords ->
-                                tab0CenterX = coords.positionInParent().x + coords.size.width / 2f
-                            }
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (isIsbnPressed) Color.White.copy(alpha = 0.16f)
-                                else Color.Transparent
-                            )
-                            .clickable(
-                                interactionSource = isbnInteractionSource,
-                                indication = null
-                            ) {
-                                onSetCameraMode("isbn")
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = strings.tabIsbn,
-                            fontSize = 13.sp,
-                            fontWeight = if (selected0) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected0) Color.White else Color.White.copy(alpha = 0.62f),
-                            maxLines = 1,
-                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                        )
-                    }
-
-                    val selected1 = isBatchMode
-                    Box(
-                        modifier = Modifier
-                            .onGloballyPositioned { coords ->
-                                tab1CenterX = coords.positionInParent().x + coords.size.width / 2f
-                            }
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (isBatchPressed) Color.White.copy(alpha = 0.16f)
-                                else Color.Transparent
-                            )
-                            .clickable(
-                                interactionSource = batchInteractionSource,
-                                indication = null
-                            ) {
-                                onSetCameraMode("batch")
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = strings.tabBatch,
-                            fontSize = 13.sp,
-                            fontWeight = if (selected1) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected1) Color.White else Color.White.copy(alpha = 0.62f),
-                            maxLines = 1,
-                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(5.dp))
-
-                Box(
-                    modifier = Modifier
-                        .width(with(density) { rowWidthPx.toDp() })
-                        .height(2.dp)
-                ) {
-                    if (targetCenterX > 0f) {
-                        Box(
-                            modifier = Modifier
-                                .offset(x = animatedIndicatorOffset)
-                                .width(indicatorWidth)
-                                .height(2.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                        )
-                    }
-                }
-            }
-
-            Surface(
-                onClick = onToggleTorch,
-                shape = CircleShape,
-                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B).copy(alpha = 0.40f) else Color.Black.copy(alpha = 0.34f),
-                border = BorderStroke(
-                    0.75.dp,
-                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D).copy(alpha = 0.60f) else Color.White.copy(alpha = 0.18f)
-                ),
-                modifier = Modifier
-                    .size(40.dp)
-                    .align(Alignment.CenterEnd)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    PrototypeSvgIcon(
-                        type = PrototypeIconType.TORCH_BOLT,
-                        tint = Color.White,
-                        modifier = Modifier.size(17.dp),
-                        strokeWidthDp = 1.8f
-                    )
-                }
-            }
-        }
-
-        // 3. Single Unified Viewfinder Canvas: Cutout Hole, 4 Corner Brackets & Cyan Scan Laser from exact same scanRect
+        // 2. Single Unified Viewfinder Canvas: Cutout Hole, 4 Corner Brackets & Cyan Scan Laser from exact same scanRect
         Canvas(modifier = Modifier.fillMaxSize()) {
             val boxW = 248.dp.toPx()
             val boxH = 180.dp.toPx()
@@ -572,6 +396,185 @@ fun IsbnCameraScannerScreen(
                 .offset(y = helperTextTop)
                 .padding(horizontal = 24.dp)
         )
+
+        // 3. Top Camera Overlay Chrome (statusBarsPadding(), Minimalist Underline Tab Selector & Semi-Transparent Buttons)
+        // Explicitly placed AFTER Canvas and with zIndex(10f) so vignette never covers or dims the top bar
+        val density = LocalDensity.current
+        val isBatchMode = uiState.cameraMode == "batch"
+        val isbnInteractionSource = remember { MutableInteractionSource() }
+        val batchInteractionSource = remember { MutableInteractionSource() }
+        val isIsbnPressed by isbnInteractionSource.collectIsPressedAsState()
+        val isBatchPressed by batchInteractionSource.collectIsPressedAsState()
+
+        var tab0CenterX by remember { mutableFloatStateOf(0f) }
+        var tab1CenterX by remember { mutableFloatStateOf(0f) }
+        var rowWidthPx by remember { mutableFloatStateOf(0f) }
+
+        val indicatorWidth = 28.dp
+        val indicatorWidthPx = with(density) { indicatorWidth.toPx() }
+        val targetCenterX = if (isBatchMode) tab1CenterX else tab0CenterX
+        val targetOffsetDp = with(density) {
+            if (targetCenterX > 0f) {
+                (targetCenterX - indicatorWidthPx / 2f).coerceAtLeast(0f).toDp()
+            } else {
+                0.dp
+            }
+        }
+        val animatedIndicatorOffset by animateDpAsState(
+            targetValue = targetOffsetDp,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "tabIndicatorOffset"
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .zIndex(10f)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .align(Alignment.TopCenter)
+        ) {
+            Surface(
+                onClick = onClose,
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.35f),
+                border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.22f)),
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterStart)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    PrototypeSvgIcon(
+                        type = PrototypeIconType.CLOSE_X,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp),
+                        strokeWidthDp = 1.8f
+                    )
+                }
+            }
+
+            // Minimalist borderless transparent text tab bar with animated underline indicator (strictly centered)
+            Column(
+                modifier = Modifier
+                    .wrapContentWidth()
+                    .align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            rowWidthPx = coords.size.width.toFloat()
+                        }
+                        .background(Color.Transparent),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val selected0 = !isBatchMode
+                    Box(
+                        modifier = Modifier
+                            .onGloballyPositioned { coords ->
+                                tab0CenterX = coords.positionInParent().x + coords.size.width / 2f
+                            }
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isIsbnPressed) Color.White.copy(alpha = 0.16f)
+                                else Color.Transparent
+                            )
+                            .clickable(
+                                interactionSource = isbnInteractionSource,
+                                indication = null
+                            ) {
+                                onSetCameraMode("isbn")
+                            }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = strings.tabIsbn,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected0) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected0) Color.White else Color.White.copy(alpha = 0.68f),
+                            maxLines = 1,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                        )
+                    }
+
+                    val selected1 = isBatchMode
+                    Box(
+                        modifier = Modifier
+                            .onGloballyPositioned { coords ->
+                                tab1CenterX = coords.positionInParent().x + coords.size.width / 2f
+                            }
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isBatchPressed) Color.White.copy(alpha = 0.16f)
+                                else Color.Transparent
+                            )
+                            .clickable(
+                                interactionSource = batchInteractionSource,
+                                indication = null
+                            ) {
+                                onSetCameraMode("batch")
+                            }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = strings.tabBatch,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected1) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected1) Color.White else Color.White.copy(alpha = 0.68f),
+                            maxLines = 1,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(5.dp))
+
+                Box(
+                    modifier = Modifier
+                        .width(with(density) { rowWidthPx.toDp() })
+                        .height(2.dp)
+                ) {
+                    if (targetCenterX > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = animatedIndicatorOffset)
+                                .width(indicatorWidth)
+                                .height(2.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                        )
+                    }
+                }
+            }
+
+            Surface(
+                onClick = onToggleTorch,
+                shape = CircleShape,
+                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B).copy(alpha = 0.40f) else Color.Black.copy(alpha = 0.35f),
+                border = BorderStroke(
+                    0.75.dp,
+                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D).copy(alpha = 0.60f) else Color.White.copy(alpha = 0.22f)
+                ),
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterEnd)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    PrototypeSvgIcon(
+                        type = PrototypeIconType.TORCH_BOLT,
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp),
+                        strokeWidthDp = 1.8f
+                    )
+                }
+            }
+        }
 
         // 4. Floating Rounded Bottom Console Card (Unclipped, navigationBarsPadding().imePadding())
         val batchScannedBooks = uiState.batchScanQueue
