@@ -1146,98 +1146,108 @@ fun CylindricalFlipbookCanvas(
                     val dyFold = pageRect.height.coerceAtLeast(1f)
                     val thetaRad = kotlin.math.atan2(dxFold, dyFold)
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
-                    val diagLen = kotlin.math.hypot(dxFold, dyFold) + pageRect.width
 
-                    val rLen = kotlin.math.hypot(rBot.x - rTop.x, rBot.y - rTop.y).coerceAtLeast(1f)
-                    val rAngleDeg = Math.toDegrees(kotlin.math.atan2(rBot.x - rTop.x, rBot.y - rTop.y).toDouble()).toFloat()
-
-                    // Region A: Unpeeled page (left of crease)
-                    val curPath = Path().apply {
-                        moveTo(pageRect.left, pageRect.top)
-                        lineTo(foldTopX, pageRect.top)
-                        lineTo(foldBotX, pageRect.bottom)
-                        lineTo(pageRect.left, pageRect.bottom)
-                        close()
-                    }
-                    clipPath(curPath) {
-                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
-                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
-
-                        // Soft natural cast shadow to the left of the peeled leading edge R_top -> R_bot
-                        // Rotated by the exact angle of R_top -> R_bot (rAngleDeg) and strictly clipped to curPath!
-                        withTransform({
-                            translate(left = rTop.x, top = rTop.y)
-                            rotate(degrees = rAngleDeg, pivot = Offset.Zero)
-                        }) {
-                            val castW = 12.dp.toPx() * bell
-                            if (castW > 0.5f) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.08f * bell)),
-                                        startX = -castW,
-                                        endX = 0f
-                                    ),
-                                    topLeft = Offset(-castW, -50f),
-                                    size = Size(castW, rLen + 100f)
-                                )
-                            }
-                        }
-                    }
-
-                    // Region B: Uncovered next page (right of crease) — no dark crease shadow smudge
-                    val destPath = Path().apply {
+                    // 1. Right of crease line (nextPoly): uncovered next page
+                    val nextPoly = Path().apply {
                         moveTo(foldTopX, pageRect.top)
                         lineTo(pageRect.right, pageRect.top)
                         lineTo(pageRect.right, pageRect.bottom)
                         lineTo(foldBotX, pageRect.bottom)
                         close()
                     }
-                    clipPath(destPath) {
+                    clipPath(nextPoly) {
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
                             drawPageBitmapFitted(destBitmap, isPdfBook, false)
                         }
                     }
 
-                    // Region C: Congruent reflected paper flap
-                    val flapPath = Path().apply {
+                    // 2. Left of crease line (currPoly): unpeeled current page + shadow + folded paper flap (backPoly)
+                    val currPoly = Path().apply {
+                        moveTo(pageRect.left, pageRect.top)
+                        lineTo(foldTopX, pageRect.top)
+                        lineTo(foldBotX, pageRect.bottom)
+                        lineTo(pageRect.left, pageRect.bottom)
+                        close()
+                    }
+                    val backPoly = Path().apply {
                         moveTo(fTop.x, fTop.y)
                         lineTo(rTop.x, rTop.y)
                         lineTo(rBot.x, rBot.y)
                         lineTo(fBot.x, fBot.y)
                         close()
                     }
-                    clipPath(flapPath) {
-                        // 1. Fill 100% solid opaque back paper color to prevent bleedthrough
-                        drawPath(flapPath, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
 
-                        // 2. Exact single rotate(-2f * thetaDeg) + scale(-1f, 1f) transform around fTop
-                        drawIntoCanvas { canvas ->
-                            val nc = canvas.nativeCanvas
-                            nc.save()
-                            nc.translate(fTop.x, fTop.y)
-                            nc.rotate(-2f * thetaDeg)
-                            nc.scale(-1f, 1f)
-                            nc.translate(-fTop.x, -fTop.y)
+                    clipPath(currPoly) {
+                        // Draw flat underlying current page up to crease line F_top -> F_bot
+                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
 
-                            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
-                                alpha = (0.09f * 255).roundToInt()
+                        // Drop shadow strictly along outer edge R_top -> R_bot of backPoly onto currPoly
+                        val rdx = rBot.x - rTop.x
+                        val rdy = rBot.y - rTop.y
+                        val rLen = kotlin.math.hypot(rdx, rdy).coerceAtLeast(1f)
+                        val ux = rdx / rLen
+                        val uy = rdy / rLen
+                        // Normal pointing to the left (into currPoly)
+                        val nx = -uy
+                        val ny = ux
+                        val shadowW = 10.dp.toPx() * bell
+                        if (shadowW > 0.5f) {
+                            val ext = 60f
+                            val pA = Offset(rTop.x - ux * ext, rTop.y - uy * ext)
+                            val pB = Offset(rBot.x + ux * ext, rBot.y + uy * ext)
+                            val pC = Offset(pB.x + nx * shadowW, pB.y + ny * shadowW)
+                            val pD = Offset(pA.x + nx * shadowW, pA.y + ny * shadowW)
+                            val shadowPath = Path().apply {
+                                moveTo(pA.x, pA.y)
+                                lineTo(pB.x, pB.y)
+                                lineTo(pC.x, pC.y)
+                                lineTo(pD.x, pD.y)
+                                close()
                             }
-                            val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
-                            nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
-                            nc.restore()
+                            val midEdge = Offset((rTop.x + rBot.x) * 0.5f, (rTop.y + rBot.y) * 0.5f)
+                            val midOuter = Offset(midEdge.x + nx * shadowW, midEdge.y + ny * shadowW)
+                            drawPath(
+                                path = shadowPath,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.12f * bell)),
+                                    start = midOuter,
+                                    end = midEdge
+                                )
+                            )
                         }
+
+                        // Draw folded paper flap (backPoly) clipped to currPoly (intersection)
+                        clipPath(backPoly) {
+                            drawPath(backPoly, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
+                            drawIntoCanvas { canvas ->
+                                val nc = canvas.nativeCanvas
+                                nc.save()
+                                nc.translate(fTop.x, fTop.y)
+                                nc.rotate(-2f * thetaDeg)
+                                nc.scale(-1f, 1f)
+                                nc.translate(-fTop.x, -fTop.y)
+
+                                val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                                    alpha = (0.09f * 255).roundToInt()
+                                }
+                                val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                                nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
+                                nc.restore()
+                            }
+                        }
+
+                        // Hairline along outer edge R_top -> R_bot
+                        drawLine(
+                            color = Color.Black.copy(alpha = 0.07f),
+                            start = rTop,
+                            end = rBot,
+                            strokeWidth = 0.75.dp.toPx()
+                        )
                     }
 
-                    // Crisp paper edge line along rTop -> rBot (0.75.dp hairline)
-                    drawLine(
-                        color = Color.Black.copy(alpha = 0.07f),
-                        start = rTop,
-                        end = rBot,
-                        strokeWidth = 0.75.dp.toPx()
-                    )
-
-                    // Crisp crease line along fTop -> fBot (0.75.dp hairline)
+                    // Crease line along F_top -> F_bot
                     drawLine(
                         color = Color.Black.copy(alpha = 0.07f),
                         start = fTop,
@@ -1259,98 +1269,108 @@ fun CylindricalFlipbookCanvas(
                     val dyFold = pageRect.height.coerceAtLeast(1f)
                     val thetaRad = kotlin.math.atan2(dxFold, dyFold)
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
-                    val diagLen = kotlin.math.hypot(dxFold, dyFold) + pageRect.width
 
-                    val rLen = kotlin.math.hypot(rBot.x - rTop.x, rBot.y - rTop.y).coerceAtLeast(1f)
-                    val rAngleDeg = Math.toDegrees(kotlin.math.atan2(rBot.x - rTop.x, rBot.y - rTop.y).toDouble()).toFloat()
-
-                    // Region B: Uncovered prev page (left of crease) — no dark crease shadow smudge
-                    val destPath = Path().apply {
+                    // 1. Left of crease line (prevPoly): uncovered prev page
+                    val prevPoly = Path().apply {
                         moveTo(pageRect.left, pageRect.top)
                         lineTo(foldTopX, pageRect.top)
                         lineTo(foldBotX, pageRect.bottom)
                         lineTo(pageRect.left, pageRect.bottom)
                         close()
                     }
-                    clipPath(destPath) {
+                    clipPath(prevPoly) {
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
                             drawPageBitmapFitted(destBitmap, isPdfBook, false)
                         }
                     }
 
-                    // Region A: Unpeeled page (right of crease)
-                    val curPath = Path().apply {
+                    // 2. Right of crease line (currPoly): unpeeled current page + shadow + folded paper flap (backPoly)
+                    val currPoly = Path().apply {
                         moveTo(foldTopX, pageRect.top)
                         lineTo(pageRect.right, pageRect.top)
                         lineTo(pageRect.right, pageRect.bottom)
                         lineTo(foldBotX, pageRect.bottom)
                         close()
                     }
-                    clipPath(curPath) {
-                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
-                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
-
-                        // Soft natural cast shadow to the right of the peeled leading edge R_top -> R_bot
-                        // Rotated by the exact angle of R_top -> R_bot (rAngleDeg) and strictly clipped to curPath!
-                        withTransform({
-                            translate(left = rTop.x, top = rTop.y)
-                            rotate(degrees = rAngleDeg, pivot = Offset.Zero)
-                        }) {
-                            val castW = 12.dp.toPx() * bell
-                            if (castW > 0.5f) {
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Black.copy(alpha = 0.08f * bell), Color.Transparent),
-                                        startX = 0f,
-                                        endX = castW
-                                    ),
-                                    topLeft = Offset(0f, -50f),
-                                    size = Size(castW, rLen + 100f)
-                                )
-                            }
-                        }
-                    }
-
-                    // Region C: Congruent reflected paper flap
-                    val flapPath = Path().apply {
+                    val backPoly = Path().apply {
                         moveTo(fTop.x, fTop.y)
                         lineTo(rTop.x, rTop.y)
                         lineTo(rBot.x, rBot.y)
                         lineTo(fBot.x, fBot.y)
                         close()
                     }
-                    clipPath(flapPath) {
-                        // 1. Fill 100% solid opaque back paper color to prevent bleedthrough
-                        drawPath(flapPath, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
 
-                        // 2. Exact single rotate(-2f * thetaDeg) + scale(-1f, 1f) transform around fTop
-                        drawIntoCanvas { canvas ->
-                            val nc = canvas.nativeCanvas
-                            nc.save()
-                            nc.translate(fTop.x, fTop.y)
-                            nc.rotate(-2f * thetaDeg)
-                            nc.scale(-1f, 1f)
-                            nc.translate(-fTop.x, -fTop.y)
+                    clipPath(currPoly) {
+                        // Draw flat underlying current page up to crease line F_top -> F_bot
+                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
 
-                            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
-                                alpha = (0.09f * 255).roundToInt()
+                        // Drop shadow strictly along outer edge R_top -> R_bot of backPoly onto currPoly
+                        val rdx = rBot.x - rTop.x
+                        val rdy = rBot.y - rTop.y
+                        val rLen = kotlin.math.hypot(rdx, rdy).coerceAtLeast(1f)
+                        val ux = rdx / rLen
+                        val uy = rdy / rLen
+                        // Normal pointing to the right (into currPoly)
+                        val nx = uy
+                        val ny = -ux
+                        val shadowW = 10.dp.toPx() * bell
+                        if (shadowW > 0.5f) {
+                            val ext = 60f
+                            val pA = Offset(rTop.x - ux * ext, rTop.y - uy * ext)
+                            val pB = Offset(rBot.x + ux * ext, rBot.y + uy * ext)
+                            val pC = Offset(pB.x + nx * shadowW, pB.y + ny * shadowW)
+                            val pD = Offset(pA.x + nx * shadowW, pA.y + ny * shadowW)
+                            val shadowPath = Path().apply {
+                                moveTo(pA.x, pA.y)
+                                lineTo(pB.x, pB.y)
+                                lineTo(pC.x, pC.y)
+                                lineTo(pD.x, pD.y)
+                                close()
                             }
-                            val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
-                            nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
-                            nc.restore()
+                            val midEdge = Offset((rTop.x + rBot.x) * 0.5f, (rTop.y + rBot.y) * 0.5f)
+                            val midOuter = Offset(midEdge.x + nx * shadowW, midEdge.y + ny * shadowW)
+                            drawPath(
+                                path = shadowPath,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.12f * bell)),
+                                    start = midOuter,
+                                    end = midEdge
+                                )
+                            )
                         }
+
+                        // Draw folded paper flap (backPoly) clipped to currPoly (intersection)
+                        clipPath(backPoly) {
+                            drawPath(backPoly, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
+                            drawIntoCanvas { canvas ->
+                                val nc = canvas.nativeCanvas
+                                nc.save()
+                                nc.translate(fTop.x, fTop.y)
+                                nc.rotate(-2f * thetaDeg)
+                                nc.scale(-1f, 1f)
+                                nc.translate(-fTop.x, -fTop.y)
+
+                                val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                                    alpha = (0.09f * 255).roundToInt()
+                                }
+                                val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                                nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
+                                nc.restore()
+                            }
+                        }
+
+                        // Hairline along outer edge R_top -> R_bot
+                        drawLine(
+                            color = Color.Black.copy(alpha = 0.07f),
+                            start = rTop,
+                            end = rBot,
+                            strokeWidth = 0.75.dp.toPx()
+                        )
                     }
 
-                    // Crisp paper edge line along rTop -> rBot
-                    drawLine(
-                        color = Color.Black.copy(alpha = 0.07f),
-                        start = rTop,
-                        end = rBot,
-                        strokeWidth = 0.75.dp.toPx()
-                    )
-
-                    // Crisp crease line along fTop -> fBot
+                    // Crease line along F_top -> F_bot
                     drawLine(
                         color = Color.Black.copy(alpha = 0.07f),
                         start = fTop,
