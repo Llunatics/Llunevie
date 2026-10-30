@@ -47,8 +47,10 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.os.Build
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
@@ -162,15 +164,30 @@ fun LibraryScreen(
 
     val hasActiveFilterDot = prefs.libFilter != "all" || prefs.libStatus != "all" || prefs.libSort != LibrarySortOption.RECENT || (prefs.libShelf != "all" && prefs.libShelf.isNotBlank())
 
+    val isAnyModalOpenInLibrary = uiState.showLibFilterSheet ||
+        uiState.editingBook != null ||
+        uiState.showDeleteConfirmDialog
+
+    val backgroundBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOpenInLibrary) {
+        Modifier.blur(10.dp)
+    } else {
+        Modifier
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(top = 16.dp, bottom = 108.dp)
+                .then(backgroundBlurModifier)
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 16.dp, bottom = 108.dp)
+            ) {
             // 1. Header + 4 View Modes Switcher (`#viewLibrary` in `llunevie_prototype.html`)
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -953,6 +970,7 @@ fun LibraryScreen(
                 }
             }
         }
+        }
 
         // 4. 1:1 LIBRARY FILTER & SHELVES BOTTOM SHEET (`#libDropdownMenu` in `llunevie_prototype.html`)
         if (uiState.showLibFilterSheet) {
@@ -1441,12 +1459,9 @@ fun LibraryScreen(
         var category by remember(editing) { mutableStateOf(editing.category) }
         var year by remember(editing) { mutableStateOf(editing.year) }
         var pagesStr by remember(editing) { mutableStateOf(editing.pagesCount.toString()) }
-        var progressStr by remember(editing) { mutableStateOf(editing.progress.toString()) }
-        var timeMinsStr by remember(editing) { mutableStateOf(editing.timeMinutes.toString()) }
         var isbnStr by remember(editing) { mutableStateOf(editing.isbn) }
         var coverUrlStr by remember(editing) { mutableStateOf(editing.coverImagePath.orEmpty()) }
         var synopsis by remember(editing) { mutableStateOf(editing.synopsis) }
-        var format by remember(editing) { mutableStateOf(editing.format) }
 
         val parsedDim = remember(editing) {
             val raw = editing.dimensionsText
@@ -1538,7 +1553,7 @@ fun LibraryScreen(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = strings.shelfLabel,
@@ -1573,30 +1588,9 @@ fun LibraryScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "FORMAT",
-                                color = palette.textMuted,
-                                fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                            CustomThemeDropdown(
-                                title = "FORMAT",
-                                selectedValue = format,
-                                options = listOf(
-                                    "PHYSICAL" to (if (strings.isId) "Buku Fisik" else "Physical Book"),
-                                    "EPUB" to (if (strings.isId) "eBook Digital" else "Digital eBook"),
-                                    "PDF" to "PDF"
-                                ),
-                                onValueSelected = { format = it },
-                                cornerRadius = 16.dp,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         PrototypeFormInput(
                             label = if (strings.isId) "TAHUN" else "YEAR",
                             value = year,
@@ -1607,18 +1601,6 @@ fun LibraryScreen(
                             label = if (strings.isId) "HALAMAN" else "PAGES",
                             value = pagesStr,
                             onValueChange = { pagesStr = it },
-                            modifier = Modifier.weight(1f)
-                        )
-                        PrototypeFormInput(
-                            label = if (strings.isId) "PROGRES (%)" else "PROGRESS (%)",
-                            value = progressStr,
-                            onValueChange = { progressStr = it },
-                            modifier = Modifier.weight(1f)
-                        )
-                        PrototypeFormInput(
-                            label = if (strings.isId) "MENIT BACA" else "READ MINS",
-                            value = timeMinsStr,
-                            onValueChange = { timeMinsStr = it },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -1700,7 +1682,6 @@ fun LibraryScreen(
                         }
                         Surface(
                             onClick = {
-                                val nextMins = timeMinsStr.toIntOrNull()?.coerceAtLeast(0) ?: editing.timeMinutes
                                 val parsedHeight = lengthCm.replace(',', '.').toFloatOrNull() ?: editing.heightCm
                                 val parsedWidth = widthCm.replace(',', '.').toFloatOrNull() ?: editing.widthCm
                                 val parsedWeight = weightKg.replace(',', '.').toFloatOrNull()?.let { it * 1000f } ?: editing.weightGrams
@@ -1720,12 +1701,12 @@ fun LibraryScreen(
                                         edition = publisher,
                                         shelf = shelf,
                                         category = category,
-                                        format = format,
+                                        format = editing.format,
                                         year = year.ifBlank { editing.year },
                                         pagesCount = pagesStr.toIntOrNull()?.coerceAtLeast(1) ?: editing.pagesCount,
-                                        progress = progressStr.toIntOrNull()?.coerceIn(0, 100) ?: editing.progress,
-                                        timeMinutes = nextMins,
-                                        readingSeconds = nextMins * 60,
+                                        progress = editing.progress,
+                                        timeMinutes = editing.timeMinutes,
+                                        readingSeconds = editing.readingSeconds,
                                         isbn = isbnStr.ifBlank { "—" },
                                         coverImagePath = coverUrlStr.ifBlank { editing.coverImagePath },
                                         synopsis = synopsis,

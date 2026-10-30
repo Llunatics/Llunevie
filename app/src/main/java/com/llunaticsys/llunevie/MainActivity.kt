@@ -247,9 +247,6 @@ private fun LlunevieMainContainer(
     val palette = LocalLluneviePalette.current
     val isAnyModalOrSheetOpen = uiState.showAddBookSheet ||
         uiState.showFullCameraScanner ||
-        uiState.showLibFilterSheet ||
-        uiState.editingBook != null ||
-        uiState.showDeleteConfirmDialog ||
         uiState.pendingCandidateForShelf != null ||
         uiState.selectedCatalogBookDetail != null
 
@@ -444,7 +441,7 @@ private fun LlunevieMainContainer(
             )
         }
 
-        if (isAnyModalOrSheetOpen && (uiState.showAddBookSheet || uiState.showLibFilterSheet || uiState.editingBook != null || uiState.selectedCatalogBookDetail != null || uiState.pendingCandidateForShelf != null)) {
+        if (isAnyModalOrSheetOpen && (uiState.showAddBookSheet || uiState.selectedCatalogBookDetail != null || uiState.pendingCandidateForShelf != null)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
