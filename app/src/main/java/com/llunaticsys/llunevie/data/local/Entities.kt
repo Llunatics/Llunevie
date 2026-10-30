@@ -38,7 +38,8 @@ data class BookEntity(
     val lengthCm: Float = 20f,
     val weightGrams: Float = 300f,
     val createdAtMillis: Long = System.currentTimeMillis(),
-    val tocIndexed: Boolean = false
+    val tocIndexed: Boolean = false,
+    val tocIndexVersion: Int = 0
 ) {
     val readingProgress: Float
         get() = (progress / 100f).coerceIn(0f, 1f)

@@ -714,9 +714,9 @@ class LlunevieViewModel(
                         }
                     }
 
-                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false).
-                    // On all subsequent opens (tocIndexed == true), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
-                    if (!book.tocIndexed && _pdfIndexingState.value[bookId] == null) {
+                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false, or if tocIndexVersion < 2 to upgrade illustration detection).
+                    // On all subsequent opens (tocIndexed == true && tocIndexVersion >= 2), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
+                    if ((!book.tocIndexed || book.tocIndexVersion < 2) && _pdfIndexingState.value[bookId] == null) {
                         indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                     }
                 }
@@ -762,6 +762,7 @@ class LlunevieViewModel(
                     }
                 }.getOrDefault(book.pagesCount)
 
+                val existingChapters = dao.getChaptersForBook(book.id)
                 val isEn = preferences.value.lang == "en"
                 _pdfIndexingState.update { it + (book.id to 5) }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 5)) }
@@ -773,6 +774,7 @@ class LlunevieViewModel(
                     totalPages = actualPageCount,
                     defaultTitle = book.title,
                     isEn = isEn,
+                    existingChapters = if (book.tocIndexed && existingChapters.isNotEmpty()) existingChapters else null,
                     onProgress = { pct ->
                         _pdfIndexingState.update { it + (book.id to pct) }
                         _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
@@ -781,7 +783,8 @@ class LlunevieViewModel(
                     val currentBook = dao.getBookById(book.id) ?: book
                     val updatedBook = currentBook.copy(
                         pagesCount = actualPageCount,
-                        tocIndexed = true
+                        tocIndexed = true,
+                        tocIndexVersion = 2
                     )
                     dao.saveBookWithChapters(updatedBook, updatedChapters)
                     if (_uiState.value.activeBookId == book.id) {
@@ -797,7 +800,7 @@ class LlunevieViewModel(
                 android.util.Log.e("LlunevieViewModel", "PDF indexing error for ${book.id}", t)
                 runCatching {
                     val currentBook = dao.getBookById(book.id) ?: book
-                    dao.updateBook(currentBook.copy(tocIndexed = true))
+                    dao.updateBook(currentBook.copy(tocIndexed = true, tocIndexVersion = 2))
                 }
             } finally {
                 _pdfIndexingState.update { it - book.id }

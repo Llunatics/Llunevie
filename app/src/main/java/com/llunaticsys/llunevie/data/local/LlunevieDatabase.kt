@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DailyReadingLogEntity::class,
         ShelfEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class LlunevieDatabase : RoomDatabase() {
@@ -31,6 +31,12 @@ abstract class LlunevieDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN tocIndexVersion INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): LlunevieDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -38,7 +44,7 @@ abstract class LlunevieDatabase : RoomDatabase() {
                     LlunevieDatabase::class.java,
                     "llunevie_native_v02.db"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

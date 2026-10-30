@@ -18,6 +18,9 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.PDResources
+import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionGoTo
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination
@@ -229,69 +232,7 @@ object PdfNativeRenderer {
 
     fun isIllustrationOrArtworkPage(bitmap: Bitmap, pageIndex: Int): Boolean {
         if (pageIndex == 0) return true // Page 0 is always the front cover artwork
-        val w = bitmap.width
-        val h = bitmap.height
-        val step = 8
-        var totalSamples = 0
-        var whiteCount = 0
-        var colorCount = 0
-        var darkCount = 0
-        var midToneCount = 0
-        var maxDarkCluster = 0
-        var curDarkCluster = 0
-
-        for (y in 0 until h step step) {
-            curDarkCluster = 0
-            for (x in 0 until w step step) {
-                totalSamples++
-                val pixel = bitmap.getPixel(x, y)
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                val lum = (0.299f * r + 0.587f * g + 0.114f * b).toInt()
-
-                if (r > 242 && g > 242 && b > 242) {
-                    whiteCount++
-                    curDarkCluster = 0
-                } else {
-                    val maxC = maxOf(r, g, b)
-                    val minC = minOf(r, g, b)
-                    if ((maxC - minC) > 24 && maxC > 40) {
-                        colorCount++
-                    }
-                    if (lum < 115) {
-                        darkCount++
-                        curDarkCluster++
-                        if (curDarkCluster > maxDarkCluster) maxDarkCluster = curDarkCluster
-                    } else {
-                        curDarkCluster = 0
-                        if (lum in 115..220) {
-                            midToneCount++
-                        }
-                    }
-                }
-            }
-        }
-        if (totalSamples == 0) return false
-        val whiteRatio = whiteCount.toFloat() / totalSamples
-        val colorRatio = colorCount.toFloat() / totalSamples
-        val darkRatio = darkCount.toFloat() / totalSamples
-        val midToneRatio = midToneCount.toFloat() / totalSamples
-
-        // 1. Color insert / color illustration
-        if (colorRatio > 0.022f) return true
-
-        // 2. Full-bleed or dense illustration / manga spread / dark background
-        if (whiteRatio < 0.82f && (darkRatio > 0.05f || midToneRatio > 0.05f)) return true
-
-        // 3. Monochrome illustration or lineart character sketch with white paper background:
-        // A standard novel text page has tiny letters (maxDarkCluster <= 2) and almost zero midtones.
-        // Drawings have continuous hair/body contours (maxDarkCluster >= 4) or shaded areas/wash.
-        if (maxDarkCluster >= 4 && (darkRatio >= 0.032f || midToneRatio >= 0.035f)) return true
-        if (midToneRatio >= 0.048f) return true
-        if (darkRatio >= 0.085f) return true
-
-        return false
+        return isTrueIllustrationPageBitmap(bitmap)
     }
 
 
@@ -650,6 +591,192 @@ object PdfNativeRenderer {
         return deduplicateChapters(combined, totalPages, defaultTitle)
     }
 
+    data class EmbeddedImageSpec(
+        val key: String,
+        val width: Int,
+        val height: Int,
+        val isSubstantial: Boolean
+    )
+
+    private fun inspectPageEmbeddedImages(
+        resources: PDResources?,
+        pageArea: Float,
+        visited: MutableSet<PDResources> = mutableSetOf()
+    ): List<EmbeddedImageSpec> {
+        if (resources == null || !visited.add(resources)) return emptyList()
+        val result = mutableListOf<EmbeddedImageSpec>()
+        runCatching {
+            for (cosName in resources.xObjectNames) {
+                val xobj = runCatching { resources.getXObject(cosName) }.getOrNull() ?: continue
+                if (xobj is PDImageXObject) {
+                    val w = runCatching { xobj.width }.getOrDefault(0)
+                    val h = runCatching { xobj.height }.getOrDefault(0)
+                    val len = runCatching { xobj.cosObject?.length ?: 0 }.getOrDefault(0)
+                    val key = "${w}x${h}_$len"
+                    val areaRatio = if (pageArea > 0f) (w.toFloat() * h.toFloat()) / pageArea else 0f
+                    val isSubstantial = (w >= 150 && h >= 150) || areaRatio >= 0.15f
+                    result.add(EmbeddedImageSpec(key, w, h, isSubstantial))
+                } else if (xobj is PDFormXObject) {
+                    result.addAll(inspectPageEmbeddedImages(xobj.resources, pageArea, visited))
+                }
+            }
+        }
+        return result
+    }
+
+    private fun evaluateZoneForArtwork(
+        bmp: Bitmap,
+        zStart: Int,
+        zEnd: Int,
+        paperLum: Int,
+        w: Int,
+        h: Int
+    ): Boolean {
+        val zoneH = zEnd - zStart
+        if (zoneH < (h * 0.22f).toInt()) return false
+
+        val xMinBound = (w * 0.05f).toInt()
+        val xMaxBound = (w * 0.95f).toInt()
+        val zonePixelCount = zoneH * (xMaxBound - xMinBound).coerceAtLeast(1)
+
+        var minX = Int.MAX_VALUE
+        var maxX = -1
+        var minY = Int.MAX_VALUE
+        var maxY = -1
+        var nonPaperCount = 0
+
+        // 1. Count non-paper pixels and compute bounding box
+        for (y in zStart until zEnd) {
+            for (x in xMinBound until xMaxBound) {
+                val pix = bmp.getPixel(x, y)
+                val r = (pix shr 16) and 0xFF
+                val g = (pix shr 8) and 0xFF
+                val b = pix and 0xFF
+                val lum = (r * 299 + g * 587 + b * 114) / 1000
+                val diff = abs(lum - paperLum)
+                val maxC = maxOf(r, g, b)
+                val minC = minOf(r, g, b)
+                val sat = if (maxC > 0) (maxC - minC).toFloat() / maxC else 0f
+
+                if (diff >= 8 || sat >= 0.08f) {
+                    nonPaperCount++
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+
+        if (minX > maxX || minY > maxY) return false
+
+        val boxW = (maxX - minX + 1).toFloat() / w
+        val boxH = (maxY - minY + 1).toFloat() / h
+
+        // Must span height >= 22% of page and width >= 20% of page
+        if (boxH < 0.22f || boxW < 0.20f) return false
+
+        // Account for at least 6% of pixels inside the zone
+        val density = nonPaperCount.toFloat() / zonePixelCount
+        if (density < 0.06f) return false
+
+        // 2. Vertical 2D continuity: connected vertical strokes/shading spanning >= 15% of page height
+        val gridRows = 24
+        val gridCols = 20
+        val cellW = maxOf(1, (maxX - minX + 1) / gridCols)
+        val cellH = maxOf(1, (maxY - minY + 1) / gridRows)
+        val hasArtCell = Array(gridRows) { BooleanArray(gridCols) }
+
+        for (r in 0 until gridRows) {
+            val cyStart = minY + r * cellH
+            val cyEnd = minOf(cyStart + cellH, maxY + 1)
+            for (c in 0 until gridCols) {
+                val cxStart = minX + c * cellW
+                val cxEnd = minOf(cxStart + cellW, maxX + 1)
+                var cellNonPaper = 0
+                for (py in cyStart until cyEnd) {
+                    for (px in cxStart until cxEnd) {
+                        val pix = bmp.getPixel(px, py)
+                        val rC = (pix shr 16) and 0xFF
+                        val gC = (pix shr 8) and 0xFF
+                        val bC = pix and 0xFF
+                        val lum = (rC * 299 + gC * 587 + bC * 114) / 1000
+                        val diff = abs(lum - paperLum)
+                        val maxC = maxOf(rC, gC, bC)
+                        val minC = minOf(rC, gC, bC)
+                        val sat = if (maxC > 0) (maxC - minC).toFloat() / maxC else 0f
+                        if (diff >= 8 || sat >= 0.08f) {
+                            cellNonPaper++
+                            if (cellNonPaper >= 2) break
+                        }
+                    }
+                    if (cellNonPaper >= 2) break
+                }
+                if (cellNonPaper >= 2) {
+                    hasArtCell[r][c] = true
+                }
+            }
+        }
+
+        // BFS connected components on active cells
+        val visited = Array(gridRows) { BooleanArray(gridCols) }
+        val minContSpanPx = (h * 0.15f).toInt()
+
+        for (r in 0 until gridRows) {
+            for (c in 0 until gridCols) {
+                if (hasArtCell[r][c] && !visited[r][c]) {
+                    var minR = r
+                    var maxR = r
+                    val q = ArrayDeque<Pair<Int, Int>>()
+                    q.add(r to c)
+                    visited[r][c] = true
+
+                    while (q.isNotEmpty()) {
+                        val (cr, cc) = q.removeFirst()
+                        if (cr < minR) minR = cr
+                        if (cr > maxR) maxR = cr
+
+                        val neighbors = listOf(
+                            cr - 1 to cc, cr + 1 to cc, cr to cc - 1, cr to cc + 1,
+                            cr - 1 to cc - 1, cr - 1 to cc + 1, cr + 1 to cc - 1, cr + 1 to cc + 1
+                        )
+                        for ((nr, nc) in neighbors) {
+                            if (nr in 0 until gridRows && nc in 0 until gridCols && hasArtCell[nr][nc] && !visited[nr][nc]) {
+                                visited[nr][nc] = true
+                                q.add(nr to nc)
+                            }
+                        }
+                    }
+
+                    val compSpanPx = (maxR - minR + 1) * cellH
+                    if (compSpanPx >= minContSpanPx) {
+                        return true
+                    }
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun hasNonPaperContent(bmp: Bitmap): Boolean {
+        val w = bmp.width
+        val h = bmp.height
+        val pBot = bmp.getPixel(0, 0)
+        val paperLum = ((pBot shr 16 and 0xFF) * 299 + (pBot shr 8 and 0xFF) * 587 + (pBot and 0xFF) * 114) / 1000
+        var nonPaperCount = 0
+        var total = 0
+        for (y in (h * 0.10f).toInt() until (h * 0.85f).toInt() step 4) {
+            for (x in (w * 0.10f).toInt() until (w * 0.90f).toInt() step 4) {
+                total++
+                val pix = bmp.getPixel(x, y)
+                val lum = ((pix shr 16 and 0xFF) * 299 + (pix shr 8 and 0xFF) * 587 + (pix and 0xFF) * 114) / 1000
+                if (abs(lum - paperLum) >= 8) nonPaperCount++
+            }
+        }
+        return total > 0 && (nonPaperCount.toFloat() / total) >= 0.05f
+    }
+
     fun isTrueIllustrationPage(bmp: Bitmap): Boolean = isTrueIllustrationPageBitmap(bmp)
 
     fun isTrueIllustrationPageBitmap(bmp: Bitmap): Boolean {
@@ -657,220 +784,226 @@ object PdfNativeRenderer {
         val h = bmp.height
         if (w < 40 || h < 40) return false
 
-        // Compute page border background luminance
-        val borderLums = mutableListOf<Int>()
-        for (x in 0 until w step 4) {
-            val pTop = bmp.getPixel(x, 0)
-            val pBot = bmp.getPixel(x, h - 1)
-            borderLums.add((Color.red(pTop) * 299 + Color.green(pTop) * 587 + Color.blue(pTop) * 114) / 1000)
-            borderLums.add((Color.red(pBot) * 299 + Color.green(pBot) * 587 + Color.blue(pBot) * 114) / 1000)
+        // 1. Measure Paper Background Luminance (paperLum) via outer margin ring (4% margins)
+        val marginY = (h * 0.04f).toInt().coerceAtLeast(1)
+        val marginX = (w * 0.04f).toInt().coerceAtLeast(1)
+        val marginLums = IntArray((2 * marginY * w) + (2 * marginX * (h - 2 * marginY).coerceAtLeast(0)))
+        var mIdx = 0
+        for (y in 0 until marginY) {
+            for (x in 0 until w) {
+                val pix = bmp.getPixel(x, y)
+                marginLums[mIdx++] = ((pix shr 16 and 0xFF) * 299 + (pix shr 8 and 0xFF) * 587 + (pix and 0xFF) * 114) / 1000
+            }
         }
-        for (y in 0 until h step 4) {
-            val pLeft = bmp.getPixel(0, y)
-            val pRight = bmp.getPixel(w - 1, y)
-            borderLums.add((Color.red(pLeft) * 299 + Color.green(pLeft) * 587 + Color.blue(pLeft) * 114) / 1000)
-            borderLums.add((Color.red(pRight) * 299 + Color.green(pRight) * 587 + Color.blue(pRight) * 114) / 1000)
+        for (y in (h - marginY) until h) {
+            for (x in 0 until w) {
+                val pix = bmp.getPixel(x, y)
+                marginLums[mIdx++] = ((pix shr 16 and 0xFF) * 299 + (pix shr 8 and 0xFF) * 587 + (pix and 0xFF) * 114) / 1000
+            }
         }
-        borderLums.sort()
-        val paperLum = if (borderLums.isNotEmpty()) borderLums[(borderLums.size * 0.85).toInt().coerceIn(0, borderLums.size - 1)] else 245
+        for (y in marginY until (h - marginY)) {
+            for (x in 0 until marginX) {
+                val pix = bmp.getPixel(x, y)
+                marginLums[mIdx++] = ((pix shr 16 and 0xFF) * 299 + (pix shr 8 and 0xFF) * 587 + (pix and 0xFF) * 114) / 1000
+            }
+            for (x in (w - marginX) until w) {
+                val pix = bmp.getPixel(x, y)
+                marginLums[mIdx++] = ((pix shr 16 and 0xFF) * 299 + (pix shr 8 and 0xFF) * 587 + (pix and 0xFF) * 114) / 1000
+            }
+        }
+        marginLums.sort(0, mIdx)
+        val paperLum = if (mIdx > 0) marginLums[mIdx / 2] else 255
 
-        val yStart = (h * 0.08f).toInt()
+        val yStart = (h * 0.06f).toInt()
         val yEnd = (h * 0.92f).toInt()
-        val leftXStart = (w * 0.08f).toInt()
-        val leftXEnd = (w * 0.48f).toInt()
-        val rightXStart = (w * 0.52f).toInt()
-        val rightXEnd = (w * 0.92f).toInt()
+        val totalInteriorRows = (yEnd - yStart).coerceAtLeast(1)
 
-        val leftEdgeEnergy = FloatArray(h)
-        val rightEdgeEnergy = FloatArray(h)
-        val isRowOscillating = BooleanArray(h)
+        // 2. Classify horizontal rows y (6% .. 92% of height) into Text-Line vs Non-Text
+        val isTextBandRow = BooleanArray(h)
 
-        // Compute horizontal gradient edge energy row by row for left and right columns
+        val singleXStart = (w * 0.08f).toInt()
+        val singleXEnd = (w * 0.92f).toInt()
+        val col1XStart = (w * 0.08f).toInt()
+        val col1XEnd = (w * 0.48f).toInt()
+        val col2XStart = (w * 0.52f).toInt()
+        val col2XEnd = (w * 0.92f).toInt()
+
+        fun analyzeRowSegment(y: Int, xS: Int, xE: Int): Pair<Boolean, Boolean> {
+            val count = (xE - xS).coerceAtLeast(1)
+            var paperPixels = 0
+            var inkPixels = 0
+            var edgeTransitions = 0
+            var prevLum = -1
+
+            for (x in xS until xE) {
+                val pix = bmp.getPixel(x, y)
+                val r = (pix shr 16) and 0xFF
+                val g = (pix shr 8) and 0xFF
+                val b = pix and 0xFF
+                val lum = (r * 299 + g * 587 + b * 114) / 1000
+                val diff = abs(lum - paperLum)
+                if (diff < 8) {
+                    paperPixels++
+                } else if (diff >= 18) {
+                    inkPixels++
+                }
+                if (prevLum >= 0 && abs(lum - prevLum) > 22) {
+                    edgeTransitions++
+                }
+                prevLum = lum
+            }
+
+            val paperRatio = paperPixels.toFloat() / count
+            val inkRatio = inkPixels.toFloat() / count
+            val isWhitespace = paperRatio >= 0.94f
+            val isTextStroke = edgeTransitions >= 8 && inkRatio in 0.02f..0.45f
+            return isWhitespace to isTextStroke
+        }
+
+        val singleWhitespace = BooleanArray(h)
+        val singleTextStroke = BooleanArray(h)
+        val col1Whitespace = BooleanArray(h)
+        val col1TextStroke = BooleanArray(h)
+        val col2Whitespace = BooleanArray(h)
+        val col2TextStroke = BooleanArray(h)
+
         for (y in yStart..yEnd) {
-            var leftGradSum = 0f
-            var leftCols = 0
-            for (x in leftXStart until leftXEnd step 2) {
-                val p1 = bmp.getPixel(x, y)
-                val p2 = bmp.getPixel(x + 1, y)
-                val l1 = (Color.red(p1) * 299 + Color.green(p1) * 587 + Color.blue(p1) * 114) / 1000
-                val l2 = (Color.red(p2) * 299 + Color.green(p2) * 587 + Color.blue(p2) * 114) / 1000
-                leftGradSum += abs(l2 - l1)
-                leftCols++
-            }
-            leftEdgeEnergy[y] = if (leftCols > 0) leftGradSum / leftCols else 0f
+            val (sw, st) = analyzeRowSegment(y, singleXStart, singleXEnd)
+            singleWhitespace[y] = sw
+            singleTextStroke[y] = st
 
-            var rightGradSum = 0f
-            var rightCols = 0
-            for (x in rightXStart until rightXEnd step 2) {
-                val p1 = bmp.getPixel(x, y)
-                val p2 = bmp.getPixel(x + 1, y)
-                val l1 = (Color.red(p1) * 299 + Color.green(p1) * 587 + Color.blue(p1) * 114) / 1000
-                val l2 = (Color.red(p2) * 299 + Color.green(p2) * 587 + Color.blue(p2) * 114) / 1000
-                rightGradSum += abs(l2 - l1)
-                rightCols++
-            }
-            rightEdgeEnergy[y] = if (rightCols > 0) rightGradSum / rightCols else 0f
+            val (c1w, c1t) = analyzeRowSegment(y, col1XStart, col1XEnd)
+            col1Whitespace[y] = c1w
+            col1TextStroke[y] = c1t
+
+            val (c2w, c2t) = analyzeRowSegment(y, col2XStart, col2XEnd)
+            col2Whitespace[y] = c2w
+            col2TextStroke[y] = c2t
         }
 
-        // Count oscillating text-line peaks in left and right columns
-        var leftTextLines = 0
-        var inLeftPeak = false
-        var leftPeakStart = 0
-        for (y in yStart..yEnd) {
-            val e = leftEdgeEnergy[y]
-            if (e > 16f) {
-                if (!inLeftPeak) {
-                    inLeftPeak = true
-                    leftPeakStart = y
-                }
-            } else if (e < 7f && inLeftPeak) {
-                val dur = y - leftPeakStart
-                if (dur in 3..20) {
-                    leftTextLines++
-                    for (k in leftPeakStart..y) isRowOscillating[k] = true
-                }
-                inLeftPeak = false
-            }
-        }
+        fun markRhythmicBands(isWhitespace: BooleanArray, isStroke: BooleanArray) {
+            var y = yStart
+            while (y <= yEnd - 20) {
+                var strokePeaks = 0
+                var whitespaceGaps = 0
+                var inStroke = false
+                var inGap = false
+                val windowEnd = minOf(y + 40, yEnd)
 
-        var rightTextLines = 0
-        var inRightPeak = false
-        var rightPeakStart = 0
-        for (y in yStart..yEnd) {
-            val e = rightEdgeEnergy[y]
-            if (e > 16f) {
-                if (!inRightPeak) {
-                    inRightPeak = true
-                    rightPeakStart = y
-                }
-            } else if (e < 7f && inRightPeak) {
-                val dur = y - rightPeakStart
-                if (dur in 3..20) {
-                    rightTextLines++
-                    for (k in rightPeakStart..y) isRowOscillating[k] = true
-                }
-                inRightPeak = false
-            }
-        }
-
-        // Immediate full-text rejection rules:
-        // Rule 1A: Two-column dense text page (e.g. Page 21, 23, 25, 223, 241, 451, 457, 461)
-        if (leftTextLines >= 14 && rightTextLines >= 14) return false
-
-        // Rule 1B: Dense single- or two-column text page with >= 24 text lines and < 30% free vertical space
-        val totalTextLines = leftTextLines + rightTextLines
-        var oscillatingRows = 0
-        for (y in yStart..yEnd) {
-            if (isRowOscillating[y]) oscillatingRows++
-        }
-        val totalVerticalSpan = (yEnd - yStart).coerceAtLeast(1)
-        val freeVerticalRatio = 1f - (oscillatingRows.toFloat() / totalVerticalSpan)
-        if (totalTextLines >= 24 && freeVerticalRatio < 0.30f) return false
-        if (totalTextLines >= 18 && freeVerticalRatio < 0.20f) return false
-
-        // Rule 2 — Require a contiguous non-text artwork region covering >= 22% of page area
-        // Mask out oscillating text paragraphs
-        val isTextParagraphRow = BooleanArray(h)
-        for (y in yStart..(yEnd - 55)) {
-            var peaksInWin = 0
-            for (k in y..(y + 55)) {
-                if (leftEdgeEnergy[k] > 16f || rightEdgeEnergy[k] > 16f) peaksInWin++
-            }
-            if (peaksInWin >= 6) {
-                for (k in y..(y + 55)) isTextParagraphRow[k] = true
-            }
-        }
-
-        // Check remaining non-text area for contiguous artwork region
-        val gridCols = 18
-        val gridRows = 25
-        val cellW = (w / gridCols).coerceAtLeast(1)
-        val cellH = (h / gridRows).coerceAtLeast(1)
-        val isArtGrid = Array(gridRows) { BooleanArray(gridCols) }
-        val hsv = FloatArray(3)
-
-        for (r in 0 until gridRows) {
-            val cyStart = r * cellH
-            val cyEnd = (cyStart + cellH).coerceAtMost(h)
-            val isTextRow = (cyStart until cyEnd).any { isTextParagraphRow[it] }
-            if (isTextRow) continue
-
-            for (c in 0 until gridCols) {
-                val cxStart = c * cellW
-                val cxEnd = (cxStart + cellW).coerceAtMost(w)
-                var diffPixels = 0
-                var saturatedPixels = 0
-                var totalSampled = 0
-
-                for (py in cyStart until cyEnd step 3) {
-                    for (px in cxStart until cxEnd step 3) {
-                        totalSampled++
-                        val pix = bmp.getPixel(px, py)
-                        val lum = (Color.red(pix) * 299 + Color.green(pix) * 587 + Color.blue(pix) * 114) / 1000
-                        val diff = abs(lum - paperLum)
-                        if (diff > 32) diffPixels++
-                        Color.colorToHSV(pix, hsv)
-                        if (hsv[1] > 0.18f && diff > 20) saturatedPixels++
-                    }
-                }
-
-                if (totalSampled > 0) {
-                    val diffRatio = diffPixels.toFloat() / totalSampled
-                    val satRatio = saturatedPixels.toFloat() / totalSampled
-                    if (diffRatio >= 0.35f || satRatio >= 0.28f) {
-                        isArtGrid[r][c] = true
-                    }
-                }
-            }
-        }
-
-        // Find largest contiguous 2D bounding box of artwork cells
-        val visited = Array(gridRows) { BooleanArray(gridCols) }
-        var maxBoxAreaCells = 0
-
-        for (r in 0 until gridRows) {
-            for (c in 0 until gridCols) {
-                if (isArtGrid[r][c] && !visited[r][c]) {
-                    var minR = r
-                    var maxR = r
-                    var minC = c
-                    var maxC = c
-                    var count = 0
-                    val q = ArrayDeque<Pair<Int, Int>>()
-                    q.add(r to c)
-                    visited[r][c] = true
-
-                    while (q.isNotEmpty()) {
-                        val (cr, cc) = q.removeFirst()
-                        count++
-                        if (cr < minR) minR = cr
-                        if (cr > maxR) maxR = cr
-                        if (cc < minC) minC = cc
-                        if (cc > maxC) maxC = cc
-
-                        val neighbors = listOf(cr - 1 to cc, cr + 1 to cc, cr to cc - 1, cr to cc + 1)
-                        for ((nr, nc) in neighbors) {
-                            if (nr in 0 until gridRows && nc in 0 until gridCols && isArtGrid[nr][nc] && !visited[nr][nc]) {
-                                visited[nr][nc] = true
-                                q.add(nr to nc)
-                            }
+                for (k in y..windowEnd) {
+                    if (isStroke[k]) {
+                        if (!inStroke) {
+                            strokePeaks++
+                            inStroke = true
+                            inGap = false
+                        }
+                    } else if (isWhitespace[k]) {
+                        if (!inGap) {
+                            whitespaceGaps++
+                            inGap = true
+                            inStroke = false
                         }
                     }
+                }
 
-                    val boxW = (maxC - minC + 1).toFloat() / gridCols
-                    val boxH = (maxR - minR + 1).toFloat() / gridRows
-                    val boxArea = boxW * boxH
-                    val cellRatio = count.toFloat() / (gridRows * gridCols)
-
-                    if (boxArea >= 0.22f && boxW >= 0.35f && boxH >= 0.24f && cellRatio >= 0.14f) {
-                        return true
+                if (strokePeaks >= 3 && whitespaceGaps >= 2) {
+                    for (k in y..windowEnd) {
+                        isTextBandRow[k] = true
                     }
-                    if (count > maxBoxAreaCells) maxBoxAreaCells = count
+                    y += 20
+                } else {
+                    y += 4
                 }
             }
+        }
+
+        markRhythmicBands(singleWhitespace, singleTextStroke)
+        markRhythmicBands(col1Whitespace, col1TextStroke)
+        markRhythmicBands(col2Whitespace, col2TextStroke)
+
+        // 4. White-Background & Grayscale-Sensitive Artwork Detection in Non-Text Zones
+        val minZoneH = (h * 0.22f).toInt()
+        var hasArtworkZone = false
+
+        var zoneStart = -1
+        for (y in yStart..yEnd) {
+            if (!isTextBandRow[y]) {
+                if (zoneStart < 0) zoneStart = y
+            } else {
+                if (zoneStart >= 0) {
+                    val zoneH = y - zoneStart
+                    if (zoneH >= minZoneH) {
+                        if (evaluateZoneForArtwork(bmp, zoneStart, y, paperLum, w, h)) {
+                            hasArtworkZone = true
+                            break
+                        }
+                    }
+                    zoneStart = -1
+                }
+            }
+        }
+        if (zoneStart >= 0 && !hasArtworkZone) {
+            val zoneH = yEnd - zoneStart + 1
+            if (zoneH >= minZoneH) {
+                if (evaluateZoneForArtwork(bmp, zoneStart, yEnd + 1, paperLum, w, h)) {
+                    hasArtworkZone = true
+                }
+            }
+        }
+
+        // 3. Strict Full-Text Page Exclusion
+        var textBandRowCount = 0
+        for (y in yStart..yEnd) {
+            if (isTextBandRow[y]) textBandRowCount++
+        }
+        val textBandRatio = textBandRowCount.toFloat() / totalInteriorRows
+        if (textBandRatio >= 0.68f && !hasArtworkZone) {
+            return false // Full-Text Page!
+        }
+
+        // Exclude almost-blank pages: copyright page / chapter title page with 2-5 lines and > 96% empty paper
+        var nonPaperSampleCount = 0
+        var totalInteriorSampleCount = 0
+        for (y in yStart..yEnd step 3) {
+            for (x in singleXStart..singleXEnd step 3) {
+                totalInteriorSampleCount++
+                val pix = bmp.getPixel(x, y)
+                val lum = ((pix shr 16 and 0xFF) * 299 + (pix shr 8 and 0xFF) * 587 + (pix and 0xFF) * 114) / 1000
+                if (abs(lum - paperLum) >= 8) nonPaperSampleCount++
+            }
+        }
+        val interiorNonPaperRatio = if (totalInteriorSampleCount > 0) nonPaperSampleCount.toFloat() / totalInteriorSampleCount else 0f
+        if (interiorNonPaperRatio < 0.04f && !hasArtworkZone) {
+            return false
+        }
+
+        if (hasArtworkZone) return true
+
+        // Full color insert / high saturation artwork detection
+        var colorPixelCount = 0
+        var totalSampled = 0
+        for (y in yStart..yEnd step 3) {
+            for (x in singleXStart..singleXEnd step 3) {
+                totalSampled++
+                val pix = bmp.getPixel(x, y)
+                val r = (pix shr 16) and 0xFF
+                val g = (pix shr 8) and 0xFF
+                val b = pix and 0xFF
+                val maxC = maxOf(r, g, b)
+                val minC = minOf(r, g, b)
+                val sat = if (maxC > 0) (maxC - minC).toFloat() / maxC else 0f
+                if (sat >= 0.18f && maxC > 50) colorPixelCount++
+            }
+        }
+        if (totalSampled > 0 && (colorPixelCount.toFloat() / totalSampled) >= 0.035f) {
+            return true
         }
 
         return false
+    }
+
+    private fun isPureTextBitmap(bmp: Bitmap): Boolean {
+        return !isTrueIllustrationPageBitmap(bmp)
     }
 
     suspend fun scanPdfChaptersAndIllustrationsAsync(
@@ -880,6 +1013,7 @@ object PdfNativeRenderer {
         totalPages: Int,
         defaultTitle: String,
         isEn: Boolean,
+        existingChapters: List<BookChapterEntity>? = null,
         onProgress: suspend (Int) -> Unit = {},
         onUpdated: suspend (List<BookChapterEntity>, List<BookIllustration>) -> Unit
     ) = withContext(Dispatchers.Default) {
@@ -890,36 +1024,128 @@ object PdfNativeRenderer {
 
         onProgress(5)
 
-        // Stage 1 & 2: Extract Outline & TOC via memory-safe PDFBox
-        val finalBookmarks = extractChaptersWithPdfBox(
-            context = context,
-            pdfFile = pdfFile,
-            totalPages = totalPages,
-            defaultTitle = defaultTitle,
-            onStageProgress = onProgress
-        )
+        // Stage 1 & 2: Extract Outline & TOC bookmarks (or preserve existing chapters if already indexed)
+        val finalBookmarks = if (existingChapters != null && existingChapters.isNotEmpty()) {
+            onProgress(45)
+            existingChapters.map { ch ->
+                val pArr = runCatching { JSONArray(ch.pagesJson) }.getOrNull() ?: JSONArray()
+                var startPage = 0
+                for (k in 0 until pArr.length()) {
+                    val pStr = pArr.optString(k)
+                    val m = Regex("\\[PDF_PAGE:(\\d+)\\]").find(pStr)
+                    if (m != null) {
+                        startPage = m.groupValues[1].toIntOrNull() ?: 0
+                        break
+                    }
+                }
+                PdfBookmark(sanitizeChapterTitle(ch.title), startPage)
+            }
+        } else {
+            extractChaptersWithPdfBox(
+                context = context,
+                pdfFile = pdfFile,
+                totalPages = totalPages,
+                defaultTitle = defaultTitle,
+                onStageProgress = onProgress
+            )
+        }
+
+        onProgress(45)
+
+        // Stage 2B: Multi-Signal Pre-pass using PDFBox:
+        // Signal 1 (Embedded Image Resources) & Signal 2 (Captions)
+        val signal1Pages = mutableSetOf<Int>()
+        val signal2Pages = mutableSetOf<Int>()
+
+        runCatching {
+            PDFBoxResourceLoader.init(context.applicationContext)
+            val memSetting = MemoryUsageSetting.setupTempFileOnly().setTempDir(context.cacheDir)
+            PDDocument.load(pdfFile, memSetting).use { document ->
+                val safeTotal = if (totalPages > 0) minOf(totalPages, document.numberOfPages) else document.numberOfPages
+                val imageOccurrences = mutableMapOf<String, Int>()
+                val pageImages = mutableMapOf<Int, MutableList<EmbeddedImageSpec>>()
+
+                val captionRegex = Regex("(?i)\\b(illustration\\s+credit|art\\s+credit|ilustrasi\\s+oleh|illustrated\\s+by|fig\\.|figure\\s+\\d+)\\b")
+                val artCreditsHeadingRegex = Regex("(?i)\\b(art\\s+credits|illustration\\s+credits|daftar\\s+ilustrasi|credits)\\b")
+                val textStripper = runCatching { PDFTextStripper() }.getOrNull()
+
+                for (p in 1 until safeTotal) {
+                    val pdPage = runCatching { document.getPage(p) }.getOrNull() ?: continue
+                    val mediaBox = pdPage.mediaBox ?: pdPage.cropBox
+                    val pageArea = ((mediaBox?.width ?: 600f) * (mediaBox?.height ?: 800f)).coerceAtLeast(1f)
+                    val imgs = inspectPageEmbeddedImages(pdPage.resources, pageArea)
+                    if (imgs.isNotEmpty()) {
+                        pageImages[p] = imgs.toMutableList()
+                        for (img in imgs.distinctBy { it.key }) {
+                            imageOccurrences[img.key] = (imageOccurrences[img.key] ?: 0) + 1
+                        }
+                    }
+
+                    // Signal 2: Caption check
+                    if (textStripper != null) {
+                        runCatching {
+                            textStripper.startPage = p + 1
+                            textStripper.endPage = p + 1
+                            val pageText = textStripper.getText(document)
+                            if (captionRegex.containsMatchIn(pageText)) {
+                                val isBackOfBookCredits = p >= (safeTotal - 15) && artCreditsHeadingRegex.containsMatchIn(pageText)
+                                if (!isBackOfBookCredits) {
+                                    signal2Pages.add(p)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Any non-repeating (unique) image appearing on <= 3 pages across the PDF
+                for ((p, imgs) in pageImages) {
+                    val hasUniqueSubstantialImage = imgs.any { img ->
+                        val occ = imageOccurrences[img.key] ?: 0
+                        occ <= 3 && img.isSubstantial
+                    }
+                    if (hasUniqueSubstantialImage) {
+                        signal1Pages.add(p)
+                    }
+                }
+            }
+        }
 
         onProgress(55)
 
         // Stage 3 (55% -> 95%): Illustration Detection using dedicated PdfRenderer
+        // Evaluates EVERY page from 1 until minOf(totalPages, pageCount) — NO SKIPPING!
         runCatching {
             ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
                     val pageCount = renderer.pageCount
-                    val step = if (pageCount <= 60) 1 else if (pageCount <= 120) 2 else (pageCount / 60).coerceAtLeast(1)
-                    val pagesToInspect = (1 until minOf(totalPages, pageCount) step step).toList()
+                    val totalToInspect = (minOf(totalPages, pageCount) - 1).coerceAtLeast(1)
 
-                    for ((idx, pIdx) in pagesToInspect.withIndex()) {
-                        kotlinx.coroutines.delay(4L)
+                    for (pIdx in 1 until minOf(totalPages, pageCount)) {
                         renderer.openPage(pIdx).use { page ->
-                            val thumbW = 200
-                            val thumbH = 280
+                            val thumbW = 280
+                            val thumbH = 400
                             val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
                             val smallCanvas = Canvas(smallBmp)
                             smallCanvas.drawColor(Color.WHITE)
                             page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
-                            if (isTrueIllustrationPageBitmap(smallBmp)) {
+                            val isSig1 = signal1Pages.contains(pIdx)
+                            val isSig2 = signal2Pages.contains(pIdx)
+                            val isSig3 = isTrueIllustrationPageBitmap(smallBmp)
+
+                            // Classify as True Illustration Page if Signal 1 OR Signal 3 holds
+                            // (or Signal 2 caption with verified non-paper artwork content)
+                            val isIllustration = if (isSig3) {
+                                true
+                            } else if (isSig1) {
+                                !isPureTextBitmap(smallBmp)
+                            } else if (isSig2) {
+                                hasNonPaperContent(smallBmp) && !isPureTextBitmap(smallBmp)
+                            } else {
+                                false
+                            }
+
+                            if (isIllustration) {
                                 val illustFile = File(coversDir, "${bookId}_illust_p${pIdx + 1}.jpg")
                                 if (!illustFile.exists()) {
                                     FileOutputStream(illustFile).use { out ->
@@ -937,8 +1163,10 @@ object PdfNativeRenderer {
                             }
                             smallBmp.recycle()
                         }
-                        val pct = 55 + ((idx + 1) * 40 / pagesToInspect.size.coerceAtLeast(1))
-                        onProgress(pct.coerceIn(55, 95))
+                        if (pIdx % 5 == 0 || pIdx == totalToInspect) {
+                            val pct = 55 + (pIdx * 40 / totalToInspect)
+                            onProgress(pct.coerceIn(55, 95))
+                        }
                     }
                 }
             }
