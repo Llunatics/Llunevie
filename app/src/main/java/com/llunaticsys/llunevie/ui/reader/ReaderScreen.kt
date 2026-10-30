@@ -1449,12 +1449,15 @@ fun ReaderScreen(
 
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
         if (!uiState.readerFullView) {
+            val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
+            val topBarStartPad = if (isSpread) maxOf(36.dp, cutoutStart + 18.dp) else 16.dp
             Row(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .padding(start = topBarStartPad, end = 16.dp, top = 10.dp, bottom = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1716,128 +1719,293 @@ fun ReaderScreen(
                 }
             }
 
-        // Left Vertical Page Bar in 2-Page Spread Mode (width = 44.dp capsule at CenterStart)
+        // Left Vertical Page Bar in 2-Page Spread Mode (Notch-safe with in-place transition to vertical page slider)
         if (!uiState.readerFullView && isSpread) {
-            var showVerticalScrubber by remember { mutableStateOf(false) }
+            val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
+            val leftBarStartPad = maxOf(36.dp, cutoutStart + 18.dp)
+            var showInlinePageSlider by remember { mutableStateOf(false) }
+            var scrubPage by remember(metrics.currentGlobalPage) {
+                mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
+            }
 
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = palette.bgSurface.copy(alpha = 0.96f),
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 8.dp,
+            AnimatedContent(
+                targetState = showInlinePageSlider,
+                transitionSpec = {
+                    (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                        scaleIn(initialScale = 0.92f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)))
+                        .togetherWith(
+                            fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                                scaleOut(targetScale = 0.92f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+                        ) using SizeTransform(clip = false)
+                },
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .padding(start = 12.dp)
-                    .width(44.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // 1. Chapters & Illustrations button (32.dp circle)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .padding(start = 18.dp),
+                label = "leftBarSpreadTransition"
+            ) { isSliderOpen ->
+                if (!isSliderOpen) {
+                    // Standard Vertical Control Capsule
                     Surface(
-                        onClick = { onToggleTocDrawer(true) },
                         shape = CircleShape,
-                        color = Color.Transparent,
-                        modifier = Modifier.size(32.dp)
+                        color = palette.bgSurface.copy(alpha = 0.96f),
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.width(46.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.TOC_LIST,
-                                tint = palette.textMain,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
-
-                    // 2. Previous Spread button (28.dp circle)
-                    Surface(
-                        onClick = {
-                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                externalFlipTrigger = -1
-                            } else {
-                                onTurnPage(-1)
+                        Column(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 1. Chapters & Illustrations button (32.dp circle)
+                            Surface(
+                                onClick = { onToggleTocDrawer(true) },
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    PrototypeSvgIcon(
+                                        type = PrototypeIconType.TOC_LIST,
+                                        tint = palette.textMain,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
                             }
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text("⌃", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+
+                            // 2. Previous Spread button (28.dp circle)
+                            Surface(
+                                onClick = {
+                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                                        externalFlipTrigger = -1
+                                    } else {
+                                        onTurnPage(-1)
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("⌃", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            // 3. Compact Clickable Page Indicator: tapping morphs capsule into vertical slider!
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        scrubPage = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
+                                        showInlinePageSlider = true
+                                    }
+                                    .padding(vertical = 4.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "${metrics.currentGlobalPage}",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textPrimary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .padding(vertical = 3.dp)
+                                        .width(14.dp)
+                                        .height(1.dp)
+                                        .background(palette.borderSoft)
+                                )
+                                Text(
+                                    text = "${metrics.totalBookPages}",
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textMuted,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                )
+                            }
+
+                            // 4. Next Spread button (28.dp circle)
+                            Surface(
+                                onClick = {
+                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                                        externalFlipTrigger = 1
+                                    } else {
+                                        onTurnPage(1)
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("⌄", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            // 5. Aa Reader Settings button (32.dp circle)
+                            Surface(
+                                onClick = { onToggleTypeSheet(!uiState.showReaderTypeSheet, null) },
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "Aa",
+                                        color = palette.textMain,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Serif,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
                         }
                     }
-
-                    // 3. Compact Page Indicator (two clean single-number lines separated by hairline)
-                    Column(
+                } else {
+                    // Vertical Page Scrubber Bar (width = 46.dp, height ≈ 230.dp, CircleShape, readerPalette.bgSurface, 1.dp readerPalette.borderSoft)
+                    val totalPages = metrics.totalBookPages.coerceAtLeast(1)
+                    Surface(
+                        shape = CircleShape,
+                        color = palette.bgSurface.copy(alpha = 0.98f),
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        shadowElevation = 10.dp,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showVerticalScrubber = !showVerticalScrubber }
-                            .padding(vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .width(46.dp)
+                            .height(230.dp)
                     ) {
-                        Text(
-                            text = "${metrics.currentGlobalPage}",
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = palette.textPrimary,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                        )
-                        Box(
+                        Column(
                             modifier = Modifier
-                                .padding(vertical = 3.dp)
-                                .width(14.dp)
-                                .height(1.dp)
-                                .background(palette.borderSoft)
-                        )
-                        Text(
-                            text = "${metrics.totalBookPages}",
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = palette.textMuted,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                        )
-                    }
-
-                    // 4. Next Spread button (28.dp circle)
-                    Surface(
-                        onClick = {
-                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                externalFlipTrigger = 1
-                            } else {
-                                onTurnPage(1)
+                                .fillMaxSize()
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            // Top: Live page number readout ("${scrubPage + 1}" bold monospace above "$totalPages" muted monospace)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            ) {
+                                Text(
+                                    text = "${scrubPage + 1}",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textPrimary,
+                                    maxLines = 1,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                )
+                                Text(
+                                    text = "$totalPages",
+                                    fontSize = 8.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textMuted,
+                                    maxLines = 1,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                )
                             }
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text("⌄", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
 
-                    // 5. Aa Reader Settings button (32.dp circle)
-                    Surface(
-                        onClick = { onToggleTypeSheet(!uiState.showReaderTypeSheet, null) },
-                        shape = CircleShape,
-                        color = Color.Transparent,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Aa",
-                                color = palette.textMain,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            // Middle: Interactive Vertical Slider Track & Thumb (dragging vertically from top = Page 1 to bottom = totalPages)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .pointerInput(totalPages) {
+                                        detectVerticalDragGestures(
+                                            onVerticalDrag = { change, _ ->
+                                                change.consume()
+                                                val trackH = size.height.toFloat().coerceAtLeast(1f)
+                                                val fraction = (change.position.y / trackH).coerceIn(0f, 1f)
+                                                val targetZero = (fraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
+                                                if (targetZero != scrubPage) {
+                                                    scrubPage = targetZero
+                                                    val step = if (isSpread) 2 else 1
+                                                    val leftZero = if (isSpread) (scrubPage / 2) * 2 else scrubPage
+                                                    val target = getPageAtGlobalZero(leftZero)
+                                                    if (target != null) {
+                                                        onJumpToChapterAndPage(target.first, target.second)
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(totalPages) {
+                                        detectTapGestures { tapOffset ->
+                                            val trackH = size.height.toFloat().coerceAtLeast(1f)
+                                            val fraction = (tapOffset.y / trackH).coerceIn(0f, 1f)
+                                            val targetZero = (fraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
+                                            if (targetZero != scrubPage) {
+                                                scrubPage = targetZero
+                                                val step = if (isSpread) 2 else 1
+                                                val leftZero = if (isSpread) (scrubPage / 2) * 2 else scrubPage
+                                                val target = getPageAtGlobalZero(leftZero)
+                                                if (target != null) {
+                                                    onJumpToChapterAndPage(target.first, target.second)
+                                                }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                // Background vertical track (width = 4.dp, height = fillMaxHeight, CircleShape, borderSoft)
+                                Box(
+                                    modifier = Modifier
+                                        .width(4.dp)
+                                        .fillMaxHeight()
+                                        .clip(CircleShape)
+                                        .background(palette.borderSoft)
+                                )
+
+                                // Active Vertical Thumb
+                                val fraction = if (totalPages > 1) {
+                                    scrubPage.toFloat() / (totalPages - 1).toFloat()
+                                } else 0f
+
+                                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                    val trackH = maxHeight
+                                    val thumbSize = 16.dp
+                                    val availableH = (trackH - thumbSize).coerceAtLeast(0.dp)
+                                    val thumbOffset = availableH * fraction
+
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopCenter)
+                                            .offset(y = thumbOffset)
+                                            .size(thumbSize)
+                                            .shadow(3.dp, CircleShape)
+                                            .clip(CircleShape)
+                                            .background(palette.textPrimary)
+                                            .border(1.5.dp, palette.bgSurface, CircleShape)
+                                    )
+                                }
+                            }
+
+                            // Bottom: Compact 28.dp circular close button that sets showInlinePageSlider = false
+                            Surface(
+                                onClick = { showInlinePageSlider = false },
+                                shape = CircleShape,
+                                color = palette.bgCard,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .padding(top = 2.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "✕",
+                                        color = palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                 }
