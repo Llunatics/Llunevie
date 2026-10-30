@@ -503,6 +503,8 @@ fun ReaderScreen(
                             var lockedCurrBmp by remember { mutableStateOf<ImageBitmap?>(null) }
                             var lockedNextBmp by remember { mutableStateOf<ImageBitmap?>(null) }
                             var lockedPrevBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+                            var committedCurrentBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+                            var isTurnCommitting by remember { mutableStateOf(false) }
 
                             val curBitmapInitial = if (isPdfBook && !isSpread) {
                                 (curLeftPdfBmp
@@ -711,7 +713,13 @@ fun ReaderScreen(
                                 }
                             }
 
-                            val activeCurrBmp = if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap
+                            LaunchedEffect(curBitmap) {
+                                if (curBitmap != null) {
+                                    committedCurrentBmp = null
+                                }
+                            }
+
+                            val activeCurrBmp = committedCurrentBmp ?: (if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap)
                             val activeNextBmp = if (isFlippingInProgress) (lockedNextBmp ?: nextBitmap) else nextBitmap
                             val activePrevBmp = if (isFlippingInProgress) (lockedPrevBmp ?: prevBitmap) else prevBitmap
 
@@ -722,6 +730,7 @@ fun ReaderScreen(
                             val flipbookGestureModifier = Modifier.pointerInput(curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    if (isTurnCommitting) return@awaitEachGesture
                                     if (hasSelectionActive) {
                                         val distStart = (down.position - selStartHandleAnchor).getDistance()
                                         val distEnd = (down.position - selEndHandleAnchor).getDistance()
@@ -746,24 +755,45 @@ fun ReaderScreen(
                                                 val shouldCommit = liveDragProgress >= 0.14f || (speedInDir > 350f)
                                                 scope.launch {
                                                     if (shouldCommit) {
+                                                        isTurnCommitting = true
+                                                        isFlippingInProgress = true
                                                         val anim = Animatable(liveDragProgress)
                                                         anim.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) {
                                                             liveDragProgress = value
                                                         }
-                                                        val targetPage = if (flipTurnDir > 0) {
+                                                        val dir = flipTurnDir
+                                                        val targetPage = if (dir > 0) {
                                                             (displayPageIndex + step).coerceAtMost(metrics.totalBookPages - 1)
                                                         } else {
                                                             (displayPageIndex - step).coerceAtLeast(0)
                                                         }
+                                                        val nextB = lockedNextBmp ?: nextBitmap
+                                                        val prevB = lockedPrevBmp ?: prevBitmap
+                                                        val currB = lockedCurrBmp ?: curBitmap
+                                                        if (dir > 0 && nextB != null) {
+                                                            lockedPrevBmp = currB
+                                                            lockedCurrBmp = nextB
+                                                            lockedNextBmp = null
+                                                            committedCurrentBmp = nextB
+                                                        } else if (dir < 0 && prevB != null) {
+                                                            lockedNextBmp = currB
+                                                            lockedCurrBmp = prevB
+                                                            lockedPrevBmp = null
+                                                            committedCurrentBmp = prevB
+                                                        }
                                                         // Execute synchronously on the Main UI thread in the same frame:
                                                         displayPageIndex = targetPage
                                                         liveDragProgress = 0f
+                                                        // Keep isFlippingInProgress = true so Flipbook Canvas stays visible on top displaying the new page
+                                                        viewModel?.jumpToGlobalPage(targetPage)
+                                                        // Wait for two UI frames so the underlying idle view has already composed and drawn the new page:
+                                                        withFrameNanos { }
+                                                        withFrameNanos { }
+                                                        isTurnCommitting = false
                                                         isFlippingInProgress = false
                                                         lockedCurrBmp = null
                                                         lockedNextBmp = null
                                                         lockedPrevBmp = null
-                                                        // Then persist asynchronously to ViewModel/Room:
-                                                        viewModel?.jumpToGlobalPage(targetPage)
                                                     } else {
                                                         val anim = Animatable(liveDragProgress)
                                                         anim.animateTo(0f, tween(160, easing = FastOutSlowInEasing)) {
@@ -856,14 +886,35 @@ fun ReaderScreen(
                                         manualCornerYNorm = if (isFlippingInProgress) liveCornerYNorm else null,
                                         manualTurnDir = if (isFlippingInProgress) flipTurnDir else null,
                                         onPageTurnCommitted = { dir ->
-                                            val targetPage = (displayPageIndex + dir * step).coerceIn(0, metrics.totalBookPages - 1)
-                                            displayPageIndex = targetPage
-                                            liveDragProgress = 0f
-                                            isFlippingInProgress = false
-                                            lockedCurrBmp = null
-                                            lockedNextBmp = null
-                                            lockedPrevBmp = null
-                                            viewModel?.jumpToGlobalPage(targetPage)
+                                            scope.launch {
+                                                isTurnCommitting = true
+                                                isFlippingInProgress = true
+                                                val targetPage = (displayPageIndex + dir * step).coerceIn(0, metrics.totalBookPages - 1)
+                                                val nextB = lockedNextBmp ?: nextBitmap
+                                                val prevB = lockedPrevBmp ?: prevBitmap
+                                                val currB = lockedCurrBmp ?: curBitmap
+                                                if (dir > 0 && nextB != null) {
+                                                    lockedPrevBmp = currB
+                                                    lockedCurrBmp = nextB
+                                                    lockedNextBmp = null
+                                                    committedCurrentBmp = nextB
+                                                } else if (dir < 0 && prevB != null) {
+                                                    lockedNextBmp = currB
+                                                    lockedCurrBmp = prevB
+                                                    lockedPrevBmp = null
+                                                    committedCurrentBmp = prevB
+                                                }
+                                                displayPageIndex = targetPage
+                                                liveDragProgress = 0f
+                                                viewModel?.jumpToGlobalPage(targetPage)
+                                                withFrameNanos { }
+                                                withFrameNanos { }
+                                                isTurnCommitting = false
+                                                isFlippingInProgress = false
+                                                lockedCurrBmp = null
+                                                lockedNextBmp = null
+                                                lockedPrevBmp = null
+                                            }
                                         },
                                         onCenterTap = {
                                             if (hasSelectionActive) hasSelectionActive = false
@@ -874,8 +925,13 @@ fun ReaderScreen(
                                                 lockedCurrBmp = curBitmap
                                                 lockedNextBmp = nextBitmap
                                                 lockedPrevBmp = prevBitmap
+                                                isFlippingInProgress = true
+                                            } else if (!flipping && !isTurnCommitting) {
+                                                isFlippingInProgress = false
+                                                lockedCurrBmp = null
+                                                lockedNextBmp = null
+                                                lockedPrevBmp = null
                                             }
-                                            isFlippingInProgress = flipping
                                         },
                                         modifier = if (isSpread) {
                                             Modifier

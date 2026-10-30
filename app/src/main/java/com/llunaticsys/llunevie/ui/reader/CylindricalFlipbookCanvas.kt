@@ -642,8 +642,8 @@ private fun DrawScope.drawPageBitmapFitted(
  * Fixes:
  * 1. PDF pages always keep a natural white paper background (`#FFFFFF`) and warm paper back-curl (`#F2EFE9`)
  *    even when the app UI theme is Black or AMOLED.
- * 2. Zero flicker/blink when completing a page turn: holds `committedTargetBitmap` while waiting for
- *    `currentPageBitmap` to update, and resets `progressAnim` to `0f` in the exact frame `currentPageBitmap` updates!
+ * 2. Zero flicker/blink when completing a page turn: synchronously swaps internal bitmaps before
+ *    snapping progressAnim to 0f, ensuring zero blink!
  */
 @Composable
 fun CylindricalFlipbookCanvas(
@@ -673,11 +673,13 @@ fun CylindricalFlipbookCanvas(
     val effectiveTurnDir = manualTurnDir ?: turnDir
     val effectiveCornerYNorm = manualCornerYNorm ?: cornerYNorm
 
-    // Holds the destination bitmap at the end of a committed turn until currentPageBitmap updates,
-    // eliminating the 1-frame flash back to the previous page!
-    var pendingCommittedBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    // Internal MutableState bitmap references preventing 1-frame flashes on page completion
+    var displayedCurrentBmp by remember { mutableStateOf(currentPageBitmap) }
+    var displayedNextBmp by remember { mutableStateOf(nextPageBitmap) }
+    var displayedPrevBmp by remember { mutableStateOf(prevPageBitmap) }
+    var isWaitingForParentPageSync by remember { mutableStateOf(false) }
 
-    val isFlipActive = (manualProgress != null && manualProgress > 0.001f) || isDragging || progressAnim.value > 0.001f || pendingCommittedBitmap != null
+    val isFlipActive = (manualProgress != null && manualProgress > 0.001f) || isDragging || progressAnim.value > 0.001f || isWaitingForParentPageSync
     LaunchedEffect(isFlipActive) {
         onFlipStateChanged(isFlipActive)
     }
@@ -692,11 +694,29 @@ fun CylindricalFlipbookCanvas(
         ColorFilter.colorMatrix(cm)
     }
 
-    // As soon as currentPageBitmap updates after a page turn commit, clear pendingCommittedBitmap and reset progressAnim to 0f atomically
-    LaunchedEffect(currentPageBitmap) {
-        if (pendingCommittedBitmap != null) {
-            pendingCommittedBitmap = null
-            progressAnim.snapTo(0f)
+    // Sync from parent props only when idle
+    LaunchedEffect(currentPageBitmap, nextPageBitmap, prevPageBitmap) {
+        if (isWaitingForParentPageSync && currentPageBitmap == displayedCurrentBmp) {
+            isWaitingForParentPageSync = false
+        }
+        if (!isDragging && progressAnim.value == 0f && (manualProgress == null || manualProgress == 0f) && !isWaitingForParentPageSync) {
+            displayedCurrentBmp = currentPageBitmap
+            displayedNextBmp = nextPageBitmap
+            displayedPrevBmp = prevPageBitmap
+        }
+    }
+
+    LaunchedEffect(manualProgress) {
+        if (manualProgress != null && manualProgress >= 0.999f) {
+            val dir = effectiveTurnDir
+            if (dir > 0 && (displayedNextBmp ?: nextPageBitmap) != null) {
+                displayedPrevBmp = displayedCurrentBmp
+                displayedCurrentBmp = (displayedNextBmp ?: nextPageBitmap)!!
+            } else if (dir < 0 && (displayedPrevBmp ?: prevPageBitmap) != null) {
+                displayedNextBmp = displayedCurrentBmp
+                displayedCurrentBmp = (displayedPrevBmp ?: prevPageBitmap)!!
+            }
+            isWaitingForParentPageSync = true
         }
     }
 
@@ -708,14 +728,24 @@ fun CylindricalFlipbookCanvas(
                 easing = CubicBezierEasing(0.18f, 0.88f, 0.24f, 1f)
             )
         )
-        pendingCommittedBitmap = destBmp
+        val completedDir = dir
+        val targetBmp = if (completedDir > 0) (displayedNextBmp ?: destBmp) else (displayedPrevBmp ?: destBmp)
+        if (completedDir > 0 && targetBmp != null) {
+            displayedPrevBmp = displayedCurrentBmp
+            displayedCurrentBmp = targetBmp
+        } else if (completedDir < 0 && targetBmp != null) {
+            displayedNextBmp = displayedCurrentBmp
+            displayedCurrentBmp = targetBmp
+        }
+        isWaitingForParentPageSync = true
+        turnDir = 0
         progressAnim.snapTo(0f)
-        onPageTurnCommitted(dir)
+        onPageTurnCommitted(completedDir)
     }
 
     LaunchedEffect(externalTriggerDir) {
         if (externalTriggerDir != 0 && !progressAnim.isRunning) {
-            val destBmp = if (externalTriggerDir > 0) nextPageBitmap else prevPageBitmap
+            val destBmp = if (externalTriggerDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
             if (destBmp != null) {
                 turnDir = externalTriggerDir
                 cornerYNorm = 0.78f
@@ -731,31 +761,33 @@ fun CylindricalFlipbookCanvas(
     Canvas(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(currentPageBitmap, nextPageBitmap, prevPageBitmap) {
+            .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    if (progressAnim.isRunning || pendingCommittedBitmap != null) return@detectTapGestures
+                    if (progressAnim.isRunning || isWaitingForParentPageSync) return@detectTapGestures
                     val w = size.width.toFloat().coerceAtLeast(1f)
                     val relX = offset.x / w
-                    if (relX >= 0.76f && nextPageBitmap != null) {
+                    val nextB = displayedNextBmp ?: nextPageBitmap
+                    val prevB = displayedPrevBmp ?: prevPageBitmap
+                    if (relX >= 0.76f && nextB != null) {
                         turnDir = 1
                         cornerYNorm = 0.78f
                         scope.launch {
                             progressAnim.snapTo(0.01f)
-                            animateCommitTurn(1, nextPageBitmap, 380)
+                            animateCommitTurn(1, nextB, 380)
                         }
-                    } else if (relX <= 0.24f && prevPageBitmap != null) {
+                    } else if (relX <= 0.24f && prevB != null) {
                         turnDir = -1
                         cornerYNorm = 0.78f
                         scope.launch {
                             progressAnim.snapTo(0.01f)
-                            animateCommitTurn(-1, prevPageBitmap, 380)
+                            animateCommitTurn(-1, prevB, 380)
                         }
                     } else {
                         onCenterTap()
                     }
                 }
             }
-            .pointerInput(currentPageBitmap, nextPageBitmap, prevPageBitmap) {
+            .pointerInput(Unit) {
                 val velocityTracker = VelocityTracker()
                 var dragStartX = 0f
                 detectDragGestures(
@@ -765,7 +797,7 @@ fun CylindricalFlipbookCanvas(
                                 progressAnim.snapTo(0f)
                             }
                         }
-                        pendingCommittedBitmap = null
+                        isWaitingForParentPageSync = false
                         velocityTracker.resetTracking()
                         dragStartX = startOffset.x
                         cornerYNorm = (startOffset.y / size.height.toFloat().coerceAtLeast(1f)).coerceIn(0.05f, 0.95f)
@@ -781,8 +813,10 @@ fun CylindricalFlipbookCanvas(
                         if (!isDragging) {
                             if (abs(totalDx) < 6f) return@detectDragGestures
                             val candidateDir = if (totalDx < 0f) 1 else -1
-                            if (candidateDir > 0 && nextPageBitmap == null) return@detectDragGestures
-                            if (candidateDir < 0 && prevPageBitmap == null) return@detectDragGestures
+                            val nextB = displayedNextBmp ?: nextPageBitmap
+                            val prevB = displayedPrevBmp ?: prevPageBitmap
+                            if (candidateDir > 0 && nextB == null) return@detectDragGestures
+                            if (candidateDir < 0 && prevB == null) return@detectDragGestures
                             turnDir = candidateDir
                             isDragging = true
                         }
@@ -800,7 +834,7 @@ fun CylindricalFlipbookCanvas(
                         val speedInDir = if (turnDir > 0) -velX else velX
                         val curP = progressAnim.value
                         val shouldCommit = curP >= 0.30f || (curP >= 0.05f && speedInDir > 380f)
-                        val destBmp = if (turnDir > 0) nextPageBitmap else prevPageBitmap
+                        val destBmp = if (turnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
                         val flingDuration = if (speedInDir > 900f) 220 else if (speedInDir > 500f) 300 else 380
 
                         scope.launch {
@@ -827,41 +861,14 @@ fun CylindricalFlipbookCanvas(
         val w = size.width
         val h = size.height
 
-        // If a page turn just committed and we are waiting for currentPageBitmap to swap, draw the committed bitmap seamlessly!
-        val heldBitmap = pendingCommittedBitmap
-        if (heldBitmap != null) {
-            val pageRect = computePageRect(heldBitmap, isPdfBook, isTwoPageSpread, w, h)
-            drawRect(color = effectivePageBgColor, size = size)
-            clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
-                drawPageBitmapFitted(heldBitmap, isPdfBook, isTwoPageSpread)
-                if (isTwoPageSpread) {
-                    val spineX = (pageRect.left + pageRect.right) / 2f
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.10f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 24f,
-                            endX = spineX + 24f
-                        ),
-                        topLeft = Offset(spineX - 24f, pageRect.top),
-                        size = Size(48f, pageRect.height)
-                    )
-                }
-            }
-            return@Canvas
-        }
-
+        val curBmp = displayedCurrentBmp
         val p = manualProgress?.coerceIn(0f, 1f) ?: progressAnim.value.coerceIn(0f, 1f)
-        val pageRect = computePageRect(currentPageBitmap, isPdfBook, isTwoPageSpread, w, h)
+        val pageRect = computePageRect(curBmp, isPdfBook, isTwoPageSpread, w, h)
 
         if (p <= 0.002f) {
             drawRect(color = effectivePageBgColor, size = size)
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
-                drawPageBitmapFitted(currentPageBitmap, isPdfBook, isTwoPageSpread)
+                drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread)
                 if (isTwoPageSpread) {
                     val spineX = (pageRect.left + pageRect.right) / 2f
                     drawRect(
@@ -885,7 +892,7 @@ fun CylindricalFlipbookCanvas(
 
         drawRect(color = effectivePageBgColor, size = size)
 
-        val destBitmap = if (effectiveTurnDir > 0) nextPageBitmap else prevPageBitmap
+        val destBitmap = if (effectiveTurnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
         val bell = sin(p * PI.toFloat())
 
         // Strict Page-Frame Clipping: page turn effect is strictly bounded to pageRect
@@ -905,7 +912,7 @@ fun CylindricalFlipbookCanvas(
                     if (r1Right > pageRect.left) {
                         clipRect(pageRect.left, pageRect.top, r1Right, pageRect.bottom) {
                             drawImage(
-                                image = currentPageBitmap,
+                                image = curBmp,
                                 dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
                                 dstSize = IntSize(pageRect.width.roundToInt(), pageH.roundToInt())
                             )
@@ -1025,7 +1032,7 @@ fun CylindricalFlipbookCanvas(
                     if (pageRect.right > r1Left) {
                         clipRect(r1Left, pageRect.top, pageRect.right, pageRect.bottom) {
                             drawImage(
-                                image = currentPageBitmap,
+                                image = curBmp,
                                 dstOffset = IntOffset(pageRect.left.roundToInt(), pageRect.top.roundToInt()),
                                 dstSize = IntSize(pageRect.width.roundToInt(), pageH.roundToInt())
                             )
@@ -1197,7 +1204,7 @@ fun CylindricalFlipbookCanvas(
                     clipPath(currPoly) {
                         // Draw flat underlying current page up to crease line F_top -> F_bot
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
-                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
+                        drawPageBitmapFitted(curBmp, isPdfBook, false)
 
                         // Drop shadow strictly along left leading edge leadTop -> leadBot of backPoly onto currPoly
                         val rdx = leadBot.x - leadTop.x
@@ -1249,7 +1256,7 @@ fun CylindricalFlipbookCanvas(
                                     alpha = (0.09f * 255).roundToInt()
                                 }
                                 val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
-                                nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
+                                nc.drawBitmap(curBmp.asAndroidBitmap(), null, dstRect, paint)
                                 nc.restore()
                             }
                         }
@@ -1327,7 +1334,7 @@ fun CylindricalFlipbookCanvas(
                     clipPath(currPoly) {
                         // Draw flat underlying current page up to crease line F_top -> F_bot
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
-                        drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
+                        drawPageBitmapFitted(curBmp, isPdfBook, false)
 
                         // Drop shadow strictly along right leading edge leadTop -> leadBot of backPoly onto currPoly
                         val rdx = leadBot.x - leadTop.x
@@ -1379,7 +1386,7 @@ fun CylindricalFlipbookCanvas(
                                     alpha = (0.09f * 255).roundToInt()
                                 }
                                 val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
-                                nc.drawBitmap(currentPageBitmap.asAndroidBitmap(), null, dstRect, paint)
+                                nc.drawBitmap(curBmp.asAndroidBitmap(), null, dstRect, paint)
                                 nc.restore()
                             }
                         }
