@@ -4482,36 +4482,35 @@ private fun buildEpubPageAnnotatedString(
         }
 
         val fullText = toAnnotatedString().text
-        bookHighlights.filter { hl ->
-            hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter
-        }.forEach { hl ->
-            if (hl.startCharIndex in 0 until fullText.length &&
+        val pageHls = bookHighlights.filter { hl ->
+            (hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter) ||
+            (displayPageIndex >= 0 && hl.pageIndex == displayPageIndex) ||
+            (hl.quoteText.isNotBlank() && fullText.contains(hl.quoteText.trim(), ignoreCase = true))
+        }
+        pageHls.forEach { hl ->
+            val hlStart = if (hl.startCharIndex in 0 until fullText.length &&
                 hl.endCharIndex in (hl.startCharIndex + 1)..fullText.length) {
-                val colorKey = HighlightColorKey.fromKey(hl.colorKey)
-                addStyle(
-                    SpanStyle(
-                        background = palette.highlightBg(colorKey),
-                        color = Color(0xFF18181B)
-                    ),
-                    hl.startCharIndex,
-                    hl.endCharIndex
-                )
+                hl.startCharIndex
             } else {
                 val quote = hl.quoteText.trim()
-                if (quote.isNotBlank()) {
-                    val found = fullText.indexOf(quote, ignoreCase = true)
-                    if (found >= 0) {
-                        val colorKey = HighlightColorKey.fromKey(hl.colorKey)
-                        addStyle(
-                            SpanStyle(
-                                background = palette.highlightBg(colorKey),
-                                color = Color(0xFF18181B)
-                            ),
-                            found,
-                            found + quote.length
-                        )
-                    }
-                }
+                if (quote.isNotBlank()) fullText.indexOf(quote, ignoreCase = true) else -1
+            }
+            val hlEnd = if (hl.startCharIndex in 0 until fullText.length &&
+                hl.endCharIndex in (hl.startCharIndex + 1)..fullText.length) {
+                hl.endCharIndex
+            } else if (hlStart >= 0) {
+                hlStart + hl.quoteText.trim().length
+            } else -1
+
+            if (hlStart in 0 until fullText.length && hlEnd in (hlStart + 1)..fullText.length) {
+                addStyle(
+                    SpanStyle(
+                        color = Color(0xFF18181B),
+                        fontWeight = FontWeight.Medium
+                    ),
+                    hlStart,
+                    hlEnd
+                )
             }
         }
     }
@@ -4792,7 +4791,51 @@ private fun InteractiveTextPageContent(
                             .drawWithContent {
                                 val l = textLayoutResult
                                 if (!transparentTextForFlipbook && l != null) {
-                                    // 2. Draw page text
+                                    // 1. Draw saved highlights pastel background rounded rects BEFORE drawing text
+                                    pageHighlights.forEach { hl ->
+                                        val colorKey = HighlightColorKey.fromKey(hl.colorKey)
+                                        val pastelBg = palette.highlightBg(colorKey)
+                                        val hlStart = if (hl.startCharIndex in 0 until fullPageText.length &&
+                                            hl.endCharIndex in (hl.startCharIndex + 1)..fullPageText.length) {
+                                            hl.startCharIndex
+                                        } else {
+                                            val q = hl.quoteText.trim()
+                                            if (q.isNotBlank()) fullPageText.indexOf(q, ignoreCase = true) else -1
+                                        }
+                                        val hlEnd = if (hl.startCharIndex in 0 until fullPageText.length &&
+                                            hl.endCharIndex in (hl.startCharIndex + 1)..fullPageText.length) {
+                                            hl.endCharIndex
+                                        } else if (hlStart >= 0) {
+                                            hlStart + hl.quoteText.trim().length
+                                        } else -1
+
+                                        if (hlStart in 0 until fullPageText.length && hlEnd in (hlStart + 1)..fullPageText.length) {
+                                            val sLine = l.getLineForOffset(hlStart)
+                                            val eLine = l.getLineForOffset(hlEnd)
+                                            val sX = l.getHorizontalPosition(hlStart, usePrimaryDirection = true)
+                                            val eX = l.getHorizontalPosition(hlEnd, usePrimaryDirection = true)
+
+                                            for (line in sLine..eLine) {
+                                                val lineLeft = if (line == sLine) sX else l.getLineLeft(line)
+                                                val lineRight = if (line == eLine) eX else l.getLineRight(line)
+                                                val rawTop = l.getLineTop(line)
+                                                val rawBottom = l.getLineBottom(line)
+                                                val lineH = rawBottom - rawTop
+                                                val tightTop = rawTop + lineH * 0.06f
+                                                val tightBottom = rawBottom - lineH * 0.14f
+                                                if (lineRight > lineLeft) {
+                                                    drawRoundRect(
+                                                        color = pastelBg,
+                                                        topLeft = Offset(lineLeft, tightTop),
+                                                        size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
+                                                        cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 2. Draw page text (color from SpanStyle preserved!)
                                     if (availHeightPx > 0f && l.size.height > availHeightPx) {
                                         val lastCompleteLine = (0 until l.lineCount)
                                             .lastOrNull { l.getLineBottom(it) <= availHeightPx + 2f }
@@ -5362,6 +5405,54 @@ private fun renderEpubPageSnapshot(
             style = pageTextStyle,
             constraints = Constraints(maxWidth = contentW)
         )
+
+        val snapshotFullText = annotatedString.text
+        val pageHls = highlights.filter { hl ->
+            (hl.chapterIndex == chapterIndex && hl.pageIndex == pageIndex) ||
+            (hl.quoteText.isNotBlank() && snapshotFullText.contains(hl.quoteText.trim(), ignoreCase = true))
+        }
+        pageHls.forEach { hl ->
+            val colorKey = HighlightColorKey.fromKey(hl.colorKey)
+            val pastelBg = palette.highlightBg(colorKey)
+            val hlStart = if (hl.startCharIndex in 0 until snapshotFullText.length &&
+                hl.endCharIndex in (hl.startCharIndex + 1)..snapshotFullText.length) {
+                hl.startCharIndex
+            } else {
+                val q = hl.quoteText.trim()
+                if (q.isNotBlank()) snapshotFullText.indexOf(q, ignoreCase = true) else -1
+            }
+            val hlEnd = if (hl.startCharIndex in 0 until snapshotFullText.length &&
+                hl.endCharIndex in (hl.startCharIndex + 1)..snapshotFullText.length) {
+                hl.endCharIndex
+            } else if (hlStart >= 0) {
+                hlStart + hl.quoteText.trim().length
+            } else -1
+
+            if (hlStart in 0 until snapshotFullText.length && hlEnd in (hlStart + 1)..snapshotFullText.length) {
+                val sLine = layout.getLineForOffset(hlStart)
+                val eLine = layout.getLineForOffset(hlEnd)
+                val sX = layout.getHorizontalPosition(hlStart, usePrimaryDirection = true)
+                val eX = layout.getHorizontalPosition(hlEnd, usePrimaryDirection = true)
+
+                for (line in sLine..eLine) {
+                    val lineLeft = if (line == sLine) sX else layout.getLineLeft(line)
+                    val lineRight = if (line == eLine) eX else layout.getLineRight(line)
+                    val rawTop = layout.getLineTop(line)
+                    val rawBottom = layout.getLineBottom(line)
+                    val lineH = rawBottom - rawTop
+                    val tightTop = rawTop + lineH * 0.06f
+                    val tightBottom = rawBottom - lineH * 0.14f
+                    if (lineRight > lineLeft) {
+                        drawRoundRect(
+                            color = pastelBg,
+                            topLeft = Offset(padX + lineLeft, currentY + tightTop),
+                            size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
+                            cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                        )
+                    }
+                }
+            }
+        }
 
         drawText(layout, topLeft = Offset(padX, currentY))
         if (pageTextStyle.fontWeight == FontWeight.Medium) {
