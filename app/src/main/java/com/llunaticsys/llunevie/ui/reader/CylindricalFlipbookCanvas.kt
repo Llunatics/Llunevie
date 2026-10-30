@@ -709,6 +709,7 @@ fun CylindricalFlipbookCanvas(
             )
         )
         pendingCommittedBitmap = destBmp
+        progressAnim.snapTo(0f)
         onPageTurnCommitted(dir)
     }
 
@@ -1150,6 +1151,13 @@ fun CylindricalFlipbookCanvas(
                     val rTop = reflectPointAcrossLine(Offset(pageRect.right, pageRect.top), fTop, fBot)
                     val rBot = reflectPointAcrossLine(Offset(pageRect.right, pageRect.bottom), fTop, fBot)
 
+                    val dyR = (rBot.y - rTop.y).let { if (kotlin.math.abs(it) < 1e-3f) 1e-3f else it }
+                    val dxR = rBot.x - rTop.x
+                    val leadTopX = rTop.x + (pageRect.top - rTop.y) * (dxR / dyR)
+                    val leadBotX = rTop.x + (pageRect.bottom - rTop.y) * (dxR / dyR)
+                    val leadTop = Offset(leadTopX, pageRect.top)
+                    val leadBot = Offset(leadBotX, pageRect.bottom)
+
                     val dxFold = foldBotX - foldTopX
                     val dyFold = pageRect.height.coerceAtLeast(1f)
                     val thetaRad = kotlin.math.atan2(dxFold, dyFold)
@@ -1179,10 +1187,10 @@ fun CylindricalFlipbookCanvas(
                         close()
                     }
                     val backPoly = Path().apply {
-                        moveTo(fTop.x, fTop.y)
-                        lineTo(rTop.x, rTop.y)
-                        lineTo(rBot.x, rBot.y)
-                        lineTo(fBot.x, fBot.y)
+                        moveTo(foldTopX, pageRect.top)
+                        lineTo(leadTopX, pageRect.top)
+                        lineTo(leadBotX, pageRect.bottom)
+                        lineTo(foldBotX, pageRect.bottom)
                         close()
                     }
 
@@ -1191,20 +1199,20 @@ fun CylindricalFlipbookCanvas(
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
 
-                        // Drop shadow strictly along outer edge R_top -> R_bot of backPoly onto currPoly
-                        val rdx = rBot.x - rTop.x
-                        val rdy = rBot.y - rTop.y
+                        // Drop shadow strictly along left leading edge leadTop -> leadBot of backPoly onto currPoly
+                        val rdx = leadBot.x - leadTop.x
+                        val rdy = leadBot.y - leadTop.y
                         val rLen = kotlin.math.hypot(rdx, rdy).coerceAtLeast(1f)
                         val ux = rdx / rLen
                         val uy = rdy / rLen
                         // Normal pointing to the left (into currPoly)
                         val nx = -uy
                         val ny = ux
-                        val shadowW = 10.dp.toPx() * bell
+                        val shadowW = 12.dp.toPx() * bell
                         if (shadowW > 0.5f) {
                             val ext = 60f
-                            val pA = Offset(rTop.x - ux * ext, rTop.y - uy * ext)
-                            val pB = Offset(rBot.x + ux * ext, rBot.y + uy * ext)
+                            val pA = Offset(leadTop.x - ux * ext, leadTop.y - uy * ext)
+                            val pB = Offset(leadBot.x + ux * ext, leadBot.y + uy * ext)
                             val pC = Offset(pB.x + nx * shadowW, pB.y + ny * shadowW)
                             val pD = Offset(pA.x + nx * shadowW, pA.y + ny * shadowW)
                             val shadowPath = Path().apply {
@@ -1214,7 +1222,7 @@ fun CylindricalFlipbookCanvas(
                                 lineTo(pD.x, pD.y)
                                 close()
                             }
-                            val midEdge = Offset((rTop.x + rBot.x) * 0.5f, (rTop.y + rBot.y) * 0.5f)
+                            val midEdge = Offset((leadTop.x + leadBot.x) * 0.5f, (leadTop.y + leadBot.y) * 0.5f)
                             val midOuter = Offset(midEdge.x + nx * shadowW, midEdge.y + ny * shadowW)
                             drawPath(
                                 path = shadowPath,
@@ -1246,11 +1254,11 @@ fun CylindricalFlipbookCanvas(
                             }
                         }
 
-                        // Hairline along outer edge R_top -> R_bot
+                        // Hairline along outer edge leadTop -> leadBot
                         drawLine(
                             color = Color.Black.copy(alpha = 0.07f),
-                            start = rTop,
-                            end = rBot,
+                            start = leadTop,
+                            end = leadBot,
                             strokeWidth = 0.75.dp.toPx()
                         )
                     }
@@ -1272,6 +1280,13 @@ fun CylindricalFlipbookCanvas(
 
                     val rTop = reflectPointAcrossLine(Offset(pageRect.left, pageRect.top), fTop, fBot)
                     val rBot = reflectPointAcrossLine(Offset(pageRect.left, pageRect.bottom), fTop, fBot)
+
+                    val dyR = (rBot.y - rTop.y).let { if (kotlin.math.abs(it) < 1e-3f) 1e-3f else it }
+                    val dxR = rBot.x - rTop.x
+                    val leadTopX = rTop.x + (pageRect.top - rTop.y) * (dxR / dyR)
+                    val leadBotX = rTop.x + (pageRect.bottom - rTop.y) * (dxR / dyR)
+                    val leadTop = Offset(leadTopX, pageRect.top)
+                    val leadBot = Offset(leadBotX, pageRect.bottom)
 
                     val dxFold = foldBotX - foldTopX
                     val dyFold = pageRect.height.coerceAtLeast(1f)
@@ -1302,10 +1317,10 @@ fun CylindricalFlipbookCanvas(
                         close()
                     }
                     val backPoly = Path().apply {
-                        moveTo(fTop.x, fTop.y)
-                        lineTo(rTop.x, rTop.y)
-                        lineTo(rBot.x, rBot.y)
-                        lineTo(fBot.x, fBot.y)
+                        moveTo(foldTopX, pageRect.top)
+                        lineTo(leadTopX, pageRect.top)
+                        lineTo(leadBotX, pageRect.bottom)
+                        lineTo(foldBotX, pageRect.bottom)
                         close()
                     }
 
@@ -1314,20 +1329,20 @@ fun CylindricalFlipbookCanvas(
                         drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
 
-                        // Drop shadow strictly along outer edge R_top -> R_bot of backPoly onto currPoly
-                        val rdx = rBot.x - rTop.x
-                        val rdy = rBot.y - rTop.y
+                        // Drop shadow strictly along right leading edge leadTop -> leadBot of backPoly onto currPoly
+                        val rdx = leadBot.x - leadTop.x
+                        val rdy = leadBot.y - leadTop.y
                         val rLen = kotlin.math.hypot(rdx, rdy).coerceAtLeast(1f)
                         val ux = rdx / rLen
                         val uy = rdy / rLen
                         // Normal pointing to the right (into currPoly)
                         val nx = uy
                         val ny = -ux
-                        val shadowW = 10.dp.toPx() * bell
+                        val shadowW = 12.dp.toPx() * bell
                         if (shadowW > 0.5f) {
                             val ext = 60f
-                            val pA = Offset(rTop.x - ux * ext, rTop.y - uy * ext)
-                            val pB = Offset(rBot.x + ux * ext, rBot.y + uy * ext)
+                            val pA = Offset(leadTop.x - ux * ext, leadTop.y - uy * ext)
+                            val pB = Offset(leadBot.x + ux * ext, leadBot.y + uy * ext)
                             val pC = Offset(pB.x + nx * shadowW, pB.y + ny * shadowW)
                             val pD = Offset(pA.x + nx * shadowW, pA.y + ny * shadowW)
                             val shadowPath = Path().apply {
@@ -1337,7 +1352,7 @@ fun CylindricalFlipbookCanvas(
                                 lineTo(pD.x, pD.y)
                                 close()
                             }
-                            val midEdge = Offset((rTop.x + rBot.x) * 0.5f, (rTop.y + rBot.y) * 0.5f)
+                            val midEdge = Offset((leadTop.x + leadBot.x) * 0.5f, (leadTop.y + leadBot.y) * 0.5f)
                             val midOuter = Offset(midEdge.x + nx * shadowW, midEdge.y + ny * shadowW)
                             drawPath(
                                 path = shadowPath,
@@ -1369,11 +1384,11 @@ fun CylindricalFlipbookCanvas(
                             }
                         }
 
-                        // Hairline along outer edge R_top -> R_bot
+                        // Hairline along outer edge leadTop -> leadBot
                         drawLine(
                             color = Color.Black.copy(alpha = 0.07f),
-                            start = rTop,
-                            end = rBot,
+                            start = leadTop,
+                            end = leadBot,
                             strokeWidth = 0.75.dp.toPx()
                         )
                     }
