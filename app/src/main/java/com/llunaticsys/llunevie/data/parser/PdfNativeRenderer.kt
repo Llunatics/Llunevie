@@ -57,6 +57,63 @@ object PdfNativeRenderer {
 
     private val aspectRatioCache = mutableMapOf<String, Float>()
 
+    // Dedicated high-resolution in-memory Bitmap LRU Cache for the full-screen illustration viewer (1600-2048px display resolution)
+    private val highResIllustCache = object : LruCache<String, Bitmap>(6) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
+    fun getCachedHighResIllustration(pdfFilePath: String, pageIndex: Int): Bitmap? {
+        val cached = highResIllustCache.get("$pdfFilePath:$pageIndex")
+        return if (cached != null && !cached.isRecycled) cached else null
+    }
+
+    suspend fun renderHighResIllustrationPage(
+        pdfFilePath: String,
+        pageIndex: Int,
+        targetWidthPx: Int = 1800
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        if (pageIndex < 0 || pdfFilePath.isBlank()) return@withContext null
+        val cacheKey = "$pdfFilePath:$pageIndex"
+        highResIllustCache.get(cacheKey)?.let { cached ->
+            if (!cached.isRecycled) return@withContext cached
+        }
+        val file = File(pdfFilePath)
+        if (!file.exists()) return@withContext null
+
+        renderMutex.withLock {
+            highResIllustCache.get(cacheKey)?.let { cached ->
+                if (!cached.isRecycled) return@withLock cached
+            }
+            runCatching {
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        if (pageIndex !in 0 until renderer.pageCount) return@use null
+                        renderer.openPage(pageIndex).use { page ->
+                            val rawW = page.width.coerceAtLeast(1)
+                            val rawH = page.height.coerceAtLeast(1)
+                            val targetW = targetWidthPx.coerceIn(1600, 2048)
+                            val scale = (targetW.toFloat() / rawW.toFloat()).coerceAtLeast(1.0f)
+                            var bmpW = (rawW * scale).toInt().coerceAtLeast(1)
+                            var bmpH = (rawH * scale).toInt().coerceAtLeast(1)
+                            val maxDim = 3840
+                            if (maxOf(bmpW, bmpH) > maxDim) {
+                                val downscale = maxDim.toFloat() / maxOf(bmpW, bmpH).toFloat()
+                                bmpW = (bmpW * downscale).toInt().coerceAtLeast(1)
+                                bmpH = (bmpH * downscale).toInt().coerceAtLeast(1)
+                            }
+                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bitmap)
+                            canvas.drawColor(Color.WHITE)
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            highResIllustCache.put(cacheKey, bitmap)
+                            bitmap
+                        }
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+
     fun getCachedBitmap(pdfFilePath: String, pageIndex: Int, widthBucket: Int): Bitmap? {
         return pageBitmapCache.get("$pdfFilePath:$pageIndex:$widthBucket")
     }

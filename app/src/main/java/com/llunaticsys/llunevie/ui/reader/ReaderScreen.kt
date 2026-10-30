@@ -83,6 +83,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -164,7 +165,10 @@ import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.data.local.localizeChapterTitle
 import com.llunaticsys.llunevie.data.local.HighlightNoteEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
+import com.llunaticsys.llunevie.data.parser.EpubNativeParser
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.HighlightColorKey
 import com.llunaticsys.llunevie.model.PageAnimStyle
@@ -3641,8 +3645,50 @@ fun ReaderScreen(
             val illusts = uiState.activeBookIllustrations
             val activeItem = illusts.getOrElse(uiState.activeIllustIndex) { illusts.first() }
             var manualScale by remember(uiState.activeIllustIndex) { mutableFloatStateOf(1f) }
-            var panOffset by remember(uiState.activeIllustIndex) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-            val currentZoom = (manualScale * uiState.illustZoom).coerceIn(1f, 5f)
+            var panOffset by remember(uiState.activeIllustIndex) { mutableStateOf(Offset.Zero) }
+            val currentZoom = manualScale.coerceIn(1f, 4f)
+
+            val pdfPath = book.localFilePath.orEmpty()
+            var pdfHighResBmp by remember(activeItem.pageIndexInBook, pdfPath) {
+                mutableStateOf(if (isPdfBook && pdfPath.isNotBlank()) PdfNativeRenderer.getCachedHighResIllustration(pdfPath, activeItem.pageIndexInBook) else null)
+            }
+            var epubHighResBmp by remember(activeItem.uriOrPath) {
+                mutableStateOf(if (!isPdfBook) EpubNativeParser.getCachedFullResImage(activeItem.uriOrPath) else null)
+            }
+
+            LaunchedEffect(uiState.activeIllustIndex, isPdfBook, pdfPath, activeItem.uriOrPath) {
+                withContext(Dispatchers.IO) {
+                    if (isPdfBook && pdfPath.isNotBlank()) {
+                        val bmp = PdfNativeRenderer.renderHighResIllustrationPage(pdfPath, activeItem.pageIndexInBook, 1800)
+                        withContext(Dispatchers.Main) {
+                            pdfHighResBmp = bmp
+                        }
+                        // Prefetch next and previous illustrations
+                        val nextIdx = uiState.activeIllustIndex + 1
+                        if (nextIdx < illusts.size) {
+                            PdfNativeRenderer.renderHighResIllustrationPage(pdfPath, illusts[nextIdx].pageIndexInBook, 1800)
+                        }
+                        val prevIdx = uiState.activeIllustIndex - 1
+                        if (prevIdx >= 0) {
+                            PdfNativeRenderer.renderHighResIllustrationPage(pdfPath, illusts[prevIdx].pageIndexInBook, 1800)
+                        }
+                    } else if (!isPdfBook) {
+                        val bmp = EpubNativeParser.decodeFullResImage(activeItem.uriOrPath)
+                        withContext(Dispatchers.Main) {
+                            epubHighResBmp = bmp
+                        }
+                        // Prefetch next and previous illustrations
+                        val nextIdx = uiState.activeIllustIndex + 1
+                        if (nextIdx < illusts.size) {
+                            EpubNativeParser.decodeFullResImage(illusts[nextIdx].uriOrPath)
+                        }
+                        val prevIdx = uiState.activeIllustIndex - 1
+                        if (prevIdx >= 0) {
+                            EpubNativeParser.decodeFullResImage(illusts[prevIdx].uriOrPath)
+                        }
+                    }
+                }
+            }
 
             Column(
                 modifier = Modifier
@@ -3650,75 +3696,99 @@ fun ReaderScreen(
                     .background(palette.bgApp)
                     .clickable(enabled = false) {}
             ) {
-                Surface(
-                    color = palette.bgCard,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier.fillMaxWidth()
+                // Top Bar (Row with statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), Arrangement.SpaceBetween, Alignment.CenterVertically)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .statusBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    val pageNum = activeItem.pageIndexInBook + 1
+                    val pageLabel = if (strings.isEn) "Page $pageNum" else "Hal $pageNum"
+
+                    // Left — Refined Counter & Page Pill
+                    Surface(
+                        shape = CircleShape,
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier.height(34.dp)
                     ) {
                         Row(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .padding(horizontal = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = strings.illustBadge,
-                                color = palette.textMuted,
-                                fontSize = 10.sp,
+                                text = "${uiState.activeIllustIndex + 1} / ${illusts.size}",
+                                fontSize = 11.5.sp,
                                 fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.textPrimary
                             )
-                            Surface(
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft)
-                            ) {
-                                Text(
-                                    text = "${uiState.activeIllustIndex + 1} / ${illusts.size}",
-                                    color = palette.textMain,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-
-                        Surface(
-                            onClick = onCloseIllustViewer,
-                            shape = CircleShape,
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft)
-                        ) {
                             Text(
-                                text = "${strings.closeText} ✕",
-                                color = palette.textMain,
+                                text = " · ",
+                                fontSize = 11.sp,
+                                color = palette.textMuted
+                            )
+                            Text(
+                                text = pageLabel,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                color = palette.textSecondary
+                            )
+                        }
+                    }
+
+                    // Right — Clean Circular Close (✕) Button
+                    Surface(
+                        onClick = onCloseIllustViewer,
+                        shape = CircleShape,
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.CLOSE_X,
+                                tint = palette.textPrimary,
+                                modifier = Modifier.size(12.dp),
+                                strokeWidthDp = 1.5f
                             )
                         }
                     }
                 }
 
+                // Interactive Pinch-to-Zoom & Drag-to-Pan Viewport
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                         .background(palette.bgApp)
                         .clipToBounds()
-                        .pointerInput(uiState.activeIllustIndex, uiState.illustZoom) {
+                        .pointerInput(uiState.activeIllustIndex) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    if (manualScale > 1.2f) {
+                                        manualScale = 1f
+                                        panOffset = Offset.Zero
+                                    } else {
+                                        manualScale = 2.2f
+                                        panOffset = Offset.Zero
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(uiState.activeIllustIndex) {
                             detectTransformGestures { centroid: Offset, pan: Offset, zoom: Float, rotation: Float ->
-                                val nextScale = (manualScale * zoom).coerceIn(1f, 5f)
+                                val nextScale = (manualScale * zoom).coerceIn(1f, 4f)
                                 manualScale = nextScale
-                                val eff = nextScale * uiState.illustZoom
-                                if (eff > 1.02f) {
-                                    val maxPanX = (size.width.toFloat() * (eff - 1f)) / 2f
-                                    val maxPanY = (size.height.toFloat() * (eff - 1f)) / 2f
+                                if (nextScale > 1.02f) {
+                                    val maxPanX = (size.width.toFloat() * (nextScale - 1f)) / 2f
+                                    val maxPanY = (size.height.toFloat() * (nextScale - 1f)) / 2f
                                     val nextPanX = (panOffset.x + pan.x).coerceIn(-maxPanX, maxPanX)
                                     val nextPanY = (panOffset.y + pan.y).coerceIn(-maxPanY, maxPanY)
                                     panOffset = Offset(nextPanX, nextPanY)
@@ -3726,27 +3796,10 @@ fun ReaderScreen(
                                     panOffset = Offset.Zero
                                 }
                             }
-                        }
-                        .pointerInput(uiState.activeIllustIndex, uiState.illustZoom) {
-                            detectTapGestures(
-                                onDoubleTap = {
-                                    if (currentZoom > 1.2f) {
-                                        manualScale = 1f
-                                        onSetIllustZoom(1f)
-                                        panOffset = androidx.compose.ui.geometry.Offset.Zero
-                                    } else {
-                                        manualScale = 2.2f
-                                        panOffset = androidx.compose.ui.geometry.Offset.Zero
-                                    }
-                                }
-                            )
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    AsyncImage(
-                        model = File(activeItem.uriOrPath),
-                        contentDescription = activeItem.caption,
-                        contentScale = ContentScale.Fit,
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(8.dp)
@@ -3755,127 +3808,109 @@ fun ReaderScreen(
                                 scaleY = currentZoom
                                 translationX = if (currentZoom > 1.02f) panOffset.x else 0f
                                 translationY = if (currentZoom > 1.02f) panOffset.y else 0f
-                            }
-                    )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = File(activeItem.uriOrPath),
+                            contentDescription = activeItem.caption,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        val displayBitmap = if (isPdfBook) pdfHighResBmp else epubHighResBmp
+                        if (displayBitmap != null && !displayBitmap.isRecycled) {
+                            Image(
+                                bitmap = displayBitmap.asImageBitmap(),
+                                contentDescription = activeItem.caption,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
                 }
 
-                Surface(
-                    color = palette.bgCard,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier.fillMaxWidth()
+                // Bottom Bar (Column with navigationBarsPadding().padding(horizontal = 20.dp, vertical = 14.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
+                    if (activeItem.caption.isNotBlank()) {
                         Text(
                             text = activeItem.caption,
-                            color = palette.textMain,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Serif,
+                            color = palette.textSecondary,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp)
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .padding(horizontal = 3.dp, vertical = 2.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    listOf(1f to "1.0x", 1.75f to "1.75x", 2.5f to "2.5x").forEach { (zVal, zLbl) ->
-                                        val active = (kotlin.math.abs(currentZoom - zVal) < 0.15f)
-                                        Surface(
-                                            onClick = {
-                                                onSetIllustZoom(zVal)
-                                                manualScale = 1f
-                                                panOffset = androidx.compose.ui.geometry.Offset.Zero
-                                            },
-                                            shape = CircleShape,
-                                            color = if (active) palette.pillActiveBg else Color.Transparent,
-                                            border = if (active) BorderStroke(1.dp, palette.pillActiveBorder) else null,
-                                            modifier = Modifier.fillMaxHeight()
-                                        ) {
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(horizontal = 8.dp)
-                                            ) {
-                                                Text(
-                                                    text = zLbl,
-                                                    color = if (active) palette.textMain else palette.textMuted,
-                                                    fontSize = 10.sp,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Surface(
-                                    onClick = {
-                                        manualScale = 1f
-                                        panOffset = androidx.compose.ui.geometry.Offset.Zero
-                                        onOpenIllustViewer(uiState.activeIllustIndex - 1)
-                                    },
-                                    shape = CircleShape,
-                                    color = palette.bgSurface,
-                                    border = BorderStroke(1.dp, palette.borderSoft),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 11.dp)
-                                    ) {
-                                        Text(
-                                            text = strings.prevText,
-                                            color = palette.textMain,
-                                            fontSize = 10.5.sp,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val canGoPrev = uiState.activeIllustIndex > 0
+                        val canGoNext = uiState.activeIllustIndex < illusts.size - 1
+
+                        Surface(
+                            onClick = {
+                                if (canGoPrev) {
+                                    manualScale = 1f
+                                    panOffset = Offset.Zero
+                                    onOpenIllustViewer(uiState.activeIllustIndex - 1)
                                 }
-                                Surface(
-                                    onClick = {
-                                        manualScale = 1f
-                                        panOffset = androidx.compose.ui.geometry.Offset.Zero
-                                        onOpenIllustViewer(uiState.activeIllustIndex + 1)
-                                    },
-                                    shape = CircleShape,
-                                    color = palette.bgSurface,
-                                    border = BorderStroke(1.dp, palette.borderSoft),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 11.dp)
-                                    ) {
-                                        Text(
-                                            text = strings.nextText,
-                                            color = palette.textMain,
-                                            fontSize = 10.5.sp,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    }
+                            },
+                            enabled = canGoPrev,
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .alpha(if (canGoPrev) 1.0f else 0.4f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isEn) "‹  Previous" else "‹  Sebelumnya",
+                                    color = palette.textPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                if (canGoNext) {
+                                    manualScale = 1f
+                                    panOffset = Offset.Zero
+                                    onOpenIllustViewer(uiState.activeIllustIndex + 1)
                                 }
+                            },
+                            enabled = canGoNext,
+                            shape = CircleShape,
+                            color = palette.textPrimary,
+                            border = BorderStroke(1.dp, palette.textPrimary),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .alpha(if (canGoNext) 1.0f else 0.4f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isEn) "Next  ›" else "Berikutnya  ›",
+                                    color = palette.bgApp,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
                     }

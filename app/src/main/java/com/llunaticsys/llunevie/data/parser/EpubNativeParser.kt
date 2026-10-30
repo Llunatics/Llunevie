@@ -1,8 +1,10 @@
 package com.llunaticsys.llunevie.data.parser
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.LruCache
 import com.llunaticsys.llunevie.data.local.BookChapterEntity
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
@@ -28,6 +30,37 @@ data class ParsedBookBundle(
 )
 
 object EpubNativeParser {
+
+    // In-memory LRU Cache for uncompressed full-resolution EPUB illustration images
+    private val fullResImageCache = object : LruCache<String, Bitmap>(8) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
+    fun getCachedFullResImage(imagePath: String): Bitmap? {
+        val cached = fullResImageCache.get(imagePath)
+        return if (cached != null && !cached.isRecycled) cached else null
+    }
+
+    fun decodeFullResImage(imagePath: String): Bitmap? {
+        if (imagePath.isBlank()) return null
+        fullResImageCache.get(imagePath)?.let {
+            if (!it.isRecycled) return it
+        }
+        val cleanPath = if (imagePath.startsWith("file://")) imagePath.removePrefix("file://") else imagePath
+        val file = File(cleanPath)
+        if (!file.exists()) return null
+        return runCatching {
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = 1
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val bmp = BitmapFactory.decodeFile(cleanPath, options)
+            if (bmp != null) {
+                fullResImageCache.put(imagePath, bmp)
+            }
+            bmp
+        }.getOrNull()
+    }
 
     private fun resolveRelativeZipPath(baseDir: String, relHref: String): String {
         val clean = relHref.substringBefore("#").substringBefore("?").trimStart('/')
