@@ -24,6 +24,9 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -51,6 +54,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -347,13 +357,19 @@ fun ReaderScreen(
                         val step = if (isSpread) 2 else 1
 
                         val curLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook) PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360)) else null,
+                            initialValue = if (isPdfBook) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero)
+                            } else null,
                             isPdfBook, curZero, book.localFilePath, stageW
                         ) {
                             value = if (isPdfBook) PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero, stageW) else null
                         }
                         val curRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = null,
+                            initialValue = if (isPdfBook && isSpread && curZero + 1 < metrics.totalBookPages) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero + 1, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero + 1)
+                            } else null,
                             isPdfBook, isSpread, curZero, book.localFilePath, stageW
                         ) {
                             value = if (isPdfBook && isSpread && curZero + 1 < metrics.totalBookPages) {
@@ -361,7 +377,10 @@ fun ReaderScreen(
                             } else null
                         }
                         val nextLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = null,
+                            initialValue = if (isPdfBook && curZero + step < metrics.totalBookPages) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero + step, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero + step)
+                            } else null,
                             isPdfBook, curZero, step, book.localFilePath, stageW
                         ) {
                             value = if (isPdfBook && curZero + step < metrics.totalBookPages) {
@@ -369,7 +388,10 @@ fun ReaderScreen(
                             } else null
                         }
                         val nextRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = null,
+                            initialValue = if (isPdfBook && isSpread && curZero + step + 1 < metrics.totalBookPages) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero + step + 1, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero + step + 1)
+                            } else null,
                             isPdfBook, isSpread, curZero, step, book.localFilePath, stageW
                         ) {
                             value = if (isPdfBook && isSpread && curZero + step + 1 < metrics.totalBookPages) {
@@ -377,7 +399,10 @@ fun ReaderScreen(
                             } else null
                         }
                         val prevLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = null,
+                            initialValue = if (isPdfBook && curZero - step >= 0) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero - step, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero - step)
+                            } else null,
                             isPdfBook, curZero, step, book.localFilePath, stageW
                         ) {
                             value = if (isPdfBook && curZero - step >= 0) {
@@ -385,12 +410,20 @@ fun ReaderScreen(
                             } else null
                         }
                         val prevRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = null,
+                            initialValue = if (isPdfBook && isSpread && curZero - step + 1 >= 0) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero - step + 1, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero - step + 1)
+                            } else null,
                             isPdfBook, isSpread, curZero, step, book.localFilePath, stageW
                         ) {
                             value = if (isPdfBook && isSpread && curZero - step + 1 >= 0) {
                                 PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero - step + 1, stageW / 2)
                             } else null
+                        }
+
+                        var promotedTargetBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+                        LaunchedEffect(curZero) {
+                            promotedTargetBitmap = null
                         }
 
                         val textMeasurer = rememberTextMeasurer()
@@ -430,8 +463,14 @@ fun ReaderScreen(
                         }
 
                         if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                            val curBitmapInitial = if (isPdfBook && !isSpread) {
+                                (curLeftPdfBmp
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero))?.asImageBitmap()
+                            } else null
+
                             val curBitmap by produceState<ImageBitmap?>(
-                                initialValue = null,
+                                initialValue = curBitmapInitial,
                                 curZero, isSpread, isPdfBook, currentPageRaw, curLeftPdfBmp, curRightPdfBmp,
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
                             ) {
@@ -625,6 +664,10 @@ fun ReaderScreen(
                                                         val anim = Animatable(liveDragProgress)
                                                         anim.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) {
                                                             liveDragProgress = value
+                                                        }
+                                                        val targetBmp = if (flipTurnDir > 0) nextBitmap else prevBitmap
+                                                        if (targetBmp != null) {
+                                                            promotedTargetBitmap = targetBmp
                                                         }
                                                         onTurnPage(flipTurnDir)
                                                     } else {
@@ -894,7 +937,7 @@ fun ReaderScreen(
                                     }
                                 }
 
-                                val activeBmp = curBitmap
+                                val activeBmp = promotedTargetBitmap ?: curBitmap
                                 if (activeBmp != null && (isPdfBook || isFlippingInProgress || externalFlipTrigger != 0)) {
                                     CylindricalFlipbookCanvas(
                                         currentPageBitmap = activeBmp,
@@ -1146,6 +1189,7 @@ fun ReaderScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
+                                                .background(palette.bgApp)
                                                 .padding(vertical = 4.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -4591,6 +4635,7 @@ fun PdfPageItemContent(
     viewModel: LlunevieViewModel,
     modifier: Modifier = Modifier
 ) {
+    val palette = LocalLluneviePalette.current
     // Initialize synchronously from LRU cache so cached pages render on Frame 0 with ZERO null blink!
     var pageBitmap by remember(bookId, pageIndex) {
         mutableStateOf(viewModel.getCachedPdfBitmap(bookId, pageIndex))
@@ -4603,17 +4648,28 @@ fun PdfPageItemContent(
         viewModel.prefetchPdfNeighbors(bookId, filePath, pageIndex)
     }
     Box(
-        modifier = modifier.fillMaxSize().background(Color.White),
+        modifier = modifier.fillMaxSize().background(palette.bgApp),
         contentAlignment = Alignment.Center
     ) {
         val bmp = pageBitmap
         if (bmp != null) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = "Page ${pageIndex + 1}",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
+            val ratio = if (bmp.height > 0) (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f) else 0.707f
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = Color.White,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(ratio)
+                    .padding(vertical = 4.dp)
+            ) {
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = "Page ${pageIndex + 1}",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }

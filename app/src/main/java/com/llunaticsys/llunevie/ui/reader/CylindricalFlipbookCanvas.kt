@@ -1148,6 +1148,9 @@ fun CylindricalFlipbookCanvas(
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
                     val diagLen = kotlin.math.hypot(dxFold, dyFold) + pageRect.width
 
+                    val rLen = kotlin.math.hypot(rBot.x - rTop.x, rBot.y - rTop.y).coerceAtLeast(1f)
+                    val rAngleDeg = Math.toDegrees(kotlin.math.atan2(rBot.x - rTop.x, rBot.y - rTop.y).toDouble()).toFloat()
+
                     // Region A: Unpeeled page (left of crease)
                     val curPath = Path().apply {
                         moveTo(pageRect.left, pageRect.top)
@@ -1161,9 +1164,10 @@ fun CylindricalFlipbookCanvas(
                         drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
 
                         // Soft natural cast shadow to the left of the peeled leading edge R_top -> R_bot
+                        // Rotated by the exact angle of R_top -> R_bot (rAngleDeg) and strictly clipped to curPath!
                         withTransform({
                             translate(left = rTop.x, top = rTop.y)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
+                            rotate(degrees = rAngleDeg, pivot = Offset.Zero)
                         }) {
                             val castW = 12.dp.toPx() * bell
                             if (castW > 0.5f) {
@@ -1173,8 +1177,8 @@ fun CylindricalFlipbookCanvas(
                                         startX = -castW,
                                         endX = 0f
                                     ),
-                                    topLeft = Offset(-castW, -pageRect.width * 0.5f),
-                                    size = Size(castW, diagLen * 1.5f)
+                                    topLeft = Offset(-castW, -50f),
+                                    size = Size(castW, rLen + 100f)
                                 )
                             }
                         }
@@ -1257,6 +1261,9 @@ fun CylindricalFlipbookCanvas(
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
                     val diagLen = kotlin.math.hypot(dxFold, dyFold) + pageRect.width
 
+                    val rLen = kotlin.math.hypot(rBot.x - rTop.x, rBot.y - rTop.y).coerceAtLeast(1f)
+                    val rAngleDeg = Math.toDegrees(kotlin.math.atan2(rBot.x - rTop.x, rBot.y - rTop.y).toDouble()).toFloat()
+
                     // Region B: Uncovered prev page (left of crease) — no dark crease shadow smudge
                     val destPath = Path().apply {
                         moveTo(pageRect.left, pageRect.top)
@@ -1285,9 +1292,10 @@ fun CylindricalFlipbookCanvas(
                         drawPageBitmapFitted(currentPageBitmap, isPdfBook, false)
 
                         // Soft natural cast shadow to the right of the peeled leading edge R_top -> R_bot
+                        // Rotated by the exact angle of R_top -> R_bot (rAngleDeg) and strictly clipped to curPath!
                         withTransform({
                             translate(left = rTop.x, top = rTop.y)
-                            rotate(degrees = -thetaDeg, pivot = Offset.Zero)
+                            rotate(degrees = rAngleDeg, pivot = Offset.Zero)
                         }) {
                             val castW = 12.dp.toPx() * bell
                             if (castW > 0.5f) {
@@ -1297,8 +1305,8 @@ fun CylindricalFlipbookCanvas(
                                         startX = 0f,
                                         endX = castW
                                     ),
-                                    topLeft = Offset(0f, -pageRect.width * 0.5f),
-                                    size = Size(castW, diagLen * 1.5f)
+                                    topLeft = Offset(0f, -50f),
+                                    size = Size(castW, rLen + 100f)
                                 )
                             }
                         }
