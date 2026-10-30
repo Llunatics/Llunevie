@@ -50,8 +50,8 @@ object PdfNativeRenderer {
 
     private val renderMutex = Mutex()
 
-    // High-speed in-memory Bitmap LRU Cache capped to at most 8 page bitmaps
-    private val pageBitmapCache = object : LruCache<String, Bitmap>(8) {
+    // High-speed in-memory Bitmap LRU Cache capped to at most 32 page bitmaps (capacity >= 16)
+    private val pageBitmapCache = object : LruCache<String, Bitmap>(32) {
         override fun sizeOf(key: String, value: Bitmap): Int = 1
     }
 
@@ -418,31 +418,71 @@ object PdfNativeRenderer {
         return null
     }
 
+    fun cleanFooterTitle(line: String): String {
+        val s = line.trim()
+            .replace(Regex("^\\d{1,4}\\s+"), "")
+            .replace(Regex("\\s+\\d{1,4}$"), "")
+            .replace(Regex("^[|•\\-–—]+\\s*"), "")
+            .replace(Regex("\\s*[|•\\-–—]+$"), "")
+            .trim()
+        if (s.all { it.isDigit() || it.isWhitespace() || it == '.' || it == '-' || it == '–' || it == '—' || it == '|' || it == '•' }) {
+            return ""
+        }
+        return sanitizeChapterTitle(s)
+    }
+
     fun deduplicateChapters(
         rawChapters: List<PdfBookmark>,
         totalPages: Int,
         defaultTitle: String
     ): List<PdfBookmark> {
         val noiseWords = setOf("contents", "tableofcontents", "daftarisi", "isibuku", "copyright", "hakcipta", "cover", "sampul")
-        val seenKeys = mutableSetOf<String>()
-        val seenPages = mutableSetOf<Int>()
-        val result = mutableListOf<PdfBookmark>()
+        val normBook = defaultTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val chapterKeywordRegex = Regex("(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+\\d+|bab\\s+\\d+|bagian\\s+\\d+|part\\s+\\d+|interlude|side\\s+story|afterword|penutup)\\b.*")
 
+        // 1. Group by page and pick the best candidate per page
+        val pageMap = mutableMapOf<Int, PdfBookmark>()
         for (ch in rawChapters) {
             val clean = sanitizeChapterTitle(ch.title)
             if (clean.length < 2) continue
             if (clean.all { it.isDigit() || it.isWhitespace() || it == '.' }) continue
             val normKey = clean.lowercase().replace(Regex("[^a-z0-9]"), "")
-            if (normKey in noiseWords) continue
-            if (normKey.isEmpty()) continue
-            if (seenKeys.contains(normKey)) continue
+            if (normKey in noiseWords || normKey.isEmpty()) continue
 
-            val page = ch.startPageZero.coerceIn(0, totalPages - 1)
-            if (seenPages.contains(page)) continue
+            val page = ch.startPageZero.coerceIn(0, (totalPages - 1).coerceAtLeast(0))
+            val existing = pageMap[page]
+            if (existing == null) {
+                pageMap[page] = PdfBookmark(clean, page)
+            } else {
+                val existingIsKeyword = chapterKeywordRegex.matches(existing.title)
+                val newIsKeyword = chapterKeywordRegex.matches(clean)
+                if ((newIsKeyword && !existingIsKeyword) || (newIsKeyword == existingIsKeyword && clean.length > existing.title.length)) {
+                    pageMap[page] = PdfBookmark(clean, page)
+                }
+            }
+        }
 
-            seenKeys.add(normKey)
-            seenPages.add(page)
-            result.add(PdfBookmark(clean, page))
+        // 2. Remove generic fallback entries spanning areas where real chapters exist
+        val sorted = pageMap.values.sortedBy { it.startPageZero }.toMutableList()
+        val realChaptersExist = sorted.any {
+            val n = it.title.lowercase().replace(Regex("[^a-z0-9]"), "")
+            n != normBook && !it.title.contains(defaultTitle, ignoreCase = true)
+        }
+        if (realChaptersExist) {
+            sorted.removeAll { ch ->
+                val n = ch.title.lowercase().replace(Regex("[^a-z0-9]"), "")
+                ch.startPageZero > 0 && (n == normBook || ch.title.contains(defaultTitle, ignoreCase = true))
+            }
+        }
+
+        // 3. Deduplicate by normalized title (keep earliest start page)
+        val seenKeys = mutableSetOf<String>()
+        val result = mutableListOf<PdfBookmark>()
+        for (ch in sorted) {
+            val normKey = ch.title.lowercase().replace(Regex("[^a-z0-9]"), "")
+            if (seenKeys.add(normKey)) {
+                result.add(ch)
+            }
         }
 
         result.sortBy { it.startPageZero }
@@ -461,6 +501,7 @@ object PdfNativeRenderer {
     ): List<PdfBookmark> {
         val detectedBookmarks = mutableListOf<PdfBookmark>()
         val tocBookmarks = mutableListOf<PdfBookmark>()
+        val additiveBookmarks = mutableListOf<PdfBookmark>()
 
         runCatching {
             PDFBoxResourceLoader.init(context.applicationContext)
@@ -635,17 +676,128 @@ object PdfNativeRenderer {
                     }
                 }
 
+                onStageProgress(45)
+
+                // Additive full-book header/footer chapter scan across all pages (0 until safeTotalPages)
+                // whenever the existing outline/ToC pass finds fewer chapters than expected (< 2)
+                // or leaves any chapter spanning > 60 pages.
+                val combinedInitial = when {
+                    detectedBookmarks.size >= 2 && tocBookmarks.size >= 2 -> detectedBookmarks + tocBookmarks
+                    detectedBookmarks.size >= 2 -> detectedBookmarks
+                    tocBookmarks.size >= 2 -> tocBookmarks
+                    else -> detectedBookmarks + tocBookmarks
+                }
+
+                val initialChapters = deduplicateChapters(combinedInitial, safeTotalPages, defaultTitle)
+                var hasGiantSpan = false
+                if (initialChapters.isEmpty()) {
+                    hasGiantSpan = safeTotalPages > 0
+                } else {
+                    for (i in initialChapters.indices) {
+                        val s = initialChapters[i].startPageZero
+                        val e = if (i + 1 < initialChapters.size) initialChapters[i + 1].startPageZero else safeTotalPages
+                        if (e - s > 60) {
+                            hasGiantSpan = true
+                            break
+                        }
+                    }
+                }
+
+                if ((initialChapters.size < 2 || hasGiantSpan) && textStripper != null) {
+                    val normBookTitle = defaultTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
+                    fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+                    fun isValidChapterTitle(t: String): Boolean {
+                        val n = norm(t)
+                        return t.length in 4..85 && n != normBookTitle && n.isNotEmpty() &&
+                            !t.all { it.isDigit() || it.isWhitespace() || it == '.' }
+                    }
+
+                    val chapterKeywordRegex = Regex(
+                        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+\\d+|bab\\s+\\d+|bagian\\s+\\d+|part\\s+\\d+|interlude|side\\s+story|afterword|penutup)\\b.*"
+                    )
+
+                    val pageFooterTitles = arrayOfNulls<String>(safeTotalPages)
+
+                    for (p in 0 until safeTotalPages) {
+                        textStripper.startPage = p + 1
+                        textStripper.endPage = p + 1
+                        val pageText = runCatching { textStripper.getText(document) }.getOrDefault("")
+                        val lines = pageText.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                        if (lines.isEmpty()) continue
+
+                        val topLines = lines.take(3)
+                        val bottomLines = lines.takeLast(2)
+
+                        val cleanedBottomLines = bottomLines.map { cleanFooterTitle(it) }.filter { isValidChapterTitle(it) }
+                        val bestFooter = cleanedBottomLines.lastOrNull()
+                        if (bestFooter != null) {
+                            pageFooterTitles[p] = bestFooter
+                        }
+
+                        // Condition A — Top + Bottom Matching Chapter Title on the Same Page
+                        val cleanedTopLines = topLines.map { cleanFooterTitle(it) }.filter { isValidChapterTitle(it) }
+                        var conditionAMatched = false
+                        for (topClean in cleanedTopLines) {
+                            val topNorm = norm(topClean)
+                            for (botClean in cleanedBottomLines) {
+                                val botNorm = norm(botClean)
+                                if (topNorm == botNorm) {
+                                    val candidateTitle = if (topClean.length >= botClean.length) topClean else botClean
+                                    additiveBookmarks.add(PdfBookmark(candidateTitle, p))
+                                    conditionAMatched = true
+                                    break
+                                }
+                            }
+                            if (conditionAMatched) break
+                        }
+
+                        // Condition B — Explicit Chapter Keyword in topLines Anywhere in the Book (0 until totalPages)
+                        if (!conditionAMatched) {
+                            for (line in topLines) {
+                                val cleanLine = sanitizeChapterTitle(line)
+                                if (cleanLine.length in 4..85 && chapterKeywordRegex.matches(cleanLine)) {
+                                    val n = norm(cleanLine)
+                                    if (n != normBookTitle && !cleanLine.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
+                                        additiveBookmarks.add(PdfBookmark(cleanLine, p))
+                                        break
+                                    }
+                                }
+                            }
+                        }
+
+                        if (p % 20 == 0 || p == safeTotalPages - 1) {
+                            val pct = 45 + (p * 10 / safeTotalPages.coerceAtLeast(1))
+                            onStageProgress(pct.coerceIn(45, 55))
+                        }
+                    }
+
+                    // Condition C — Running Bottom Footer Chapter Name Transition
+                    for (p in 0 until safeTotalPages) {
+                        val t = pageFooterTitles[p] ?: continue
+                        val prevT = if (p > 0) pageFooterTitles[p - 1] else null
+                        if (norm(t) != norm(prevT.orEmpty())) {
+                            val next1T = if (p + 1 < safeTotalPages) pageFooterTitles[p + 1] else null
+                            val next2T = if (p + 2 < safeTotalPages) pageFooterTitles[p + 2] else null
+                            val repeats = (next1T != null && norm(next1T) == norm(t)) || (next2T != null && norm(next2T) == norm(t))
+                            if (repeats) {
+                                additiveBookmarks.add(PdfBookmark(t, p))
+                            }
+                        }
+                    }
+                }
+
                 onStageProgress(55)
             }
         }
 
         val combined = when {
+            detectedBookmarks.size >= 2 && tocBookmarks.size >= 2 -> detectedBookmarks + tocBookmarks
             detectedBookmarks.size >= 2 -> detectedBookmarks
             tocBookmarks.size >= 2 -> tocBookmarks
             else -> detectedBookmarks + tocBookmarks
         }
 
-        return deduplicateChapters(combined, totalPages, defaultTitle)
+        return deduplicateChapters(combined + additiveBookmarks, totalPages, defaultTitle)
     }
 
     data class EmbeddedImageSpec(
