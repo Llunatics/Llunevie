@@ -923,6 +923,42 @@ class LlunevieViewModel(
         jumpToChapterAndPage(target.first, target.second, recordTurn = true)
     }
 
+    fun jumpToGlobalPage(targetZero: Int) {
+        val st = _uiState.value
+        val chapters = st.activeBookChapters
+        if (chapters.isEmpty()) return
+        val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
+
+        if (targetZero < 0) {
+            jumpToChapterAndPage(0, 0, recordTurn = true)
+            return
+        }
+
+        if (targetZero >= metrics.totalBookPages) {
+            val bookId = st.activeBookId ?: return
+            viewModelScope.launch {
+                val book = dao.getBookById(bookId) ?: return@launch
+                dao.updateBook(
+                    book.copy(
+                        progress = 100,
+                        completedAllPages = true,
+                        onTheGo = false
+                    )
+                )
+                recordDailyReadingMinute(0, 1)
+                val isId = preferences.value.lang != "en"
+                showToast(
+                    if (isId) "Selamat! \"${book.title}\" selesai dibaca (100%)"
+                    else "\"${book.title}\" finished (100%)"
+                )
+            }
+            return
+        }
+
+        val target = getPageContentAtGlobalZeroIndex(chapters, targetZero) ?: return
+        jumpToChapterAndPage(target.first, target.second, recordTurn = true)
+    }
+
     fun jumpToChapterAndPage(chapterIndex: Int, pageIndex: Int, recordTurn: Boolean = false) {
         val st = _uiState.value
         val chapters = st.activeBookChapters
