@@ -978,12 +978,14 @@ fun FlyleafThinSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
+    onValueChangeFinished: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
     Slider(
         value = value,
         onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
         valueRange = valueRange,
         steps = steps,
         modifier = modifier.height(28.dp),
@@ -1023,6 +1025,7 @@ fun LlunevieThinSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
+    onValueChangeFinished: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     FlyleafThinSlider(
@@ -1030,6 +1033,7 @@ fun LlunevieThinSlider(
         onValueChange = onValueChange,
         valueRange = valueRange,
         steps = steps,
+        onValueChangeFinished = onValueChangeFinished,
         modifier = modifier
     )
 }

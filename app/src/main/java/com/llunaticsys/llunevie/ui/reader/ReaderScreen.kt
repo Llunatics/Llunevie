@@ -858,508 +858,6 @@ fun ReaderScreen(
                                         )
                                     }
                                 } else if (isPdfBook) {
-                                    curLeftPdfBmp?.asImageBitmap()
-                                } else {
-                                    renderEpubPageSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = stageW,
-                                        heightPx = stageH,
-                                        density = density,
-                                        chapterTitle = currentChapter?.title.orEmpty(),
-                                        pageText = currentPageRaw,
-                                        bgColor = palette.bgApp,
-                                        pageTextStyle = baseTextStyle,
-                                        padX = padX,
-                                        padTop = padTop,
-                                        isCover = (curZero == 0),
-                                        highlights = bookHighlights,
-                                        chapterIndex = uiState.activeChapterIndex,
-                                        pageIndex = uiState.activePageIndex,
-                                        palette = palette
-                                    )
-                                }
-                            }
-
-                            val nextTriple = remember(chapters, curZero, step) { getPageAtGlobalZero(curZero + step) }
-                            val nextBitmap by produceState<ImageBitmap?>(
-                                initialValue = null,
-                                curZero, isSpread, isPdfBook, nextTriple, nextLeftPdfBmp, nextRightPdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
-                            ) {
-                                value = if (nextTriple == null) null
-                                else if (isSpread) {
-                                    val leftZero = curZero + step
-                                    val rightZero = leftZero + 1
-                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
-                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
-                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    renderTwoPageSpreadSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                        heightPx = stageH,
-                                        density = density,
-                                        leftPageIndex = leftZero,
-                                        rightPageIndex = rightZero,
-                                        leftHeader = leftCh?.title.orEmpty(),
-                                        rightHeader = rightCh?.title.orEmpty(),
-                                        leftText = leftTripleSpread?.third.orEmpty(),
-                                        rightText = rightTripleSpread?.third.orEmpty(),
-                                        leftPdfBitmap = nextLeftPdfBmp,
-                                        rightPdfBitmap = nextRightPdfBmp,
-                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
-                                        pageTextStyle = spreadTextStyle,
-                                        palette = palette
-                                    )
-                                } else if (isPdfBook) {
-                                    nextLeftPdfBmp?.asImageBitmap()
-                                } else {
-                                    renderEpubPageSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = stageW,
-                                        heightPx = stageH,
-                                        density = density,
-                                        chapterTitle = chapters.getOrNull(nextTriple.first)?.title.orEmpty(),
-                                        pageText = nextTriple.third,
-                                        bgColor = palette.bgApp,
-                                        pageTextStyle = baseTextStyle,
-                                        padX = padX,
-                                        padTop = padTop,
-                                        isCover = (curZero + step == 0),
-                                        highlights = bookHighlights,
-                                        chapterIndex = nextTriple.first,
-                                        pageIndex = nextTriple.second,
-                                        palette = palette
-                                    )
-                                }
-                            }
-
-                            val prevTriple = remember(chapters, curZero, step) { getPageAtGlobalZero(curZero - step) }
-                            val prevBitmap by produceState<ImageBitmap?>(
-                                initialValue = null,
-                                curZero, isSpread, isPdfBook, prevTriple, prevLeftPdfBmp, prevRightPdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
-                            ) {
-                                value = if (prevTriple == null) null
-                                else if (isSpread) {
-                                    val leftZero = curZero - step
-                                    val rightZero = leftZero + 1
-                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
-                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
-                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    renderTwoPageSpreadSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                        heightPx = stageH,
-                                        density = density,
-                                        leftPageIndex = leftZero,
-                                        rightPageIndex = rightZero,
-                                        leftHeader = leftCh?.title.orEmpty(),
-                                        rightHeader = rightCh?.title.orEmpty(),
-                                        leftText = leftTripleSpread?.third.orEmpty(),
-                                        rightText = rightTripleSpread?.third.orEmpty(),
-                                        leftPdfBitmap = prevLeftPdfBmp,
-                                        rightPdfBitmap = prevRightPdfBmp,
-                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
-                                        pageTextStyle = spreadTextStyle,
-                                        palette = palette
-                                    )
-                                } else if (isPdfBook) {
-                                    prevLeftPdfBmp?.asImageBitmap()
-                                } else {
-                                    renderEpubPageSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = stageW,
-                                        heightPx = stageH,
-                                        density = density,
-                                        chapterTitle = chapters.getOrNull(prevTriple.first)?.title.orEmpty(),
-                                        pageText = prevTriple.third,
-                                        bgColor = palette.bgApp,
-                                        pageTextStyle = baseTextStyle,
-                                        padX = padX,
-                                        padTop = padTop,
-                                        isCover = (curZero - step == 0),
-                                        highlights = bookHighlights,
-                                        chapterIndex = prevTriple.first,
-                                        pageIndex = prevTriple.second,
-                                        palette = palette
-                                    )
-                                }
-                            }
-
-                            var isFlippingInProgress by remember { mutableStateOf(false) }
-                            var flipTurnDir by remember { mutableIntStateOf(1) }
-                            var liveDragProgress by remember { mutableFloatStateOf(0f) }
-                            var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
-
-                            val flipbookGestureModifier = Modifier.pointerInput(curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                    if (hasSelectionActive) {
-                                        val distStart = (down.position - selStartHandleAnchor).getDistance()
-                                        val distEnd = (down.position - selEndHandleAnchor).getDistance()
-                                        if (distStart < 44.dp.toPx() || distEnd < 44.dp.toPx()) {
-                                            return@awaitEachGesture
-                                        }
-                                    }
-                                    val touchSlop = viewConfiguration.touchSlop
-                                    var dragLocked = false
-                                    var totalDx = 0f
-                                    var totalDy = 0f
-                                    val velocityTracker = VelocityTracker()
-                                    velocityTracker.addPosition(down.uptimeMillis, down.position)
-
-                                    while (true) {
-                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                        val change = event.changes.firstOrNull() ?: break
-                                        if (change.changedToUp()) {
-                                            if (dragLocked && isFlippingInProgress) {
-                                                val velX = velocityTracker.calculateVelocity().x
-                                                val speedInDir = if (flipTurnDir > 0) -velX else velX
-                                                val shouldCommit = liveDragProgress >= 0.14f || (speedInDir > 350f)
-                                                scope.launch {
-                                                    if (shouldCommit) {
-                                                        val anim = Animatable(liveDragProgress)
-                                                        anim.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) {
-                                                            liveDragProgress = value
-                                                        }
-                                                        val targetBmp = if (flipTurnDir > 0) nextBitmap else prevBitmap
-                                                        if (targetBmp != null) {
-                                                            promotedTargetBitmap = targetBmp
-                                                        }
-                                                        onTurnPage(flipTurnDir)
-                                                    } else {
-                                                        val anim = Animatable(liveDragProgress)
-                                                        anim.animateTo(0f, tween(160, easing = FastOutSlowInEasing)) {
-                                                            liveDragProgress = value
-                                                        }
-                                                    }
-                                                    liveDragProgress = 0f
-                                                    isFlippingInProgress = false
-                                                }
-                                            } else if (!dragLocked) {
-                                                val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
-                                                if (relX >= 0.76f) {
-                                                    externalFlipTrigger = 1
-                                                } else if (relX <= 0.24f) {
-                                                    externalFlipTrigger = -1
-                                                } else {
-                                                    if (hasSelectionActive) {
-                                                        hasSelectionActive = false
-                                                    }
-                                                    selectedQuoteForPopover = null
-                                                }
-                                            }
-                                            break
-                                        }
-
-                                        velocityTracker.addPosition(change.uptimeMillis, change.position)
-                                        totalDx = change.position.x - down.position.x
-                                        totalDy = change.position.y - down.position.y
-
-                                        if (!dragLocked) {
-                                            if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * 1.15f) {
-                                                val candidateDir = if (totalDx < 0f) 1 else -1
-                                                if (candidateDir > 0 && curZero >= metrics.totalBookPages - 1) break
-                                                if (candidateDir < 0 && curZero <= 0) break
-                                                dragLocked = true
-                                                flipTurnDir = candidateDir
-                                                isFlippingInProgress = true
-                                                change.consume()
-                                            }
-                                        }
-
-                                        if (dragLocked) {
-                                            change.consume()
-                                            val signedDelta = if (flipTurnDir > 0) -totalDx else totalDx
-                                            liveDragProgress = (signedDelta / (size.width.toFloat() * 0.85f)).coerceIn(0.01f, 0.99f)
-                                            liveCornerYNorm = (change.position.y / size.height.toFloat()).coerceIn(0.15f, 0.85f)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp)
-                                    .then(flipbookGestureModifier),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (!isPdfBook && !isSpread && !isFlippingInProgress && externalFlipTrigger == 0) {
-                                    val curTriple = getPageAtGlobalZero(curZero)
-                                    val curCh = curTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
-                                    val curText = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
-                                    InteractiveTextPageContent(
-                                        chapterTitle = curCh?.title.orEmpty(),
-                                        pageText = curText,
-                                        currentChapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
-                                        currentPageInChapter = curTriple?.second ?: uiState.activePageIndex,
-                                        showChapterHeader = (curTriple?.second ?: uiState.activePageIndex) == 0,
-                                        scrollable = false,
-                                        prefs = prefs,
-                                        bookHighlights = bookHighlights,
-                                        onParagraphClicked = { paraText, isUpper ->
-                                            selectedQuoteForPopover = paraText
-                                            selectedPopoverInUpperHalf = isUpper
-                                        },
-                                        onIllustrationClicked = { path ->
-                                            val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
-                                            onOpenIllustViewer(idx)
-                                        },
-                                        onSaveHighlightNote = onSaveHighlightNote,
-                                        onDeleteHighlightNote = onDeleteHighlightNote,
-                                        onSearchInBook = { inBookSearchQuery = it },
-                                        isCoverPage = (curZero == 0),
-                                        bookTitle = book.title,
-                                        fontScale = 1f,
-                                        onSelectionActiveChanged = { active, start, end ->
-                                            hasSelectionActive = active
-                                            selStartHandleAnchor = start
-                                            selEndHandleAnchor = end
-                                        }
-                                    )
-                                }
-
-                                val activeBmp = promotedTargetBitmap ?: curBitmap
-                                if (activeBmp != null && (isPdfBook || isSpread || isFlippingInProgress || externalFlipTrigger != 0)) {
-                                    CylindricalFlipbookCanvas(
-                                        currentPageBitmap = activeBmp,
-                                        nextPageBitmap = nextBitmap,
-                                        prevPageBitmap = prevBitmap,
-                                        themeBgColor = if (isPdfBook) Color.White else if (isSpread) palette.bgCard else palette.bgApp,
-                                        backPaperColor = if (isPdfBook) Color(0xFFF2EFE9) else palette.flipBackPaper,
-                                        isPdfBook = isPdfBook,
-                                        isTwoPageSpread = isSpread,
-                                        externalTriggerDir = externalFlipTrigger,
-                                        onExternalTriggerConsumed = { externalFlipTrigger = 0 },
-                                        manualProgress = if (isFlippingInProgress) liveDragProgress else null,
-                                        manualCornerYNorm = if (isFlippingInProgress) liveCornerYNorm else null,
-                                        manualTurnDir = if (isFlippingInProgress) flipTurnDir else null,
-                                        onPageTurnCommitted = { dir -> onTurnPage(dir) },
-                                        onCenterTap = {
-                                            if (hasSelectionActive) hasSelectionActive = false
-                                            selectedQuoteForPopover = null
-                                        },
-                                        onFlipStateChanged = { isFlippingInProgress = it },
-                                        modifier = if (isSpread) {
-                                            Modifier
-                                                .fillMaxHeight()
-                                                .aspectRatio(1.414f)
-                                                .shadow(14.dp, RoundedCornerShape(6.dp))
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
-                                        } else if (isPdfBook) {
-                                            val pdfRatio = if (curLeftPdfBmp != null && curLeftPdfBmp!!.height > 0) {
-                                                curLeftPdfBmp!!.width.toFloat() / curLeftPdfBmp!!.height.toFloat()
-                                            } else {
-                                                PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
-                                            }
-                                            Modifier
-                                                .fillMaxHeight()
-                                                .aspectRatio(pdfRatio)
-                                                .padding(vertical = 4.dp)
-                                                .shadow(8.dp, RoundedCornerShape(4.dp))
-                                                .clip(RoundedCornerShape(4.dp))
-                                        } else {
-                                            Modifier.fillMaxSize()
-                                        }
-                                    )
-                                }
-                            }
-                        } else {
-                            @Composable
-                            fun RenderPageForNonFlipbook(pageZero: Int) {
-                                if (isSpread) {
-                                    val leftZero = (pageZero / 2) * 2
-                                    val rightZero = leftZero + 1
-                                    val leftTriple = getPageAtGlobalZero(leftZero)
-                                    val rightTriple = getPageAtGlobalZero(rightZero)
-                                    val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
-                                    val leftText = leftTriple?.third.orEmpty().ifBlank { if (leftZero == curZero) currentPageRaw else "" }
-                                    val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
-                                    val rightText = rightTriple?.third.orEmpty()
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxHeight()
-                                                .aspectRatio(1.414f)
-                                                .shadow(14.dp, RoundedCornerShape(6.dp))
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(if (isPdfBook) Color.White else palette.bgCard)
-                                                .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
-                                        ) {
-                                            // Left Leaf (Strict 3-Row Column: Top Header 22.dp, Middle Body weight(1f), Bottom Footer 20.dp)
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .fillMaxHeight()
-                                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(22.dp),
-                                                    contentAlignment = Alignment.CenterStart
-                                                ) {
-                                                    Text(
-                                                        text = leftCh?.title.orEmpty().take(32).uppercase(),
-                                                        color = palette.textMuted,
-                                                        fontSize = 8.5.sp,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .fillMaxWidth()
-                                                        .padding(vertical = 6.dp)
-                                                        .clipToBounds()
-                                                ) {
-                                                    if (isPdfBook && curLeftPdfBmp != null) {
-                                                        Image(
-                                                            bitmap = curLeftPdfBmp!!.asImageBitmap(),
-                                                            contentDescription = null,
-                                                            contentScale = ContentScale.Fit,
-                                                            modifier = Modifier.fillMaxSize()
-                                                        )
-                                                    } else {
-                                                        InteractiveTextPageContent(
-                                                            chapterTitle = leftCh?.title.orEmpty(),
-                                                            pageText = leftText,
-                                                            currentChapterIndex = leftTriple?.first ?: 0,
-                                                            currentPageInChapter = leftTriple?.second ?: 0,
-                                                            showChapterHeader = false,
-                                                            scrollable = false,
-                                                            prefs = prefs,
-                                                            bookHighlights = bookHighlights,
-                                                            onParagraphClicked = { paraText, isUpper ->
-                                                                selectedQuoteForPopover = paraText
-                                                                selectedPopoverInUpperHalf = isUpper
-                                                            },
-                                                            onIllustrationClicked = { path ->
-                                                                val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
-                                                                onOpenIllustViewer(idx)
-                                                            },
-                                                            onSaveHighlightNote = onSaveHighlightNote,
-                                                            onDeleteHighlightNote = onDeleteHighlightNote,
-                                                            onSearchInBook = { inBookSearchQuery = it },
-                                                            isCoverPage = (leftZero == 0),
-                                                            bookTitle = book.title,
-                                                            fontScale = 0.78f
-                                                        )
-                                                    }
-                                                }
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(20.dp),
-                                                    contentAlignment = Alignment.CenterStart
-                                                ) {
-                                                    Text(
-                                                        text = "${leftZero + 1}",
-                                                        color = palette.textMuted,
-                                                        fontSize = 8.5.sp,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        maxLines = 1
-                                                    )
-                                                }
-                                            }
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(1.dp)
-                                                    .fillMaxHeight()
-                                                    .background(Color.Black.copy(alpha = 0.14f))
-                                            )
-                                            // Right Leaf (Strict 3-Row Column: Top Header 22.dp, Middle Body weight(1f), Bottom Footer 20.dp)
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .fillMaxHeight()
-                                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(22.dp),
-                                                    contentAlignment = Alignment.CenterEnd
-                                                ) {
-                                                    Text(
-                                                        text = rightCh?.title.orEmpty().take(32).uppercase(),
-                                                        color = palette.textMuted,
-                                                        fontSize = 8.5.sp,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .fillMaxWidth()
-                                                        .padding(vertical = 6.dp)
-                                                        .clipToBounds()
-                                                ) {
-                                                    if (isPdfBook && curRightPdfBmp != null) {
-                                                        Image(
-                                                            bitmap = curRightPdfBmp!!.asImageBitmap(),
-                                                            contentDescription = null,
-                                                            contentScale = ContentScale.Fit,
-                                                            modifier = Modifier.fillMaxSize()
-                                                        )
-                                                    } else if (rightTriple != null) {
-                                                        InteractiveTextPageContent(
-                                                            chapterTitle = rightCh?.title.orEmpty(),
-                                                            pageText = rightText,
-                                                            currentChapterIndex = rightTriple.first,
-                                                            currentPageInChapter = rightTriple.second,
-                                                            showChapterHeader = false,
-                                                            scrollable = false,
-                                                            prefs = prefs,
-                                                            bookHighlights = bookHighlights,
-                                                            onParagraphClicked = { paraText, isUpper ->
-                                                                selectedQuoteForPopover = paraText
-                                                                selectedPopoverInUpperHalf = isUpper
-                                                            },
-                                                            onIllustrationClicked = { path ->
-                                                                val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
-                                                                onOpenIllustViewer(idx)
-                                                            },
-                                                            onSaveHighlightNote = onSaveHighlightNote,
-                                                            onDeleteHighlightNote = onDeleteHighlightNote,
-                                                            onSearchInBook = { inBookSearchQuery = it },
-                                                            isCoverPage = false,
-                                                            bookTitle = book.title,
-                                                            fontScale = 0.78f
-                                                        )
-                                                    }
-                                                }
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(20.dp),
-                                                    contentAlignment = Alignment.CenterEnd
-                                                ) {
-                                                    Text(
-                                                        text = "${rightZero + 1}",
-                                                        color = palette.textMuted,
-                                                        fontSize = 8.5.sp,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        maxLines = 1
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else if (isPdfBook) {
                                     if (viewModel != null) {
                                         PdfPageItemContent(
                                             bookId = book.id,
@@ -2799,10 +2297,22 @@ fun ReaderScreen(
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
         // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
         if (uiState.showReaderTypeSheet) {
+            var isDraggingSettingsSlider by remember { mutableStateOf(false) }
+            val scrimAlpha by animateFloatAsState(
+                targetValue = if (isDraggingSettingsSlider) 0f else 0.35f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                label = "settingsScrimAlpha"
+            )
+            val panelAlpha by animateFloatAsState(
+                targetValue = if (isDraggingSettingsSlider) 0.04f else 1f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                label = "settingsPanelAlpha"
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(Color.Black.copy(alpha = scrimAlpha))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -2812,12 +2322,13 @@ fun ReaderScreen(
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                     color = palette.bgSurface,
                     border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
+                    shadowElevation = if (isDraggingSettingsSlider) 0.dp else 24.dp,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .widthIn(min = 340.dp, max = 420.dp)
                         .fillMaxWidth()
                         .heightIn(max = if (isLandscape) 310.dp else 460.dp)
+                        .alpha(panelAlpha)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -2955,7 +2466,11 @@ fun ReaderScreen(
                                         }
                                         FlyleafThinSlider(
                                             value = prefs.fontSizeSp.toFloat(),
-                                            onValueChange = { onUpdateTypography(null, it.roundToInt(), null, null, null, null, null, null, null, null) },
+                                            onValueChange = {
+                                                isDraggingSettingsSlider = true
+                                                onUpdateTypography(null, it.roundToInt(), null, null, null, null, null, null, null, null)
+                                            },
+                                            onValueChangeFinished = { isDraggingSettingsSlider = false },
                                             valueRange = 12f..28f
                                         )
                                     }
@@ -3135,123 +2650,143 @@ fun ReaderScreen(
                                                          fontFamily = FontFamily.Monospace
                                                      )
                                                  }
-                                                 FlyleafThinSlider(
-                                                     value = prefs.lineHeightMultiplier,
-                                                     onValueChange = { onUpdateTypography(null, null, null, null, it, null, null, null, null, null) },
-                                                     valueRange = 1.2f..2.4f
-                                                 )
-                                             }
+                                                  FlyleafThinSlider(
+                                                      value = prefs.lineHeightMultiplier,
+                                                      onValueChange = {
+                                                          isDraggingSettingsSlider = true
+                                                          onUpdateTypography(null, null, null, null, it, null, null, null, null, null)
+                                                      },
+                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      valueRange = 1.2f..2.4f
+                                                  )
+                                              }
 
-                                             Column(modifier = Modifier.weight(1f)) {
-                                                 Row(
-                                                     modifier = Modifier.fillMaxWidth(),
-                                                     horizontalArrangement = Arrangement.SpaceBetween
-                                                 ) {
-                                                     Text(
-                                                         text = if (strings.isId) "JARAK PARAGRAF" else "PARA SPACING",
-                                                         color = palette.textMuted,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                     Text(
-                                                         text = String.format("%.1fem", prefs.paraSpacingEm),
-                                                         color = palette.textMain,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                 }
-                                                 FlyleafThinSlider(
-                                                     value = prefs.paraSpacingEm,
-                                                     onValueChange = { onUpdateTypography(null, null, null, null, null, it, null, null, null, null) },
-                                                     valueRange = 0.4f..2.2f
-                                                 )
-                                             }
-                                         }
+                                              Column(modifier = Modifier.weight(1f)) {
+                                                  Row(
+                                                      modifier = Modifier.fillMaxWidth(),
+                                                      horizontalArrangement = Arrangement.SpaceBetween
+                                                  ) {
+                                                      Text(
+                                                          text = if (strings.isId) "JARAK PARAGRAF" else "PARA SPACING",
+                                                          color = palette.textMuted,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                      Text(
+                                                          text = String.format("%.1fem", prefs.paraSpacingEm),
+                                                          color = palette.textMain,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                  }
+                                                  FlyleafThinSlider(
+                                                      value = prefs.paraSpacingEm,
+                                                      onValueChange = {
+                                                          isDraggingSettingsSlider = true
+                                                          onUpdateTypography(null, null, null, null, null, it, null, null, null, null)
+                                                      },
+                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      valueRange = 0.4f..2.2f
+                                                  )
+                                              }
+                                          }
 
-                                         Row(
-                                             modifier = Modifier.fillMaxWidth(),
-                                             horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                         ) {
-                                             Column(modifier = Modifier.weight(1f)) {
-                                                 Row(
-                                                     modifier = Modifier.fillMaxWidth(),
-                                                     horizontalArrangement = Arrangement.SpaceBetween
-                                                 ) {
-                                                     Text(
-                                                         text = if (strings.isId) "SPASI HURUF" else "LETTER SPACING",
-                                                         color = palette.textMuted,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                     Text(
-                                                         text = String.format("%.2fem", prefs.letterSpacingEm),
-                                                         color = palette.textMain,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                 }
-                                                 FlyleafThinSlider(
-                                                     value = prefs.letterSpacingEm,
-                                                     onValueChange = { onUpdateTypography(null, null, null, null, null, null, it, null, null, null) },
-                                                     valueRange = -0.02f..0.10f
-                                                 )
-                                             }
+                                          Row(
+                                              modifier = Modifier.fillMaxWidth(),
+                                              horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                          ) {
+                                              Column(modifier = Modifier.weight(1f)) {
+                                                  Row(
+                                                      modifier = Modifier.fillMaxWidth(),
+                                                      horizontalArrangement = Arrangement.SpaceBetween
+                                                  ) {
+                                                      Text(
+                                                          text = if (strings.isId) "SPASI HURUF" else "LETTER SPACING",
+                                                          color = palette.textMuted,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                      Text(
+                                                          text = String.format("%.2fem", prefs.letterSpacingEm),
+                                                          color = palette.textMain,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                  }
+                                                  FlyleafThinSlider(
+                                                      value = prefs.letterSpacingEm,
+                                                      onValueChange = {
+                                                          isDraggingSettingsSlider = true
+                                                          onUpdateTypography(null, null, null, null, null, null, it, null, null, null)
+                                                      },
+                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      valueRange = -0.02f..0.10f
+                                                  )
+                                              }
 
-                                             Column(modifier = Modifier.weight(1f)) {
-                                                 Row(
-                                                     modifier = Modifier.fillMaxWidth(),
-                                                     horizontalArrangement = Arrangement.SpaceBetween
-                                                 ) {
-                                                     Text(
-                                                         text = if (strings.isId) "SPASI KATA" else "WORD SPACING",
-                                                         color = palette.textMuted,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                     Text(
-                                                         text = "${prefs.wordSpacingPx}px",
-                                                         color = palette.textMain,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                 }
-                                                 FlyleafThinSlider(
-                                                     value = prefs.wordSpacingPx.toFloat(),
-                                                     onValueChange = { onUpdateTypography(null, null, null, null, null, null, null, it.roundToInt(), null, null) },
-                                                     valueRange = 0f..8f
-                                                 )
-                                             }
-                                         }
+                                              Column(modifier = Modifier.weight(1f)) {
+                                                  Row(
+                                                      modifier = Modifier.fillMaxWidth(),
+                                                      horizontalArrangement = Arrangement.SpaceBetween
+                                                  ) {
+                                                      Text(
+                                                          text = if (strings.isId) "SPASI KATA" else "WORD SPACING",
+                                                          color = palette.textMuted,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                      Text(
+                                                          text = "${prefs.wordSpacingPx}px",
+                                                          color = palette.textMain,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                  }
+                                                  FlyleafThinSlider(
+                                                      value = prefs.wordSpacingPx.toFloat(),
+                                                      onValueChange = {
+                                                          isDraggingSettingsSlider = true
+                                                          onUpdateTypography(null, null, null, null, null, null, null, it.roundToInt(), null, null)
+                                                      },
+                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      valueRange = 0f..8f
+                                                  )
+                                              }
+                                          }
 
-                                         // Bottom Row: MARGIN TEPI + INDENTASI PARAGRAF
-                                         Row(
-                                             modifier = Modifier.fillMaxWidth(),
-                                             horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                             verticalAlignment = Alignment.CenterVertically
-                                         ) {
-                                             Column(modifier = Modifier.weight(1f)) {
-                                                 Row(
-                                                     modifier = Modifier.fillMaxWidth(),
-                                                     horizontalArrangement = Arrangement.SpaceBetween
-                                                 ) {
-                                                     Text(
-                                                         text = if (strings.isId) "MARGIN TEPI" else "PAGE MARGIN",
-                                                         color = palette.textMuted,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                     Text(
-                                                         text = "${prefs.pageMarginDp}px",
-                                                         color = palette.textMain,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                 }
-                                                 FlyleafThinSlider(
-                                                     value = prefs.pageMarginDp.toFloat(),
-                                                     onValueChange = { onUpdateTypography(null, null, null, null, null, null, null, null, it.roundToInt(), null) },
-                                                     valueRange = 12f..48f
-                                                 )
+                                          // Bottom Row: MARGIN TEPI + INDENTASI PARAGRAF
+                                          Row(
+                                              modifier = Modifier.fillMaxWidth(),
+                                              horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                              verticalAlignment = Alignment.CenterVertically
+                                          ) {
+                                              Column(modifier = Modifier.weight(1f)) {
+                                                  Row(
+                                                      modifier = Modifier.fillMaxWidth(),
+                                                      horizontalArrangement = Arrangement.SpaceBetween
+                                                  ) {
+                                                      Text(
+                                                          text = if (strings.isId) "MARGIN TEPI" else "PAGE MARGIN",
+                                                          color = palette.textMuted,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                      Text(
+                                                          text = "${prefs.pageMarginDp}px",
+                                                          color = palette.textMain,
+                                                          fontSize = 9.sp,
+                                                          fontFamily = FontFamily.Monospace
+                                                      )
+                                                  }
+                                                  FlyleafThinSlider(
+                                                      value = prefs.pageMarginDp.toFloat(),
+                                                      onValueChange = {
+                                                          isDraggingSettingsSlider = true
+                                                          onUpdateTypography(null, null, null, null, null, null, null, null, it.roundToInt(), null)
+                                                      },
+                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      valueRange = 12f..48f
+                                                  )
                                              }
 
                                              Column(modifier = Modifier.weight(1f)) {
@@ -5235,7 +4770,7 @@ private fun renderTwoPageSpreadSnapshot(
                 dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
             )
         } else if (leftText.isNotBlank()) {
-            val cleanLeft = leftText.replace(Regex("\[ILLUST:[^]]+]"), "").replace(Regex("\[PDF_PAGE:[^]]+]"), "").trim()
+            val cleanLeft = leftText.replace(Regex("\\[ILLUST:[^]]+]"), "").replace(Regex("\\[PDF_PAGE:[^]]+]"), "").trim()
             val leftAnnotated = buildAnnotatedString { append(cleanLeft) }
             val baseFontSize = pageTextStyle.fontSize.value
             val baseLineHeight = pageTextStyle.lineHeight.value
@@ -5274,7 +4809,7 @@ private fun renderTwoPageSpreadSnapshot(
                 dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
             )
         } else if (rightText.isNotBlank()) {
-            val cleanRight = rightText.replace(Regex("\[ILLUST:[^]]+]"), "").replace(Regex("\[PDF_PAGE:[^]]+]"), "").trim()
+            val cleanRight = rightText.replace(Regex("\\[ILLUST:[^]]+]"), "").replace(Regex("\\[PDF_PAGE:[^]]+]"), "").trim()
             val rightAnnotated = buildAnnotatedString { append(cleanRight) }
             val baseFontSize = pageTextStyle.fontSize.value
             val baseLineHeight = pageTextStyle.lineHeight.value
