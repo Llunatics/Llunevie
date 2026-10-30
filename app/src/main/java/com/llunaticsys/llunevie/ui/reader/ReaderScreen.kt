@@ -55,14 +55,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -108,6 +112,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -280,7 +285,8 @@ fun ReaderScreen(
         letterSpacing: Float?,
         wordSpacing: Int?,
         pageMargin: Int?,
-        paraIndent: Boolean?
+        paraIndent: Boolean?,
+        commitToDisk: Boolean
     ) -> Unit,
     viewModel: LlunevieViewModel? = null,
     modifier: Modifier = Modifier
@@ -309,11 +315,7 @@ fun ReaderScreen(
     var hasSelectionActive by remember { mutableStateOf(false) }
     var selStartHandleAnchor by remember { mutableStateOf(Offset.Zero) }
     var selEndHandleAnchor by remember { mutableStateOf(Offset.Zero) }
-
-    LaunchedEffect(fullViewBtnLastActive, uiState.readerFullView) {
-        kotlinx.coroutines.delay(3500L)
-        isFullViewBtnDocked = true
-    }
+    var activeDraggingSliderKey by remember { mutableStateOf<String?>(null) }
 
     val curZeroFromMetrics = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
     var displayPageIndex by remember(book.id) { mutableIntStateOf(curZeroFromMetrics) }
@@ -323,6 +325,11 @@ fun ReaderScreen(
         if (!isFlippingInProgress) {
             displayPageIndex = curZeroFromMetrics
         }
+    }
+
+    LaunchedEffect(fullViewBtnLastActive, uiState.readerFullView) {
+        kotlinx.coroutines.delay(3500L)
+        isFullViewBtnDocked = true
     }
 
     LaunchedEffect(metrics.currentGlobalPage) {
@@ -575,8 +582,10 @@ fun ReaderScreen(
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                                activeDraggingSliderKey == null
                             ) {
+                                if (activeDraggingSliderKey != null) return@produceState
                                 val nextCh = nextTriple?.let { chapters.getOrNull(it.first) }
                                 val nextText = nextTriple?.third.orEmpty()
                                 val nextChIdx = nextTriple?.first ?: 0
@@ -641,8 +650,10 @@ fun ReaderScreen(
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                                activeDraggingSliderKey == null
                             ) {
+                                if (activeDraggingSliderKey != null) return@produceState
                                 val prevCh = prevTriple?.let { chapters.getOrNull(it.first) }
                                 val prevText = prevTriple?.third.orEmpty()
                                 val prevChIdx = prevTriple?.first ?: 0
@@ -882,9 +893,6 @@ fun ReaderScreen(
                                             Modifier
                                                 .fillMaxHeight()
                                                 .aspectRatio(pdfRatio)
-                                                .padding(vertical = 4.dp)
-                                                .shadow(8.dp, RoundedCornerShape(4.dp))
-                                                .clip(RoundedCornerShape(4.dp))
                                         } else {
                                             Modifier.fillMaxSize()
                                         }
@@ -895,12 +903,14 @@ fun ReaderScreen(
                                     val curTriple = getPageAtGlobalZero(curZero)
                                     val curCh = curTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
                                     val curText = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+                                    val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
+                                    val curPInCh = curTriple?.second ?: uiState.activePageIndex
                                     InteractiveTextPageContent(
                                         chapterTitle = curCh?.title.orEmpty(),
                                         pageText = curText,
-                                        currentChapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
-                                        currentPageInChapter = curTriple?.second ?: uiState.activePageIndex,
-                                        showChapterHeader = (curTriple?.second ?: uiState.activePageIndex) == 0,
+                                        currentChapterIndex = curChIdx,
+                                        currentPageInChapter = curPInCh,
+                                        showChapterHeader = curPInCh == 0,
                                         scrollable = false,
                                         prefs = prefs,
                                         bookHighlights = bookHighlights,
@@ -1059,6 +1069,7 @@ fun ReaderScreen(
                                             isCoverPage = (pageZero == 0),
                                             bookTitle = book.title,
                                             fontScale = 1f,
+                                            transparentTextForFlipbook = false,
                                             topClearanceDp = topClearanceDp,
                                             bottomClearanceDp = bottomClearanceDp
                                         )
@@ -1745,6 +1756,22 @@ fun ReaderScreen(
                     } else {
                         // Inner Column of page readout + vertical slider + close '✕' button (NO outer background/shadow/border here!)
                         val totalPages = metrics.totalBookPages.coerceAtLeast(1)
+                        val initialFraction = if (totalPages > 1) {
+                            (displayPageIndex.toFloat() / (totalPages - 1).toFloat()).coerceIn(0f, 1f)
+                        } else 0f
+
+                        var isVerticalDragging by remember { mutableStateOf(false) }
+                        var verticalDragFraction by remember(showInlinePageSlider) {
+                            mutableFloatStateOf(initialFraction)
+                        }
+
+                        if (!isVerticalDragging) {
+                            verticalDragFraction = initialFraction
+                        }
+
+                        val currentFraction = verticalDragFraction
+                        val previewPage = (currentFraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
+
                         Column(
                             modifier = Modifier
                                 .width(46.dp)
@@ -1753,13 +1780,13 @@ fun ReaderScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            // Top: Live page number readout ("${scrubPage + 1}" bold monospace above "$totalPages" muted monospace)
+                            // Top: Live page number readout ("${previewPage + 1}" bold monospace above "$totalPages" muted monospace)
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             ) {
                                 Text(
-                                    text = "${scrubPage + 1}",
+                                    text = "${previewPage + 1}",
                                     fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace,
@@ -1783,38 +1810,36 @@ fun ReaderScreen(
                                     .weight(1f)
                                     .fillMaxWidth()
                                     .pointerInput(totalPages) {
-                                        detectVerticalDragGestures(
-                                            onVerticalDrag = { change, _ ->
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            isVerticalDragging = true
+                                            val thumbRadiusPx = 8.dp.toPx()
+                                            val trackHeightPx = (size.height.toFloat() - thumbRadiusPx * 2f).coerceAtLeast(1f)
+                                            verticalDragFraction = ((down.position.y - thumbRadiusPx) / trackHeightPx).coerceIn(0f, 1f)
+                                            val targetZero = (verticalDragFraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
+                                            val leftZero = if (isSpread) (targetZero / 2) * 2 else targetZero
+                                            if (leftZero != displayPageIndex) {
+                                                displayPageIndex = leftZero
+                                                viewModel?.jumpToGlobalPage(leftZero)
+                                            }
+
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val change = event.changes.firstOrNull() ?: break
+                                                if (change.changedToUp()) {
+                                                    change.consume()
+                                                    break
+                                                }
                                                 change.consume()
-                                                val trackH = size.height.toFloat().coerceAtLeast(1f)
-                                                val fraction = (change.position.y / trackH).coerceIn(0f, 1f)
-                                                val targetZero = (fraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
-                                                if (targetZero != scrubPage) {
-                                                    scrubPage = targetZero
-                                                    val step = if (isSpread) 2 else 1
-                                                    val leftZero = if (isSpread) (scrubPage / 2) * 2 else scrubPage
-                                                    val target = getPageAtGlobalZero(leftZero)
-                                                    if (target != null) {
-                                                        onJumpToChapterAndPage(target.first, target.second)
-                                                    }
+                                                verticalDragFraction = ((change.position.y - thumbRadiusPx) / trackHeightPx).coerceIn(0f, 1f)
+                                                val currZero = (verticalDragFraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
+                                                val spreadZero = if (isSpread) (currZero / 2) * 2 else currZero
+                                                if (spreadZero != displayPageIndex) {
+                                                    displayPageIndex = spreadZero
+                                                    viewModel?.jumpToGlobalPage(spreadZero)
                                                 }
                                             }
-                                        )
-                                    }
-                                    .pointerInput(totalPages) {
-                                        detectTapGestures { tapOffset ->
-                                            val trackH = size.height.toFloat().coerceAtLeast(1f)
-                                            val fraction = (tapOffset.y / trackH).coerceIn(0f, 1f)
-                                            val targetZero = (fraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
-                                            if (targetZero != scrubPage) {
-                                                scrubPage = targetZero
-                                                val step = if (isSpread) 2 else 1
-                                                val leftZero = if (isSpread) (scrubPage / 2) * 2 else scrubPage
-                                                val target = getPageAtGlobalZero(leftZero)
-                                                if (target != null) {
-                                                    onJumpToChapterAndPage(target.first, target.second)
-                                                }
-                                            }
+                                            isVerticalDragging = false
                                         }
                                     },
                                 contentAlignment = Alignment.Center
@@ -1826,18 +1851,21 @@ fun ReaderScreen(
                                         .fillMaxHeight()
                                         .clip(CircleShape)
                                         .background(palette.borderSoft)
-                                )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .fillMaxHeight(currentFraction)
+                                            .background(palette.textPrimary)
+                                    )
+                                }
 
                                 // Active Vertical Thumb
-                                val fraction = if (totalPages > 1) {
-                                    scrubPage.toFloat() / (totalPages - 1).toFloat()
-                                } else 0f
-
                                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                                     val trackH = maxHeight
                                     val thumbSize = 16.dp
                                     val availableH = (trackH - thumbSize).coerceAtLeast(0.dp)
-                                    val thumbOffset = availableH * fraction
+                                    val thumbOffset = availableH * currentFraction
 
                                     Box(
                                         modifier = Modifier
@@ -2476,7 +2504,6 @@ fun ReaderScreen(
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
         // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
         if (uiState.showReaderTypeSheet) {
-            var activeDraggingSliderKey by remember { mutableStateOf<String?>(null) }
             val scrimAlpha by animateFloatAsState(
                 targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
                 animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
@@ -2650,9 +2677,12 @@ fun ReaderScreen(
                                             value = prefs.fontSizeSp.toFloat(),
                                             onValueChange = {
                                                 activeDraggingSliderKey = "FONT_SIZE"
-                                                onUpdateTypography(null, it.roundToInt(), null, null, null, null, null, null, null, null)
+                                                onUpdateTypography(null, it.roundToInt(), null, null, null, null, null, null, null, null, false)
                                             },
-                                            onValueChangeFinished = { activeDraggingSliderKey = null },
+                                            onValueChangeFinished = {
+                                                activeDraggingSliderKey = null
+                                                viewModel?.commitTypography()
+                                            },
                                             valueRange = 12f..28f
                                         )
                                     }
@@ -2680,7 +2710,7 @@ fun ReaderScreen(
                                                     "center" to (if (strings.isId) "Tengah" else "Center")
                                                 ),
                                                 selectedItem = prefs.textAlign.lowercase(),
-                                                onItemSelected = { onUpdateTypography(null, null, null, it, null, null, null, null, null, null) },
+                                                onItemSelected = { onUpdateTypography(null, null, null, it, null, null, null, null, null, null, true) },
                                                 height = 34.dp
                                             )
                                         }
@@ -2701,7 +2731,7 @@ fun ReaderScreen(
                                                     600 to (if (strings.isId) "Tebal" else "Bold")
                                                 ),
                                                 selectedItem = prefs.fontWeight,
-                                                onItemSelected = { onUpdateTypography(null, null, it, null, null, null, null, null, null, null) },
+                                                onItemSelected = { onUpdateTypography(null, null, it, null, null, null, null, null, null, null, true) },
                                                 height = 34.dp
                                             )
                                         }
@@ -2728,7 +2758,7 @@ fun ReaderScreen(
                                                         val selected = prefs.fontFamily == famKey
                                                         val chipFontFamily = remember(famKey) { getReaderFontFamily(readerFontContext, famKey) }
                                                         Surface(
-                                                            onClick = { onUpdateTypography(famKey, null, null, null, null, null, null, null, null, null) },
+                                                            onClick = { onUpdateTypography(famKey, null, null, null, null, null, null, null, null, null, true) },
                                                             shape = RoundedCornerShape(8.dp),
                                                             color = if (selected) palette.textPrimary else palette.bgSurface,
                                                             border = BorderStroke(1.dp, if (selected) palette.textPrimary else palette.borderSoft),
@@ -2838,159 +2868,174 @@ fun ReaderScreen(
                                                          fontFamily = FontFamily.Monospace
                                                      )
                                                  }
-                                                  FlyleafThinSlider(
-                                                      value = prefs.lineHeightMultiplier,
-                                                      onValueChange = {
-                                                          activeDraggingSliderKey = "LINE_SPACING"
-                                                          onUpdateTypography(null, null, null, null, it, null, null, null, null, null)
-                                                      },
-                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
-                                                      valueRange = 1.2f..2.4f
-                                                  )
-                                              }
+                                                   FlyleafThinSlider(
+                                                       value = prefs.lineHeightMultiplier,
+                                                       onValueChange = {
+                                                           activeDraggingSliderKey = "LINE_SPACING"
+                                                           onUpdateTypography(null, null, null, null, it, null, null, null, null, null, false)
+                                                       },
+                                                       onValueChangeFinished = {
+                                                           activeDraggingSliderKey = null
+                                                           viewModel?.commitTypography()
+                                                       },
+                                                       valueRange = 1.2f..2.4f
+                                                   )
+                                               }
 
-                                              Column(
-                                                  modifier = Modifier
-                                                      .weight(1f)
-                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PARA_SPACING") 1f else nonActiveAlpha)
-                                              ) {
-                                                  Row(
-                                                      modifier = Modifier.fillMaxWidth(),
-                                                      horizontalArrangement = Arrangement.SpaceBetween
-                                                  ) {
-                                                      Text(
-                                                          text = if (strings.isId) "JARAK PARAGRAF" else "PARA SPACING",
-                                                          color = palette.textMuted,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                      Text(
-                                                          text = String.format("%.1fem", prefs.paraSpacingEm),
-                                                          color = palette.textMain,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                  }
-                                                  FlyleafThinSlider(
-                                                      value = prefs.paraSpacingEm,
-                                                      onValueChange = {
-                                                          activeDraggingSliderKey = "PARA_SPACING"
-                                                          onUpdateTypography(null, null, null, null, null, it, null, null, null, null)
-                                                      },
-                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
-                                                      valueRange = 0.4f..2.2f
-                                                  )
-                                              }
-                                          }
+                                               Column(
+                                                   modifier = Modifier
+                                                       .weight(1f)
+                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PARA_SPACING") 1f else nonActiveAlpha)
+                                               ) {
+                                                   Row(
+                                                       modifier = Modifier.fillMaxWidth(),
+                                                       horizontalArrangement = Arrangement.SpaceBetween
+                                                   ) {
+                                                       Text(
+                                                           text = if (strings.isId) "JARAK PARAGRAF" else "PARA SPACING",
+                                                           color = palette.textMuted,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                       Text(
+                                                           text = String.format("%.1fem", prefs.paraSpacingEm),
+                                                           color = palette.textMain,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                   }
+                                                   FlyleafThinSlider(
+                                                       value = prefs.paraSpacingEm,
+                                                       onValueChange = {
+                                                           activeDraggingSliderKey = "PARA_SPACING"
+                                                           onUpdateTypography(null, null, null, null, null, it, null, null, null, null, false)
+                                                       },
+                                                       onValueChangeFinished = {
+                                                           activeDraggingSliderKey = null
+                                                           viewModel?.commitTypography()
+                                                       },
+                                                       valueRange = 0.4f..2.2f
+                                                   )
+                                               }
+                                           }
 
-                                          Row(
-                                              modifier = Modifier.fillMaxWidth(),
-                                              horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                          ) {
-                                              Column(
-                                                  modifier = Modifier
-                                                      .weight(1f)
-                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "LETTER_SPACING") 1f else nonActiveAlpha)
-                                              ) {
-                                                  Row(
-                                                      modifier = Modifier.fillMaxWidth(),
-                                                      horizontalArrangement = Arrangement.SpaceBetween
-                                                  ) {
-                                                      Text(
-                                                          text = if (strings.isId) "SPASI HURUF" else "LETTER SPACING",
-                                                          color = palette.textMuted,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                      Text(
-                                                          text = String.format("%.2fem", prefs.letterSpacingEm),
-                                                          color = palette.textMain,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                  }
-                                                  FlyleafThinSlider(
-                                                      value = prefs.letterSpacingEm,
-                                                      onValueChange = {
-                                                          activeDraggingSliderKey = "LETTER_SPACING"
-                                                          onUpdateTypography(null, null, null, null, null, null, it, null, null, null)
-                                                      },
-                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
-                                                      valueRange = -0.02f..0.10f
-                                                  )
-                                              }
+                                           Row(
+                                               modifier = Modifier.fillMaxWidth(),
+                                               horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                           ) {
+                                               Column(
+                                                   modifier = Modifier
+                                                       .weight(1f)
+                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "LETTER_SPACING") 1f else nonActiveAlpha)
+                                               ) {
+                                                   Row(
+                                                       modifier = Modifier.fillMaxWidth(),
+                                                       horizontalArrangement = Arrangement.SpaceBetween
+                                                   ) {
+                                                       Text(
+                                                           text = if (strings.isId) "SPASI HURUF" else "LETTER SPACING",
+                                                           color = palette.textMuted,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                       Text(
+                                                           text = String.format("%.2fem", prefs.letterSpacingEm),
+                                                           color = palette.textMain,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                   }
+                                                   FlyleafThinSlider(
+                                                       value = prefs.letterSpacingEm,
+                                                       onValueChange = {
+                                                           activeDraggingSliderKey = "LETTER_SPACING"
+                                                           onUpdateTypography(null, null, null, null, null, null, it, null, null, null, false)
+                                                       },
+                                                       onValueChangeFinished = {
+                                                           activeDraggingSliderKey = null
+                                                           viewModel?.commitTypography()
+                                                       },
+                                                       valueRange = -0.02f..0.10f
+                                                   )
+                                               }
 
-                                              Column(
-                                                  modifier = Modifier
-                                                      .weight(1f)
-                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "WORD_SPACING") 1f else nonActiveAlpha)
-                                              ) {
-                                                  Row(
-                                                      modifier = Modifier.fillMaxWidth(),
-                                                      horizontalArrangement = Arrangement.SpaceBetween
-                                                  ) {
-                                                      Text(
-                                                          text = if (strings.isId) "SPASI KATA" else "WORD SPACING",
-                                                          color = palette.textMuted,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                      Text(
-                                                          text = "${prefs.wordSpacingPx}px",
-                                                          color = palette.textMain,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                  }
-                                                  FlyleafThinSlider(
-                                                      value = prefs.wordSpacingPx.toFloat(),
-                                                      onValueChange = {
-                                                          activeDraggingSliderKey = "WORD_SPACING"
-                                                          onUpdateTypography(null, null, null, null, null, null, null, it.roundToInt(), null, null)
-                                                      },
-                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
-                                                      valueRange = 0f..8f
-                                                  )
-                                              }
-                                          }
+                                               Column(
+                                                   modifier = Modifier
+                                                       .weight(1f)
+                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "WORD_SPACING") 1f else nonActiveAlpha)
+                                               ) {
+                                                   Row(
+                                                       modifier = Modifier.fillMaxWidth(),
+                                                       horizontalArrangement = Arrangement.SpaceBetween
+                                                   ) {
+                                                       Text(
+                                                           text = if (strings.isId) "SPASI KATA" else "WORD SPACING",
+                                                           color = palette.textMuted,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                       Text(
+                                                           text = "${prefs.wordSpacingPx}px",
+                                                           color = palette.textMain,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                   }
+                                                   FlyleafThinSlider(
+                                                       value = prefs.wordSpacingPx.toFloat(),
+                                                       onValueChange = {
+                                                           activeDraggingSliderKey = "WORD_SPACING"
+                                                           onUpdateTypography(null, null, null, null, null, null, null, it.roundToInt(), null, null, false)
+                                                       },
+                                                       onValueChangeFinished = {
+                                                           activeDraggingSliderKey = null
+                                                           viewModel?.commitTypography()
+                                                       },
+                                                       valueRange = 0f..8f
+                                                   )
+                                               }
+                                           }
 
-                                          // Bottom Row: MARGIN TEPI + INDENTASI PARAGRAF
-                                          Row(
-                                              modifier = Modifier.fillMaxWidth(),
-                                              horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                              verticalAlignment = Alignment.CenterVertically
-                                          ) {
-                                              Column(
-                                                  modifier = Modifier
-                                                      .weight(1f)
-                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PAGE_MARGIN") 1f else nonActiveAlpha)
-                                              ) {
-                                                  Row(
-                                                      modifier = Modifier.fillMaxWidth(),
-                                                      horizontalArrangement = Arrangement.SpaceBetween
-                                                  ) {
-                                                      Text(
-                                                          text = if (strings.isId) "MARGIN TEPI" else "PAGE MARGIN",
-                                                          color = palette.textMuted,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                      Text(
-                                                          text = "${prefs.pageMarginDp}px",
-                                                          color = palette.textMain,
-                                                          fontSize = 9.sp,
-                                                          fontFamily = FontFamily.Monospace
-                                                      )
-                                                  }
-                                                  FlyleafThinSlider(
-                                                      value = prefs.pageMarginDp.toFloat(),
-                                                      onValueChange = {
-                                                          activeDraggingSliderKey = "PAGE_MARGIN"
-                                                          onUpdateTypography(null, null, null, null, null, null, null, null, it.roundToInt(), null)
-                                                      },
-                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
-                                                      valueRange = 12f..48f
-                                                  )
+                                           // Bottom Row: MARGIN TEPI + INDENTASI PARAGRAF
+                                           Row(
+                                               modifier = Modifier.fillMaxWidth(),
+                                               horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                               verticalAlignment = Alignment.CenterVertically
+                                           ) {
+                                               Column(
+                                                   modifier = Modifier
+                                                       .weight(1f)
+                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PAGE_MARGIN") 1f else nonActiveAlpha)
+                                               ) {
+                                                   Row(
+                                                       modifier = Modifier.fillMaxWidth(),
+                                                       horizontalArrangement = Arrangement.SpaceBetween
+                                                   ) {
+                                                       Text(
+                                                           text = if (strings.isId) "MARGIN TEPI" else "PAGE MARGIN",
+                                                           color = palette.textMuted,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                       Text(
+                                                           text = "${prefs.pageMarginDp}px",
+                                                           color = palette.textMain,
+                                                           fontSize = 9.sp,
+                                                           fontFamily = FontFamily.Monospace
+                                                       )
+                                                   }
+                                                   FlyleafThinSlider(
+                                                       value = prefs.pageMarginDp.toFloat(),
+                                                       onValueChange = {
+                                                           activeDraggingSliderKey = "PAGE_MARGIN"
+                                                           onUpdateTypography(null, null, null, null, null, null, null, null, it.roundToInt(), null, false)
+                                                       },
+                                                       onValueChangeFinished = {
+                                                           activeDraggingSliderKey = null
+                                                           viewModel?.commitTypography()
+                                                       },
+                                                       valueRange = 12f..48f
+                                                   )
                                              }
 
                                              Column(
@@ -3005,15 +3050,15 @@ fun ReaderScreen(
                                                       fontFamily = FontFamily.Monospace,
                                                       modifier = Modifier.padding(bottom = 6.dp)
                                                   )
-                                                   ClassicGlassSegmentedControl(
-                                                       items = listOf(
-                                                           false to (if (strings.isId) "Tanpa" else "None"),
-                                                           true to "Indent"
-                                                       ),
-                                                       selectedItem = prefs.paraIndent,
-                                                       onItemSelected = { onUpdateTypography(null, null, null, null, null, null, null, null, null, it) },
-                                                       height = 34.dp
-                                                   )
+                                                    ClassicGlassSegmentedControl(
+                                                        items = listOf(
+                                                            false to (if (strings.isId) "Tanpa" else "None"),
+                                                            true to "Indent"
+                                                        ),
+                                                        selectedItem = prefs.paraIndent,
+                                                        onItemSelected = { onUpdateTypography(null, null, null, null, null, null, null, null, null, it, true) },
+                                                        height = 34.dp
+                                                    )
                                                }
                                            }
                                        }

@@ -47,6 +47,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -971,7 +977,6 @@ fun normalizeBookTitle(fileName: String): String {
  * 1:1 `.flyleaf-slider` matching HTML prototype:
  * 3.dp slim track with 16.dp thumb, 2.dp border, and subtle shadow.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FlyleafThinSlider(
     value: Float,
@@ -982,41 +987,81 @@ fun FlyleafThinSlider(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
-    Slider(
-        value = value,
-        onValueChange = onValueChange,
-        onValueChangeFinished = onValueChangeFinished,
-        valueRange = valueRange,
-        steps = steps,
-        modifier = modifier.height(28.dp),
-        thumb = { _ ->
+    val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
+    val externalFraction = ((value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
+
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(externalFraction) }
+
+    if (!isDragging) {
+        dragFraction = externalFraction
+    }
+
+    val fraction = dragFraction
+
+    BoxWithConstraints(
+        modifier = modifier
+            .height(28.dp)
+            .fillMaxWidth()
+            .pointerInput(valueRange, onValueChange, onValueChangeFinished) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    isDragging = true
+                    val trackStartPx = 8.dp.toPx()
+                    val trackWidthPx = (size.width.toFloat() - trackStartPx * 2f).coerceAtLeast(1f)
+                    dragFraction = ((down.position.x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
+                    val mappedVal = valueRange.start + dragFraction * rangeSpan
+                    onValueChange(mappedVal)
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: break
+                        if (change.changedToUp()) {
+                            change.consume()
+                            break
+                        }
+                        change.consume()
+                        dragFraction = ((change.position.x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
+                        val currVal = valueRange.start + dragFraction * rangeSpan
+                        onValueChange(currVal)
+                    }
+                    isDragging = false
+                    onValueChangeFinished?.invoke()
+                }
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        val thumbRadiusDp = 8.dp
+        val availableW = (maxWidth - thumbRadiusDp * 2).coerceAtLeast(0.dp)
+
+        // Track container
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = thumbRadiusDp)
+                .height(3.dp)
+                .clip(CircleShape)
+                .background(palette.borderSoft)
+        ) {
             Box(
                 modifier = Modifier
-                    .size(16.dp)
-                    .shadow(elevation = 3.dp, shape = CircleShape)
-                    .background(palette.textMain, CircleShape)
-                    .border(2.dp, palette.bgApp, CircleShape)
-            )
-        },
-        track = { _ ->
-            val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
-            val fraction = ((value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxWidth(fraction)
                     .height(3.dp)
-                    .clip(CircleShape)
-                    .background(palette.borderSoft)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(fraction)
-                        .height(3.dp)
-                        .background(palette.textMain)
-                )
-            }
+                    .background(palette.textMain)
+            )
         }
-    )
+
+        // Thumb container
+        val thumbOffset = availableW * fraction
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset)
+                .size(16.dp)
+                .shadow(elevation = 3.dp, shape = CircleShape)
+                .background(palette.textMain, CircleShape)
+                .border(2.dp, palette.bgApp, CircleShape)
+        )
+    }
 }
 
 @Composable

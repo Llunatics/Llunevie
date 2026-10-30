@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -130,7 +131,14 @@ class LlunevieViewModel(
     private val apiRepo: MultiBookApiRepository
 ) : ViewModel() {
 
-    val preferences: StateFlow<UserPreferencesState> = prefsRepo.preferencesFlow.stateIn(
+    private val _previewOverrides = MutableStateFlow<UserPreferencesState?>(null)
+
+    val preferences: StateFlow<UserPreferencesState> = combine(
+        prefsRepo.preferencesFlow,
+        _previewOverrides
+    ) { diskPrefs, preview ->
+        preview ?: diskPrefs
+    }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = UserPreferencesState()
@@ -439,21 +447,45 @@ class LlunevieViewModel(
         letterSpacing: Float? = null,
         wordSpacing: Int? = null,
         pageMargin: Int? = null,
-        paraIndent: Boolean? = null
+        paraIndent: Boolean? = null,
+        commitToDisk: Boolean = true
     ) {
+        val current = preferences.value
+        val updated = current.copy(
+            fontFamily = fontFamily ?: current.fontFamily,
+            fontSizeSp = fontSizeSp ?: current.fontSizeSp,
+            fontWeight = fontWeight ?: current.fontWeight,
+            textAlign = textAlign ?: current.textAlign,
+            lineHeightMultiplier = lineHeight ?: current.lineHeightMultiplier,
+            paraSpacingEm = paraSpacing ?: current.paraSpacingEm,
+            letterSpacingEm = letterSpacing ?: current.letterSpacingEm,
+            wordSpacingPx = wordSpacing ?: current.wordSpacingPx,
+            pageMarginDp = pageMargin ?: current.pageMarginDp,
+            paraIndent = paraIndent ?: current.paraIndent
+        )
+        _previewOverrides.value = updated
+
+        if (commitToDisk) {
+            commitTypography()
+        }
+    }
+
+    fun commitTypography() {
+        val current = _previewOverrides.value ?: preferences.value
         viewModelScope.launch {
             prefsRepo.updateReaderTypography(
-                fontFamily = fontFamily,
-                fontSizeSp = fontSizeSp,
-                fontWeight = fontWeight,
-                textAlign = textAlign,
-                lineHeight = lineHeight,
-                paraSpacing = paraSpacing,
-                letterSpacing = letterSpacing,
-                wordSpacing = wordSpacing,
-                pageMargin = pageMargin,
-                paraIndent = paraIndent
+                fontFamily = current.fontFamily,
+                fontSizeSp = current.fontSizeSp,
+                fontWeight = current.fontWeight,
+                textAlign = current.textAlign,
+                lineHeight = current.lineHeightMultiplier,
+                paraSpacing = current.paraSpacingEm,
+                letterSpacing = current.letterSpacingEm,
+                wordSpacing = current.wordSpacingPx,
+                pageMargin = current.pageMarginDp,
+                paraIndent = current.paraIndent
             )
+            _previewOverrides.value = null
         }
     }
 

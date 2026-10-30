@@ -390,8 +390,8 @@ private fun LlunevieMainContainer(
                             onSetTheme = { viewModel.setTheme(it) },
                             onSetReadingFlowMode = { viewModel.setReadingFlowMode(it) },
                             onSetPageAnimStyle = { viewModel.setPageAnimStyle(it) },
-                            onUpdateTypography = { fam, size, wt, align, lh, ps, ls, ws, pm, pi ->
-                                viewModel.updateTypography(fam, size, wt, align, lh, ps, ls, ws, pm, pi)
+                            onUpdateTypography = { fam, size, wt, align, lh, ps, ls, ws, pm, pi, commit ->
+                                viewModel.updateTypography(fam, size, wt, align, lh, ps, ls, ws, pm, pi, commitToDisk = commit)
                             }
                         )
                     } else {
