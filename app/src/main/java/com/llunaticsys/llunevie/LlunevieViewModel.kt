@@ -196,17 +196,27 @@ class LlunevieViewModel(
         bmp
     }
 
-    fun prefetchPdfNeighbors(bookId: String, filePath: String, pageIndex: Int) {
+    fun prefetchPdfNeighbors(bookId: String, filePath: String, pageIndex: Int, isTwoPageSpread: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
-            if (pageIndex > 0 && pdfBitmapCache.get("$bookId:${pageIndex - 1}") == null) {
-                val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex - 1, 1080)
-                if (bmp != null) pdfBitmapCache.put("$bookId:${pageIndex - 1}", bmp)
-            }
             val book = books.value.find { it.id == bookId }
             val total = book?.pagesCount ?: 9999
-            if (pageIndex + 1 < total && pdfBitmapCache.get("$bookId:${pageIndex + 1}") == null) {
-                val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex + 1, 1080)
-                if (bmp != null) pdfBitmapCache.put("$bookId:${pageIndex + 1}", bmp)
+            val pagesToPrefetch = if (isTwoPageSpread) {
+                listOf(
+                    pageIndex - 2,
+                    pageIndex - 1,
+                    pageIndex,
+                    pageIndex + 1,
+                    pageIndex + 2,
+                    pageIndex + 3
+                )
+            } else {
+                listOf(pageIndex - 1, pageIndex + 1)
+            }
+            for (p in pagesToPrefetch) {
+                if (p in 0 until total && pdfBitmapCache.get("$bookId:$p") == null) {
+                    val bmp = PdfNativeRenderer.renderPageBitmap(filePath, p, 1080)
+                    if (bmp != null) pdfBitmapCache.put("$bookId:$p", bmp)
+                }
             }
         }
     }

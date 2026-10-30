@@ -52,6 +52,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1006,24 +1007,26 @@ fun FlyleafThinSlider(
             .pointerInput(valueRange, onValueChange, onValueChangeFinished) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
                     isDragging = true
                     val trackStartPx = 8.dp.toPx()
                     val trackWidthPx = (size.width.toFloat() - trackStartPx * 2f).coerceAtLeast(1f)
-                    dragFraction = ((down.position.x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
-                    val mappedVal = valueRange.start + dragFraction * rangeSpan
-                    onValueChange(mappedVal)
+                    fun updateFromTouchX(x: Float) {
+                        dragFraction = ((x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
+                        val mappedVal = valueRange.start + dragFraction * rangeSpan
+                        onValueChange(mappedVal)
+                    }
+                    updateFromTouchX(down.position.x)
 
                     while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull() ?: break
-                        if (change.changedToUp()) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
                             change.consume()
                             break
                         }
                         change.consume()
-                        dragFraction = ((change.position.x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
-                        val currVal = valueRange.start + dragFraction * rangeSpan
-                        onValueChange(currVal)
+                        updateFromTouchX(change.position.x)
                     }
                     isDragging = false
                     onValueChangeFinished?.invoke()

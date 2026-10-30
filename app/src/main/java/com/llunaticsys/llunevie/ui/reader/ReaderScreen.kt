@@ -721,10 +721,23 @@ fun ReaderScreen(
                             var liveDragProgress by remember { mutableFloatStateOf(0f) }
                             var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
 
-                            val flipbookGestureModifier = Modifier.pointerInput(curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor) {
+                            val flipbookGestureModifier = Modifier.pointerInput(
+                                curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
+                                showPageScrubber, showInlinePageSlider, uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
+                            ) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                     if (isTurnCommitting) return@awaitEachGesture
+                                    if (showPageScrubber ||
+                                        showInlinePageSlider ||
+                                        down.position.y >= size.height - 96.dp.toPx() ||
+                                        down.position.y <= 88.dp.toPx() ||
+                                        uiState.showReaderTypeSheet ||
+                                        uiState.showReaderTocDrawer ||
+                                        uiState.showReaderNotesDrawer
+                                    ) {
+                                        return@awaitEachGesture
+                                    }
                                     if (hasSelectionActive) {
                                         val distStart = (down.position - selStartHandleAnchor).getDistance()
                                         val distEnd = (down.position - selEndHandleAnchor).getDistance()
@@ -998,12 +1011,47 @@ fun ReaderScreen(
                                 val leftText = leftTriple?.third.orEmpty().ifBlank { if (leftZero == curZero) currentPageRaw else "" }
                                 val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
                                 val rightText = rightTriple?.third.orEmpty()
+
+                                var leftPdfBmp by remember(book.id, leftZero) {
+                                    mutableStateOf(
+                                        if (isPdfBook) {
+                                            viewModel?.getCachedPdfBitmap(book.id, leftZero)
+                                                ?: (if (leftZero == (curZero / 2) * 2) curLeftPdfBmp else null)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        } else null
+                                    )
+                                }
+                                var rightPdfBmp by remember(book.id, rightZero) {
+                                    mutableStateOf(
+                                        if (isPdfBook) {
+                                            viewModel?.getCachedPdfBitmap(book.id, rightZero)
+                                                ?: (if (leftZero == (curZero / 2) * 2) curRightPdfBmp else null)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        } else null
+                                    )
+                                }
+
+                                if (isPdfBook) {
+                                    LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero) {
+                                        val path = book.localFilePath ?: return@LaunchedEffect
+                                        if (leftPdfBmp == null) {
+                                            leftPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, leftZero)
+                                        }
+                                        if (rightPdfBmp == null) {
+                                            rightPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, rightZero)
+                                        }
+                                        viewModel?.prefetchPdfNeighbors(book.id, path, leftZero, isTwoPageSpread = true)
+                                    }
+                                }
+
                                 val spreadBmp = remember(
                                     leftZero, rightZero, stageW, stageH,
                                     prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                     prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                                     prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
-                                    palette, isPdfBook, curLeftPdfBmp, curRightPdfBmp
+                                    palette, isPdfBook, leftPdfBmp, rightPdfBmp
                                 ) {
                                     renderTwoPageSpreadSnapshot(
                                         textMeasurer = textMeasurer,
@@ -1016,8 +1064,8 @@ fun ReaderScreen(
                                         rightHeader = rightCh?.title.orEmpty(),
                                         leftText = leftText,
                                         rightText = rightText,
-                                        leftPdfBitmap = if (isPdfBook && leftZero == (curZero / 2) * 2) curLeftPdfBmp else if (isPdfBook) PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, stageW / 2) else null,
-                                        rightPdfBitmap = if (isPdfBook && leftZero == (curZero / 2) * 2) curRightPdfBmp else if (isPdfBook) PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, stageW / 2) else null,
+                                        leftPdfBitmap = leftPdfBmp,
+                                        rightPdfBitmap = rightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
                                         palette = palette,
@@ -1226,7 +1274,15 @@ fun ReaderScreen(
                                 AnimatedContent(
                                     targetState = curZero,
                                     transitionSpec = {
-                                        fadeIn(tween(220, easing = FastOutSlowInEasing)) togetherWith fadeOut(tween(180, easing = FastOutSlowInEasing)) using SizeTransform(clip = false)
+                                        fadeIn(
+                                            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                                        ).togetherWith(
+                                            fadeOut(
+                                                animationSpec = tween(durationMillis = 16, delayMillis = 270)
+                                            )
+                                        ).apply {
+                                            targetContentZIndex = 1f
+                                        }
                                     },
                                     label = "readerFadeTransition",
                                     modifier = Modifier.fillMaxSize().then(fadeSwipeModifier)
@@ -5042,7 +5098,7 @@ private fun renderTwoPageSpreadSnapshot(
 
         // 1. Center spine divider line
         drawLine(
-            color = palette.borderSoft,
+            color = palette.borderSoft.copy(alpha = 0.6f),
             start = Offset(spineX, 0f),
             end = Offset(spineX, size.height),
             strokeWidth = with(density) { 1.dp.toPx() }
