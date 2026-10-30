@@ -34,6 +34,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
@@ -2677,6 +2678,8 @@ fun ReaderScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
+                                            val isSystemDark = isSystemInDarkTheme()
+                                            val effectiveTheme = prefs.effectiveTheme(isSystemDark)
                                             val themeColors = listOf(
                                                 Triple(AppThemeMode.PAPER, Color(0xFFF5F2EA), Color(0xFF23201A)),
                                                 Triple(AppThemeMode.WHITE, Color(0xFFFFFFFF), Color(0xFF18181B)),
@@ -2684,7 +2687,7 @@ fun ReaderScreen(
                                                 Triple(AppThemeMode.BLACK, Color(0xFF141413), Color(0xFFEDEAE2))
                                             )
                                             themeColors.forEach { (mode, chipBg, chipFg) ->
-                                                val active = prefs.appTheme == mode
+                                                val active = effectiveTheme == mode
                                                 Surface(
                                                     onClick = { onSetTheme(mode) },
                                                     shape = RoundedCornerShape(16.dp),

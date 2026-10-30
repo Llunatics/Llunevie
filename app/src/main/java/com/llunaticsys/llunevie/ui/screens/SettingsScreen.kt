@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.graphics.StrokeCap
 import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -110,6 +111,8 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
+    val isSystemDark = isSystemInDarkTheme()
+    val effectiveTheme = prefs.effectiveTheme(isSystemDark)
     val context = LocalContext.current
     var showNameDialog by remember { mutableStateOf(false) }
 
@@ -258,7 +261,7 @@ fun SettingsScreen(
                     ) {
                         Row(modifier = Modifier.padding(4.dp)) {
                             AppThemeMode.entries.forEach { mode ->
-                                val active = prefs.appTheme == mode
+                                val active = effectiveTheme == mode
                                 Surface(
                                     shape = CircleShape,
                                     color = if (active) palette.pillActiveBg else Color.Transparent,

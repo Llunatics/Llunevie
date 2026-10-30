@@ -158,11 +158,7 @@ class MainActivity : ComponentActivity() {
             }
 
             val systemDark = isSystemInDarkTheme()
-            val effectiveTheme = if (prefs.followDeviceTheme) {
-                if (systemDark) AppThemeMode.BLACK else AppThemeMode.WHITE
-            } else {
-                prefs.appTheme
-            }
+            val effectiveTheme = prefs.effectiveTheme(systemDark)
 
             LlunevieTheme(
                 themeMode = effectiveTheme,

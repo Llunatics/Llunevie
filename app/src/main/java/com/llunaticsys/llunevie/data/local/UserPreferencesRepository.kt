@@ -51,6 +51,14 @@ data class UserPreferencesState(
 ) {
     val lineHeightMult: Float get() = lineHeightMultiplier
     val pageMargin: Int get() = when { pageMarginDp <= 16 -> 0; pageMarginDp <= 28 -> 1; else -> 2 }
+
+    fun effectiveTheme(isSystemDark: Boolean): AppThemeMode {
+        return if (followDeviceTheme) {
+            if (isSystemDark) AppThemeMode.BLACK else AppThemeMode.WHITE
+        } else {
+            appTheme
+        }
+    }
 }
 
 class UserPreferencesRepository(private val context: Context) {
