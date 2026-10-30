@@ -240,6 +240,10 @@ object PageSnapshotBitmapRenderer {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && wordSpacingPx > 0) {
                 wordSpacing = wordSpacingPx.toFloat()
             }
+            if (fontWeight == 500) {
+                style = Paint.Style.FILL_AND_STROKE
+                strokeWidth = 0.45f * density
+            }
         }
 
         // Exact horizontal padding (22.dp * density) and vertical padding (20.dp * density top, 24.dp * density bottom)
@@ -458,6 +462,10 @@ object PageSnapshotBitmapRenderer {
                 letterSpacing = letterSpacingEm
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && wordSpacingPx > 0) {
                     wordSpacing = wordSpacingPx.toFloat()
+                }
+                if (fontWeight == 500) {
+                    style = Paint.Style.FILL_AND_STROKE
+                    strokeWidth = 0.45f * density
                 }
             }
 

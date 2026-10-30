@@ -161,6 +161,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import androidx.compose.ui.graphics.drawscope.Stroke
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.zIndex
@@ -474,7 +475,10 @@ fun ReaderScreen(
                             val curBitmap by produceState<ImageBitmap?>(
                                 initialValue = curBitmapInitial,
                                 curZero, isSpread, isPdfBook, currentPageRaw, curLeftPdfBmp, curRightPdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
+                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily
                             ) {
                                 value = if (isSpread) {
                                     val leftZero = (curZero / 2) * 2
@@ -498,7 +502,8 @@ fun ReaderScreen(
                                         rightPdfBitmap = curRightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
-                                        palette = palette
+                                        palette = palette,
+                                        prefs = prefs
                                     )
                                 } else if (isPdfBook) {
                                     curLeftPdfBmp?.asImageBitmap()
@@ -527,7 +532,10 @@ fun ReaderScreen(
                             val nextBitmap by produceState<ImageBitmap?>(
                                 initialValue = null,
                                 curZero, isSpread, isPdfBook, nextTriple, nextLeftPdfBmp, nextRightPdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
+                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily
                             ) {
                                 value = if (nextTriple == null) null
                                 else if (isSpread) {
@@ -552,7 +560,8 @@ fun ReaderScreen(
                                         rightPdfBitmap = nextRightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
-                                        palette = palette
+                                        palette = palette,
+                                        prefs = prefs
                                     )
                                 } else if (isPdfBook) {
                                     nextLeftPdfBmp?.asImageBitmap()
@@ -581,7 +590,10 @@ fun ReaderScreen(
                             val prevBitmap by produceState<ImageBitmap?>(
                                 initialValue = null,
                                 curZero, isSpread, isPdfBook, prevTriple, prevLeftPdfBmp, prevRightPdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH
+                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily
                             ) {
                                 value = if (prevTriple == null) null
                                 else if (isSpread) {
@@ -606,7 +618,8 @@ fun ReaderScreen(
                                         rightPdfBitmap = prevRightPdfBmp,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
-                                        palette = palette
+                                        palette = palette,
+                                        prefs = prefs
                                     )
                                 } else if (isPdfBook) {
                                     prevLeftPdfBmp?.asImageBitmap()
@@ -828,6 +841,9 @@ fun ReaderScreen(
                                 val rightText = rightTriple?.third.orEmpty()
                                 val spreadBmp = remember(
                                     leftZero, rightZero, stageW, stageH,
+                                    prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                                    prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                                    prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
                                     palette, isPdfBook, curLeftPdfBmp, curRightPdfBmp
                                 ) {
                                     renderTwoPageSpreadSnapshot(
@@ -845,7 +861,8 @@ fun ReaderScreen(
                                         rightPdfBitmap = if (isPdfBook && leftZero == (curZero / 2) * 2) curRightPdfBmp else if (isPdfBook) PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, stageW / 2) else null,
                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
-                                        palette = palette
+                                        palette = palette,
+                                        prefs = prefs
                                     )
                                 }
                                 Box(
@@ -4296,9 +4313,23 @@ private fun InteractiveTextPageContent(
                                     val safeClipBottom = l.getLineBottom(lastCompleteLine)
                                     clipRect(0f, 0f, size.width, safeClipBottom) {
                                         this@drawWithContent.drawContent()
+                                        if (prefs.fontWeight == 500) {
+                                            drawText(
+                                                textLayoutResult = l,
+                                                color = palette.textMain,
+                                                drawStyle = Stroke(width = 0.45f * density.density)
+                                            )
+                                        }
                                     }
                                 } else {
                                     drawContent()
+                                    if (prefs.fontWeight == 500 && l != null) {
+                                        drawText(
+                                            textLayoutResult = l,
+                                            color = palette.textMain,
+                                            drawStyle = Stroke(width = 0.45f * density.density)
+                                        )
+                                    }
                                 }
 
                                 if (hasActiveSelection && l != null && fullPageText.isNotEmpty()) {
@@ -4734,6 +4765,14 @@ private fun renderEpubPageSnapshot(
             constraints = Constraints(maxWidth = contentW)
         )
         drawText(layout, topLeft = Offset(padX, padTop))
+        if (pageTextStyle.fontWeight == FontWeight.Medium) {
+            drawText(
+                textLayoutResult = layout,
+                topLeft = Offset(padX, padTop),
+                color = pageTextStyle.color,
+                drawStyle = Stroke(width = 0.45f * density.density)
+            )
+        }
     }
     return bitmap
 }
@@ -4753,7 +4792,8 @@ private fun renderTwoPageSpreadSnapshot(
     rightPdfBitmap: Bitmap?,
     bgColor: Color,
     pageTextStyle: TextStyle,
-    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette
+    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette,
+    prefs: UserPreferencesState? = null
 ): ImageBitmap {
     val bitmap = ImageBitmap(widthPx.coerceAtLeast(100), heightPx.coerceAtLeast(100))
     val canvas = androidx.compose.ui.graphics.Canvas(bitmap)
@@ -4778,11 +4818,19 @@ private fun renderTwoPageSpreadSnapshot(
             strokeWidth = with(density) { 1.dp.toPx() }
         )
 
-        val colPadHoriz = with(density) { 14.dp.toPx() }
+        val (hMarginDp, vMarginDp) = when (prefs?.pageMargin) {
+            0 -> 10.dp to 10.dp
+            2 -> 28.dp to 20.dp
+            else -> 18.dp to 14.dp
+        }
+        val colPadHoriz = with(density) { hMarginDp.toPx() }
+        val colPadVert = with(density) { vMarginDp.toPx() }
         val headerH = with(density) { 22.dp.toPx() }
         val footerH = with(density) { 20.dp.toPx() }
         val colInnerW = (halfW - colPadHoriz * 2).roundToInt().coerceAtLeast(100)
-        val colInnerH = (size.height - headerH - footerH - 12f).coerceAtLeast(100f)
+        val colInnerH = (size.height - headerH - footerH - colPadVert * 2).coerceAtLeast(100f)
+        val textTop = headerH + colPadVert
+        val clipBottom = size.height - footerH - colPadVert
 
         val headerStyle = TextStyle(
             color = palette.textMuted,
@@ -4798,7 +4846,7 @@ private fun renderTwoPageSpreadSnapshot(
                 style = headerStyle,
                 constraints = Constraints(maxWidth = colInnerW)
             )
-            drawText(hLayout, topLeft = Offset(colPadHoriz, 6f))
+            drawText(hLayout, topLeft = Offset(colPadHoriz, 6f + colPadVert * 0.5f))
         }
         val leftPageNum = textMeasurer.measure(
             text = AnnotatedString("${leftPageIndex + 1}"),
@@ -4814,7 +4862,7 @@ private fun renderTwoPageSpreadSnapshot(
                 style = headerStyle,
                 constraints = Constraints(maxWidth = colInnerW)
             )
-            drawText(rhLayout, topLeft = Offset(halfW + colPadHoriz, 6f))
+            drawText(rhLayout, topLeft = Offset(halfW + colPadHoriz, 6f + colPadVert * 0.5f))
         }
         val rightPageNum = textMeasurer.measure(
             text = AnnotatedString("${rightPageIndex + 1}"),
@@ -4822,6 +4870,54 @@ private fun renderTwoPageSpreadSnapshot(
             constraints = Constraints(maxWidth = colInnerW)
         )
         drawText(rightPageNum, topLeft = Offset(size.width - colPadHoriz - rightPageNum.size.width, size.height - footerH))
+
+        fun buildSpreadColumnAnnotated(
+            text: String,
+            effectiveFontSizeSp: Float
+        ): AnnotatedString {
+            val clean = text
+                .replace(Regex("\\[ILLUST:[^]]+]"), "")
+                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                .trim()
+            val rawParas = clean.split("\n\n").map { it.trim() }.filter { it.isNotEmpty() }
+            val paraIndent = prefs?.paraIndent ?: false
+            val paraSpacingEm = prefs?.paraSpacingEm ?: 1.1f
+            val wordSpacingPx = prefs?.wordSpacingPx ?: 0
+            val textAlign = pageTextStyle.textAlign ?: TextAlign.Start
+
+            val indentSpec = if (paraIndent) TextIndent(firstLine = (effectiveFontSizeSp * 1.5f).sp) else TextIndent.None
+            val paraGapSp = (effectiveFontSizeSp * paraSpacingEm.coerceIn(0.2f, 2.5f) * 0.85f).sp
+            val wordExtraSp = (wordSpacingPx * 0.28f).sp
+
+            return buildAnnotatedString {
+                rawParas.forEachIndexed { idx, pText ->
+                    val pStart = length
+                    withStyle(
+                        ParagraphStyle(
+                            textAlign = textAlign,
+                            textIndent = indentSpec
+                        )
+                    ) {
+                        append(pText)
+                    }
+                    val pEnd = length
+                    if (wordSpacingPx > 0) {
+                        for (i in pStart until pEnd) {
+                            if (this.toAnnotatedString().text[i] == ' ') {
+                                addStyle(SpanStyle(letterSpacing = wordExtraSp), i, i + 1)
+                            }
+                        }
+                    }
+                    if (idx < rawParas.lastIndex) {
+                        withStyle(ParagraphStyle(lineHeight = paraGapSp)) {
+                            withStyle(SpanStyle(fontSize = paraGapSp)) {
+                                append("\n")
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Left Page Content
         if (leftPdfBitmap != null) {
@@ -4834,31 +4930,39 @@ private fun renderTwoPageSpreadSnapshot(
                 dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
             )
         } else if (leftText.isNotBlank()) {
-            val cleanLeft = leftText.replace(Regex("\\[ILLUST:[^]]+]"), "").replace(Regex("\\[PDF_PAGE:[^]]+]"), "").trim()
-            val leftAnnotated = buildAnnotatedString { append(cleanLeft) }
             val baseFontSize = pageTextStyle.fontSize.value
             val baseLineHeight = pageTextStyle.lineHeight.value
+            var fontScale = 1.0f
             var effectiveLeftStyle = pageTextStyle
+            var leftAnnotated = buildSpreadColumnAnnotated(leftText, baseFontSize * fontScale)
             var leftLayout = textMeasurer.measure(
                 text = leftAnnotated,
                 style = effectiveLeftStyle,
                 constraints = Constraints(maxWidth = colInnerW)
             )
-            var fontScale = 1.0f
             while (leftLayout.size.height > colInnerH && fontScale > 0.48f) {
                 fontScale *= 0.94f
                 effectiveLeftStyle = pageTextStyle.copy(
                     fontSize = (baseFontSize * fontScale).sp,
                     lineHeight = (baseLineHeight * fontScale).sp
                 )
+                leftAnnotated = buildSpreadColumnAnnotated(leftText, baseFontSize * fontScale)
                 leftLayout = textMeasurer.measure(
                     text = leftAnnotated,
                     style = effectiveLeftStyle,
                     constraints = Constraints(maxWidth = colInnerW)
                 )
             }
-            clipRect(colPadHoriz, headerH + 6f, colPadHoriz + colInnerW, size.height - footerH) {
-                drawText(leftLayout, topLeft = Offset(colPadHoriz, headerH + 6f))
+            clipRect(colPadHoriz, textTop, colPadHoriz + colInnerW, clipBottom) {
+                drawText(leftLayout, topLeft = Offset(colPadHoriz, textTop))
+                if (prefs?.fontWeight == 500) {
+                    drawText(
+                        textLayoutResult = leftLayout,
+                        topLeft = Offset(colPadHoriz, textTop),
+                        color = pageTextStyle.color,
+                        drawStyle = Stroke(width = 0.45f * density.density)
+                    )
+                }
             }
         }
 
@@ -4873,31 +4977,39 @@ private fun renderTwoPageSpreadSnapshot(
                 dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
             )
         } else if (rightText.isNotBlank()) {
-            val cleanRight = rightText.replace(Regex("\\[ILLUST:[^]]+]"), "").replace(Regex("\\[PDF_PAGE:[^]]+]"), "").trim()
-            val rightAnnotated = buildAnnotatedString { append(cleanRight) }
             val baseFontSize = pageTextStyle.fontSize.value
             val baseLineHeight = pageTextStyle.lineHeight.value
+            var fontScale = 1.0f
             var effectiveRightStyle = pageTextStyle
+            var rightAnnotated = buildSpreadColumnAnnotated(rightText, baseFontSize * fontScale)
             var rightLayout = textMeasurer.measure(
                 text = rightAnnotated,
                 style = effectiveRightStyle,
                 constraints = Constraints(maxWidth = colInnerW)
             )
-            var fontScale = 1.0f
             while (rightLayout.size.height > colInnerH && fontScale > 0.48f) {
                 fontScale *= 0.94f
                 effectiveRightStyle = pageTextStyle.copy(
                     fontSize = (baseFontSize * fontScale).sp,
                     lineHeight = (baseLineHeight * fontScale).sp
                 )
+                rightAnnotated = buildSpreadColumnAnnotated(rightText, baseFontSize * fontScale)
                 rightLayout = textMeasurer.measure(
                     text = rightAnnotated,
                     style = effectiveRightStyle,
                     constraints = Constraints(maxWidth = colInnerW)
                 )
             }
-            clipRect(halfW + colPadHoriz, headerH + 6f, halfW + colPadHoriz + colInnerW, size.height - footerH) {
-                drawText(rightLayout, topLeft = Offset(halfW + colPadHoriz, headerH + 6f))
+            clipRect(halfW + colPadHoriz, textTop, halfW + colPadHoriz + colInnerW, clipBottom) {
+                drawText(rightLayout, topLeft = Offset(halfW + colPadHoriz, textTop))
+                if (prefs?.fontWeight == 500) {
+                    drawText(
+                        textLayoutResult = rightLayout,
+                        topLeft = Offset(halfW + colPadHoriz, textTop),
+                        color = pageTextStyle.color,
+                        drawStyle = Stroke(width = 0.45f * density.density)
+                    )
+                }
             }
         }
     }
