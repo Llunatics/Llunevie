@@ -365,6 +365,29 @@ fun ReaderScreen(
                 val fontPx = with(density) { prefs.fontSizeSp.sp.toPx() }
                 val marginPx = with(density) { prefs.pageMarginDp.dp.roundToPx() }
 
+                val currentStatusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                val currentNavBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                var stableStatusBarTopDp by remember { mutableStateOf(24.dp) }
+                var stableNavBarBottomDp by remember { mutableStateOf(16.dp) }
+                if (currentStatusBarTop > 0.dp && currentStatusBarTop > stableStatusBarTopDp) {
+                    stableStatusBarTopDp = currentStatusBarTop
+                }
+                if (currentNavBarBottom > 0.dp && currentNavBarBottom > stableNavBarBottomDp) {
+                    stableNavBarBottomDp = currentNavBarBottom
+                }
+                val topClearanceDp = stableStatusBarTopDp + 64.dp
+                val bottomClearanceDp = stableNavBarBottomDp + 60.dp
+
+                val horizontalMarginDp = when (prefs.pageMargin) {
+                    0 -> 12.dp
+                    2 -> 36.dp
+                    else -> 22.dp
+                }
+
+                val padX = with(density) { horizontalMarginDp.toPx() }
+                val padTop = with(density) { topClearanceDp.toPx() }
+                val padBottom = with(density) { bottomClearanceDp.toPx() }
+
                 when (prefs.readingFlowMode) {
                     ReadingFlowMode.PAGINATED, ReadingFlowMode.SPREAD -> {
                         val curZero = displayPageIndex
@@ -435,15 +458,8 @@ fun ReaderScreen(
                             } else null
                         }
 
-                        var promotedTargetBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-                        LaunchedEffect(curZero) {
-                            promotedTargetBitmap = null
-                        }
-
                         val textMeasurer = rememberTextMeasurer()
                         val context = LocalContext.current
-                        val padX = with(density) { 22.dp.toPx() }
-                        val padTop = with(density) { 20.dp.toPx() }
                         val resolvedFontFamily = remember(prefs.fontFamily, prefs.fontWeight) {
                             getReaderFontFamily(context, prefs.fontFamily, prefs.fontWeight)
                         }
@@ -493,8 +509,14 @@ fun ReaderScreen(
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX
                             ) {
+                                val curTriple = getPageAtGlobalZero(curZero)
+                                val curCh = curTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
+                                val curText = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+                                val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
+                                val curPInCh = curTriple?.second ?: uiState.activePageIndex
+
                                 value = if (isSpread) {
                                     val leftZero = (curZero / 2) * 2
                                     val rightZero = leftZero + 1
@@ -528,16 +550,18 @@ fun ReaderScreen(
                                         widthPx = stageW,
                                         heightPx = stageH,
                                         density = density,
-                                        chapterTitle = currentChapter?.title.orEmpty(),
-                                        pageText = currentPageRaw,
+                                        chapterTitle = curCh?.title.orEmpty(),
+                                        pageText = curText,
                                         bgColor = palette.bgApp,
                                         pageTextStyle = baseTextStyle,
                                         padX = padX,
                                         padTop = padTop,
+                                        padBottom = padBottom,
+                                        showChapterHeader = curPInCh == 0,
                                         isCover = (curZero == 0),
                                         highlights = bookHighlights,
-                                        chapterIndex = uiState.activeChapterIndex,
-                                        pageIndex = uiState.activePageIndex,
+                                        chapterIndex = curChIdx,
+                                        pageIndex = curPInCh,
                                         palette = palette,
                                         prefs = prefs
                                     )
@@ -551,8 +575,13 @@ fun ReaderScreen(
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX
                             ) {
+                                val nextCh = nextTriple?.let { chapters.getOrNull(it.first) }
+                                val nextText = nextTriple?.third.orEmpty()
+                                val nextChIdx = nextTriple?.first ?: 0
+                                val nextPInCh = nextTriple?.second ?: 0
+
                                 value = if (nextTriple == null) null
                                 else if (isSpread) {
                                     val leftZero = curZero + step
@@ -587,16 +616,18 @@ fun ReaderScreen(
                                         widthPx = stageW,
                                         heightPx = stageH,
                                         density = density,
-                                        chapterTitle = chapters.getOrNull(nextTriple.first)?.title.orEmpty(),
-                                        pageText = nextTriple.third,
+                                        chapterTitle = nextCh?.title.orEmpty(),
+                                        pageText = nextText,
                                         bgColor = palette.bgApp,
                                         pageTextStyle = baseTextStyle,
                                         padX = padX,
                                         padTop = padTop,
+                                        padBottom = padBottom,
+                                        showChapterHeader = nextPInCh == 0,
                                         isCover = (curZero + step == 0),
                                         highlights = bookHighlights,
-                                        chapterIndex = nextTriple.first,
-                                        pageIndex = nextTriple.second,
+                                        chapterIndex = nextChIdx,
+                                        pageIndex = nextPInCh,
                                         palette = palette,
                                         prefs = prefs
                                     )
@@ -610,8 +641,13 @@ fun ReaderScreen(
                                 palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX
                             ) {
+                                val prevCh = prevTriple?.let { chapters.getOrNull(it.first) }
+                                val prevText = prevTriple?.third.orEmpty()
+                                val prevChIdx = prevTriple?.first ?: 0
+                                val prevPInCh = prevTriple?.second ?: 0
+
                                 value = if (prevTriple == null) null
                                 else if (isSpread) {
                                     val leftZero = curZero - step
@@ -646,16 +682,18 @@ fun ReaderScreen(
                                         widthPx = stageW,
                                         heightPx = stageH,
                                         density = density,
-                                        chapterTitle = chapters.getOrNull(prevTriple.first)?.title.orEmpty(),
-                                        pageText = prevTriple.third,
+                                        chapterTitle = prevCh?.title.orEmpty(),
+                                        pageText = prevText,
                                         bgColor = palette.bgApp,
                                         pageTextStyle = baseTextStyle,
                                         padX = padX,
                                         padTop = padTop,
+                                        padBottom = padBottom,
+                                        showChapterHeader = prevPInCh == 0,
                                         isCover = (curZero - step == 0),
                                         highlights = bookHighlights,
-                                        chapterIndex = prevTriple.first,
-                                        pageIndex = prevTriple.second,
+                                        chapterIndex = prevChIdx,
+                                        pageIndex = prevPInCh,
                                         palette = palette,
                                         prefs = prefs
                                     )
@@ -881,27 +919,12 @@ fun ReaderScreen(
                                         bookTitle = book.title,
                                         fontScale = 1f,
                                         transparentTextForFlipbook = (activeBmp != null),
+                                        topClearanceDp = topClearanceDp,
+                                        bottomClearanceDp = bottomClearanceDp,
                                         onSelectionActiveChanged = { active, start, end ->
                                             hasSelectionActive = active
                                             selStartHandleAnchor = start
                                             selEndHandleAnchor = end
-                                        }
-                                    )
-                                }
-                            }
-                                            val pdfRatio = if (curLeftPdfBmp != null && curLeftPdfBmp!!.height > 0) {
-                                                curLeftPdfBmp!!.width.toFloat() / curLeftPdfBmp!!.height.toFloat()
-                                            } else {
-                                                PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
-                                            }
-                                            Modifier
-                                                .fillMaxHeight()
-                                                .aspectRatio(pdfRatio)
-                                                .padding(vertical = 4.dp)
-                                                .shadow(8.dp, RoundedCornerShape(4.dp))
-                                                .clip(RoundedCornerShape(4.dp))
-                                        } else {
-                                            Modifier.fillMaxSize()
                                         }
                                     )
                                 }
@@ -1035,7 +1058,9 @@ fun ReaderScreen(
                                             onSearchInBook = { inBookSearchQuery = it },
                                             isCoverPage = (pageZero == 0),
                                             bookTitle = book.title,
-                                            fontScale = 1f
+                                            fontScale = 1f,
+                                            topClearanceDp = topClearanceDp,
+                                            bottomClearanceDp = bottomClearanceDp
                                         )
                                     }
                                 }
@@ -4214,6 +4239,8 @@ private fun InteractiveTextPageContent(
     bookTitle: String = "",
     fontScale: Float = 1f,
     transparentTextForFlipbook: Boolean = false,
+    topClearanceDp: Dp = 0.dp,
+    bottomClearanceDp: Dp = 0.dp,
     onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> }
 ) {
     val palette = LocalLluneviePalette.current
@@ -4354,8 +4381,11 @@ private fun InteractiveTextPageContent(
         else -> 18.dp
     }
 
+    val topPadDp = if (!scrollable && topClearanceDp > 0.dp) topClearanceDp else verticalMarginDp
+    val bottomPadDp = if (!scrollable && bottomClearanceDp > 0.dp) bottomClearanceDp else verticalMarginDp + 4.dp
+
     val padX = with(density) { horizontalMarginDp.toPx() }
-    val padTop = with(density) { verticalMarginDp.toPx() }
+    val padTop = with(density) { topPadDp.toPx() }
 
     LaunchedEffect(hasActiveSelection, layout, selStart, selEnd) {
         if (hasActiveSelection && layout != null && fullPageText.isNotEmpty()) {
@@ -4382,7 +4412,7 @@ private fun InteractiveTextPageContent(
 
     Box(
         modifier = outerScrollModifier
-            .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = verticalMarginDp, bottom = verticalMarginDp + 4.dp)
+            .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = topPadDp, bottom = bottomPadDp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             if (showChapterHeader && chapterTitle.isNotBlank()) {
@@ -4814,6 +4844,8 @@ private fun renderEpubPageSnapshot(
     pageTextStyle: TextStyle,
     padX: Float,
     padTop: Float,
+    padBottom: Float = 0f,
+    showChapterHeader: Boolean = false,
     isCover: Boolean,
     highlights: List<HighlightNoteEntity>,
     chapterIndex: Int,
@@ -4863,6 +4895,25 @@ private fun renderEpubPageSnapshot(
             }
         }
 
+        val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
+        var currentY = padTop
+
+        if (showChapterHeader && chapterTitle.isNotBlank()) {
+            val titleLayout = textMeasurer.measure(
+                text = AnnotatedString(chapterTitle),
+                style = TextStyle(
+                    color = palette.textMain,
+                    fontSize = ((prefs?.fontSizeSp ?: 16) + 6).sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                ),
+                constraints = Constraints(maxWidth = contentW)
+            )
+            drawText(titleLayout, topLeft = Offset(padX, currentY))
+            currentY += titleLayout.size.height + with(density) { 16.dp.toPx() }
+        }
+
         val textParagraphs = rawParagraphs.filter { !it.startsWith("[ILLUST:") }
         val effectivePrefs = prefs ?: UserPreferencesState()
         val resolvedTextAlign = when (effectivePrefs.textAlign.lowercase()) {
@@ -4882,17 +4933,16 @@ private fun renderEpubPageSnapshot(
             palette = palette
         )
 
-        val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
         val layout = textMeasurer.measure(
             text = annotatedString,
             style = pageTextStyle,
             constraints = Constraints(maxWidth = contentW)
         )
-        drawText(layout, topLeft = Offset(padX, padTop))
+        drawText(layout, topLeft = Offset(padX, currentY))
         if (pageTextStyle.fontWeight == FontWeight.Medium) {
             drawText(
                 textLayoutResult = layout,
-                topLeft = Offset(padX, padTop),
+                topLeft = Offset(padX, currentY),
                 color = pageTextStyle.color,
                 drawStyle = Stroke(width = 0.45f * density.density)
             )
