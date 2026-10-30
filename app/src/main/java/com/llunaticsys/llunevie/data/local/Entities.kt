@@ -155,3 +155,26 @@ data class ShelfEntity(
     val sortOrder: Int,
     val isDefault: Boolean
 )
+
+@Entity(
+    tableName = "page_bookmarks",
+    foreignKeys = [
+        ForeignKey(
+            entity = BookEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["bookId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("bookId")]
+)
+data class PageBookmarkEntity(
+    @PrimaryKey val id: String,
+    val bookId: String,
+    val pageNumber: Int,
+    val chapterIndex: Int = 0,
+    val chapterTitle: String = "",
+    val snippetText: String = "",
+    val createdAtMillis: Long = System.currentTimeMillis()
+)
+

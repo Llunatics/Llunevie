@@ -13,6 +13,7 @@ import com.llunaticsys.llunevie.data.local.BookChapterEntity
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.data.local.DailyReadingLogEntity
 import com.llunaticsys.llunevie.data.local.HighlightNoteEntity
+import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
 import com.llunaticsys.llunevie.data.local.LlunevieDao
 import com.llunaticsys.llunevie.data.local.ShelfEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesRepository
@@ -166,6 +167,12 @@ class LlunevieViewModel(
     )
 
     val allHighlights: StateFlow<List<HighlightNoteEntity>> = dao.observeAllHighlights().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val allBookmarks: StateFlow<List<PageBookmarkEntity>> = dao.observeAllBookmarks().stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -928,9 +935,9 @@ class LlunevieViewModel(
         val chapters = st.activeBookChapters
         if (chapters.isEmpty()) return
         val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
-        val stepSize = if (isSpread) 2 else 1
         val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
         val currentZero = metrics.currentGlobalPage - 1
+        val stepSize = if (isSpread) 2 else 1
         val targetZero = currentZero + deltaSteps * stepSize
 
         if (targetZero < 0) {
@@ -1118,6 +1125,43 @@ class LlunevieViewModel(
             dao.deleteHighlightById(highlightId)
             val isId = preferences.value.lang != "en"
             showToast(if (isId) "Catatan dihapus" else "Note deleted")
+        }
+    }
+
+    fun togglePageBookmark(
+        bookId: String,
+        pageNumber: Int,
+        chapterIndex: Int,
+        chapterTitle: String,
+        snippetText: String
+    ) {
+        val isId = preferences.value.lang != "en"
+        viewModelScope.launch {
+            val existing = allBookmarks.value.find { it.bookId == bookId && it.pageNumber == pageNumber }
+            if (existing != null) {
+                dao.deleteBookmarkById(existing.id)
+                showToast(if (isId) "Penanda halaman $pageNumber dihapus" else "Page $pageNumber bookmark removed")
+            } else {
+                val entity = PageBookmarkEntity(
+                    id = "bm-${System.currentTimeMillis()}-${pageNumber}",
+                    bookId = bookId,
+                    pageNumber = pageNumber,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapterTitle.trim(),
+                    snippetText = snippetText.trim().take(120),
+                    createdAtMillis = System.currentTimeMillis()
+                )
+                dao.upsertBookmark(entity)
+                showToast(if (isId) "Halaman $pageNumber ditandai" else "Page $pageNumber bookmarked")
+            }
+        }
+    }
+
+    fun deletePageBookmark(bookmarkId: String) {
+        val isId = preferences.value.lang != "en"
+        viewModelScope.launch {
+            dao.deleteBookmarkById(bookmarkId)
+            showToast(if (isId) "Penanda halaman dihapus" else "Bookmark removed")
         }
     }
 

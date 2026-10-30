@@ -47,6 +47,7 @@ data class LluneviePalette(
 ) {
     val textPrimary: Color get() = textMain
     val textSecondary: Color get() = textMuted
+    val accent: Color get() = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
     fun highlightBg(key: HighlightColorKey): Color = when (key) {
         HighlightColorKey.GOLD -> Color(0xFFFEF08A)
         HighlightColorKey.PEACH -> Color(0xFFFECDD3)

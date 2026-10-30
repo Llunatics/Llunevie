@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
 import com.llunaticsys.llunevie.model.ReadingFlowMode
 import com.llunaticsys.llunevie.ui.components.BottomFloatingNavDock
 import com.llunaticsys.llunevie.ui.reader.ReaderScreen
@@ -117,6 +118,7 @@ class MainActivity : ComponentActivity() {
             val shelves by viewModel.shelves.collectAsState()
             val dailyLogs by viewModel.dailyLogs.collectAsState()
             val allHighlights by viewModel.allHighlights.collectAsState()
+            val allBookmarks by viewModel.allBookmarks.collectAsState()
             val uiState by viewModel.uiState.collectAsState()
             val strings = getLlunevieStrings(prefs.lang)
 
@@ -183,6 +185,7 @@ class MainActivity : ComponentActivity() {
                     shelves = shelves,
                     dailyLogs = dailyLogs,
                     allHighlights = allHighlights,
+                    allBookmarks = allBookmarks,
                     uiState = uiState,
                     strings = strings,
                     onPickLocalFile = {
@@ -234,6 +237,7 @@ private fun LlunevieMainContainer(
     shelves: List<com.llunaticsys.llunevie.data.local.ShelfEntity>,
     dailyLogs: List<com.llunaticsys.llunevie.data.local.DailyReadingLogEntity>,
     allHighlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity>,
+    allBookmarks: List<PageBookmarkEntity>,
     uiState: LlunevieUiState,
     strings: com.llunaticsys.llunevie.ui.theme.LlunevieStrings,
     onPickLocalFile: () -> Unit,
@@ -353,6 +357,7 @@ private fun LlunevieMainContainer(
                     val activeBook = books.find { it.id == uiState.activeBookId } ?: books.firstOrNull()
                     if (activeBook != null) {
                         val bookHighlights = allHighlights.filter { it.bookId == activeBook.id }
+                        val bookBookmarks = allBookmarks.filter { it.bookId == activeBook.id }
                         val metrics = viewModel.computeGlobalPageMetrics(
                             uiState.activeBookChapters,
                             uiState.activeChapterIndex,
@@ -363,6 +368,7 @@ private fun LlunevieMainContainer(
                             uiState = uiState,
                             prefs = prefs,
                             bookHighlights = bookHighlights,
+                            bookBookmarks = bookBookmarks,
                             strings = strings,
                             metrics = metrics,
                             viewModel = viewModel,

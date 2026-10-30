@@ -82,11 +82,16 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.BookmarkBorder
+import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -256,6 +261,7 @@ fun ReaderScreen(
     uiState: LlunevieUiState,
     prefs: UserPreferencesState,
     bookHighlights: List<HighlightNoteEntity>,
+    bookBookmarks: List<PageBookmarkEntity> = emptyList(),
     strings: LlunevieStrings,
     metrics: GlobalPageMetrics,
     getPageAtGlobalZero: (Int) -> Triple<Int, Int, String>?,
@@ -1487,18 +1493,44 @@ fun ReaderScreen(
                     }
                 }
 
+                val isCurrentPageBookmarked = if (isSpread) {
+                    val sStart = (displayPageIndex / 2) * 2
+                    bookBookmarks.any { it.pageNumber == sStart + 1 || it.pageNumber == sStart + 2 }
+                } else {
+                    bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
+                }
+
                 Surface(
-                    onClick = { onToggleNotesDrawer(true) },
+                    onClick = {
+                        val curPageNum = displayPageIndex + 1
+                        val curTriple = getPageAtGlobalZero(displayPageIndex)
+                        val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
+                            ?: currentChapter?.title
+                            ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
+                        val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+                        val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
+                            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                            .trim()
+                            .take(100)
+                        viewModel?.togglePageBookmark(
+                            bookId = book.id,
+                            pageNumber = curPageNum,
+                            chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
+                            chapterTitle = chTitle,
+                            snippetText = snippet
+                        )
+                    },
                     shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
+                    color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
+                    border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
                     modifier = Modifier.size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        PrototypeSvgIcon(
-                            type = if (bookHighlights.isNotEmpty()) PrototypeIconType.BOOKMARK_FILLED else PrototypeIconType.BOOKMARK_OUTLINE,
-                            tint = palette.textMain,
-                            modifier = Modifier.size(15.dp)
+                        Icon(
+                            imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                            contentDescription = "Bookmark",
+                            tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
@@ -3594,7 +3626,8 @@ fun ReaderScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = if (strings.isId) "${bookHighlights.size} catatan tersimpan" else "${bookHighlights.size} saved note(s)",
+                                    text = if (strings.isId) "${bookBookmarks.size} penanda · ${bookHighlights.size} catatan"
+                                    else "${bookBookmarks.size} bookmark(s) · ${bookHighlights.size} note(s)",
                                     color = palette.textMuted,
                                     fontSize = 11.sp
                                 )
@@ -3795,7 +3828,7 @@ fun ReaderScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        if (bookHighlights.isEmpty()) {
+                        if (bookHighlights.isEmpty() && bookBookmarks.isEmpty()) {
                             Surface(
                                 shape = RoundedCornerShape(22.dp),
                                 color = palette.bgCard,
@@ -3807,7 +3840,7 @@ fun ReaderScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = if (strings.isId) "Belum ada catatan tersimpan" else "No saved notes yet",
+                                        text = if (strings.isId) "Belum ada penanda atau catatan" else "No saved bookmarks or notes yet",
                                         color = palette.textMain,
                                         fontSize = 15.sp,
                                         fontFamily = FontFamily.Serif,
@@ -3815,8 +3848,8 @@ fun ReaderScreen(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = if (strings.isId) "Ketuk paragraf pada halaman baca untuk menandai sorotan dan menyimpan catatan."
-                                        else "Tap any paragraph on the reading page to highlight and save a note.",
+                                        text = if (strings.isId) "Ketuk tombol penanda di kanan atas atau tandai sorotan pada halaman baca."
+                                        else "Tap the top-right bookmark button or highlight text on reading pages.",
                                         color = palette.textMuted,
                                         fontSize = 12.sp,
                                         textAlign = TextAlign.Center
@@ -3828,7 +3861,108 @@ fun ReaderScreen(
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                itemsIndexed(bookHighlights, key = { _, h -> h.id }) { _, hl ->
+                                if (bookBookmarks.isNotEmpty()) {
+                                    item(key = "hdr_bookmarks") {
+                                        Text(
+                                            text = if (strings.isId) "HALAMAN TERSIMPAN (${bookBookmarks.size})" else "BOOKMARKED PAGES (${bookBookmarks.size})",
+                                            color = palette.textMuted,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            letterSpacing = 1.2.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    itemsIndexed(bookBookmarks, key = { _, b -> b.id }) { _, bm ->
+                                        Surface(
+                                            onClick = {
+                                                onToggleNotesDrawer(false)
+                                                val targetZero = (bm.pageNumber - 1).coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0))
+                                                displayPageIndex = targetZero
+                                                viewModel?.jumpToGlobalPage(targetZero)
+                                            },
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = palette.bgCard,
+                                            border = BorderStroke(1.dp, palette.borderSoft),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Bookmark,
+                                                        contentDescription = null,
+                                                        tint = palette.accent,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = if (strings.isId) "Halaman ${bm.pageNumber}" else "Page ${bm.pageNumber}",
+                                                            color = palette.textMain,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                        if (bm.chapterTitle.isNotBlank()) {
+                                                            Text(
+                                                                text = bm.chapterTitle,
+                                                                color = palette.textMuted,
+                                                                fontSize = 10.5.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                        if (bm.snippetText.isNotBlank()) {
+                                                            Text(
+                                                                text = "“${bm.snippetText}”",
+                                                                color = palette.textMuted.copy(alpha = 0.8f),
+                                                                fontSize = 10.5.sp,
+                                                                fontFamily = FontFamily.Serif,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Surface(
+                                                    onClick = { viewModel?.deletePageBookmark(bm.id) },
+                                                    shape = CircleShape,
+                                                    color = Color.Transparent,
+                                                    modifier = Modifier.size(26.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Text("✕", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    item(key = "divider_bookmarks") {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        HorizontalDivider(color = palette.borderSoft)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                    }
+                                }
+
+                                if (bookHighlights.isNotEmpty()) {
+                                    item(key = "hdr_highlights") {
+                                        Text(
+                                            text = if (strings.isId) "CATATAN & HIGHLIGHT (${bookHighlights.size})" else "NOTES & HIGHLIGHTS (${bookHighlights.size})",
+                                            color = palette.textMuted,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            letterSpacing = 1.2.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    itemsIndexed(bookHighlights, key = { _, h -> h.id }) { _, hl ->
                                     val colorKey = HighlightColorKey.fromKey(hl.colorKey)
                                     val hlBg = palette.highlightBg(colorKey)
                                     val hlBorder = palette.highlightBorder(colorKey)
@@ -3898,6 +4032,7 @@ fun ReaderScreen(
                                         }
                                     }
                                 }
+                                    }
                             }
                         }
                     }

@@ -82,4 +82,19 @@ interface LlunevieDao {
 
     @Query("DELETE FROM shelves WHERE name = :shelfName AND isDefault = 0")
     suspend fun deleteCustomShelf(shelfName: String)
+
+    @Query("SELECT * FROM page_bookmarks WHERE bookId = :bookId ORDER BY pageNumber ASC, createdAtMillis DESC")
+    fun observeBookmarksForBook(bookId: String): Flow<List<PageBookmarkEntity>>
+
+    @Query("SELECT * FROM page_bookmarks ORDER BY createdAtMillis DESC")
+    fun observeAllBookmarks(): Flow<List<PageBookmarkEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBookmark(bookmark: PageBookmarkEntity)
+
+    @Query("DELETE FROM page_bookmarks WHERE id = :bookmarkId")
+    suspend fun deleteBookmarkById(bookmarkId: String)
+
+    @Query("DELETE FROM page_bookmarks WHERE bookId = :bookId AND pageNumber = :pageNumber")
+    suspend fun deleteBookmarkByPage(bookId: String, pageNumber: Int)
 }
