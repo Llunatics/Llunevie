@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.llunaticsys.llunevie.LlunevieViewModel
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -1495,33 +1496,39 @@ fun ReaderScreen(
                 mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
             }
 
-            AnimatedContent(
-                targetState = showInlinePageSlider,
-                transitionSpec = {
-                    (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                        scaleIn(initialScale = 0.92f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)))
-                        .togetherWith(
-                            fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                                scaleOut(targetScale = 0.92f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
-                        ) using SizeTransform(clip = false)
-                },
+            Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .windowInsetsPadding(WindowInsets.displayCutout)
-                    .padding(start = 18.dp),
-                label = "leftBarSpreadTransition"
-            ) { isSliderOpen ->
-                if (!isSliderOpen) {
-                    // Standard Vertical Control Capsule
-                    Surface(
-                        shape = CircleShape,
-                        color = palette.bgSurface.copy(alpha = 0.96f),
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        shadowElevation = 8.dp,
-                        modifier = Modifier.width(46.dp)
-                    ) {
+                    .padding(start = 18.dp)
+                    .width(46.dp)
+                    .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
+                    .clip(CircleShape)
+                    .background(color = palette.bgSurface, shape = CircleShape)
+                    .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
+                    .animateContentSize(
+                        animationSpec = spring<IntSize>(dampingRatio = 0.82f, stiffness = 380f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(
+                    targetState = showInlinePageSlider,
+                    transitionSpec = {
+                        (fadeIn(animationSpec = tween(durationMillis = 160, delayMillis = 60)) +
+                            scaleIn(initialScale = 0.92f, animationSpec = tween(durationMillis = 160, delayMillis = 60)))
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(durationMillis = 70)) +
+                                    scaleOut(targetScale = 0.92f, animationSpec = tween(durationMillis = 70))
+                            ) using SizeTransform(clip = false)
+                    },
+                    label = "LeftVerticalBarContent"
+                ) { isSliderMode ->
+                    if (!isSliderMode) {
+                        // Inner Column of buttons + page numbers (NO outer background/shadow/border here!)
                         Column(
-                            modifier = Modifier.padding(vertical = 8.dp),
+                            modifier = Modifier
+                                .width(46.dp)
+                                .padding(vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -1635,22 +1642,13 @@ fun ReaderScreen(
                                 }
                             }
                         }
-                    }
-                } else {
-                    // Vertical Page Scrubber Bar (width = 46.dp, height ≈ 230.dp, CircleShape, readerPalette.bgSurface, 1.dp readerPalette.borderSoft)
-                    val totalPages = metrics.totalBookPages.coerceAtLeast(1)
-                    Surface(
-                        shape = CircleShape,
-                        color = palette.bgSurface.copy(alpha = 0.98f),
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        shadowElevation = 10.dp,
-                        modifier = Modifier
-                            .width(46.dp)
-                            .height(230.dp)
-                    ) {
+                    } else {
+                        // Inner Column of page readout + vertical slider + close '✕' button (NO outer background/shadow/border here!)
+                        val totalPages = metrics.totalBookPages.coerceAtLeast(1)
                         Column(
                             modifier = Modifier
-                                .fillMaxSize()
+                                .width(46.dp)
+                                .height(230.dp)
                                 .padding(vertical = 10.dp, horizontal = 4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.SpaceBetween
@@ -2378,16 +2376,16 @@ fun ReaderScreen(
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
         // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
         if (uiState.showReaderTypeSheet) {
-            var isDraggingSettingsSlider by remember { mutableStateOf(false) }
+            var activeDraggingSliderKey by remember { mutableStateOf<String?>(null) }
             val scrimAlpha by animateFloatAsState(
-                targetValue = if (isDraggingSettingsSlider) 0f else 0.35f,
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
+                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
                 label = "settingsScrimAlpha"
             )
-            val panelAlpha by animateFloatAsState(
-                targetValue = if (isDraggingSettingsSlider) 0.04f else 1f,
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-                label = "settingsPanelAlpha"
+            val nonActiveAlpha by animateFloatAsState(
+                targetValue = if (activeDraggingSliderKey != null) 0f else 1f,
+                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+                label = "nonActiveAlpha"
             )
 
             Box(
@@ -2401,15 +2399,14 @@ fun ReaderScreen(
             ) {
                 Surface(
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = if (isDraggingSettingsSlider) 0.dp else 24.dp,
+                    color = palette.bgSurface.copy(alpha = nonActiveAlpha),
+                    border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = nonActiveAlpha)),
+                    shadowElevation = (8f * nonActiveAlpha).dp,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .widthIn(min = 340.dp, max = 420.dp)
                         .fillMaxWidth()
                         .heightIn(max = if (isLandscape) 310.dp else 460.dp)
-                        .alpha(panelAlpha)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -2423,7 +2420,9 @@ fun ReaderScreen(
                     ) {
                         // Top Tab Switcher (TEXT | THEME | FLOW / ALUR | TEMA) + Close Button (✕)
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(nonActiveAlpha),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             val availableTabs = if (isPdfBook) {
@@ -2525,7 +2524,9 @@ fun ReaderScreen(
                             when (currentTabKey) {
                                 // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
                                 "text" -> {
-                                    Column {
+                                    Column(
+                                        modifier = Modifier.alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "FONT_SIZE") 1f else nonActiveAlpha)
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween
@@ -2548,17 +2549,19 @@ fun ReaderScreen(
                                         FlyleafThinSlider(
                                             value = prefs.fontSizeSp.toFloat(),
                                             onValueChange = {
-                                                isDraggingSettingsSlider = true
+                                                activeDraggingSliderKey = "FONT_SIZE"
                                                 onUpdateTypography(null, it.roundToInt(), null, null, null, null, null, null, null, null)
                                             },
-                                            onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                            onValueChangeFinished = { activeDraggingSliderKey = null },
                                             valueRange = 12f..28f
                                         )
                                     }
 
                                     // 2-Column Grid: PERATAAN TEKS + KETEBALAN HURUF
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .alpha(nonActiveAlpha),
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
@@ -2605,7 +2608,7 @@ fun ReaderScreen(
                                     }
 
                                     // FONT SECTION
-                                    Column {
+                                    Column(modifier = Modifier.alpha(nonActiveAlpha)) {
                                         Text(
                                             text = "FONT",
                                             color = palette.textMuted,
@@ -2661,7 +2664,7 @@ fun ReaderScreen(
 
                                 // TAB 2: THEME & COMFORT SPACING (1:1 with #sheetTabPage)
                                 "page" -> {
-                                    Column {
+                                    Column(modifier = Modifier.alpha(nonActiveAlpha)) {
                                         Text(
                                             text = if (strings.isId) "TEMA BACA" else "READING THEME",
                                             color = palette.textMuted,
@@ -2713,7 +2716,11 @@ fun ReaderScreen(
                                              modifier = Modifier.fillMaxWidth(),
                                              horizontalArrangement = Arrangement.spacedBy(12.dp)
                                          ) {
-                                             Column(modifier = Modifier.weight(1f)) {
+                                             Column(
+                                                 modifier = Modifier
+                                                     .weight(1f)
+                                                     .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "LINE_SPACING") 1f else nonActiveAlpha)
+                                             ) {
                                                  Row(
                                                      modifier = Modifier.fillMaxWidth(),
                                                      horizontalArrangement = Arrangement.SpaceBetween
@@ -2734,15 +2741,19 @@ fun ReaderScreen(
                                                   FlyleafThinSlider(
                                                       value = prefs.lineHeightMultiplier,
                                                       onValueChange = {
-                                                          isDraggingSettingsSlider = true
+                                                          activeDraggingSliderKey = "LINE_SPACING"
                                                           onUpdateTypography(null, null, null, null, it, null, null, null, null, null)
                                                       },
-                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
                                                       valueRange = 1.2f..2.4f
                                                   )
                                               }
 
-                                              Column(modifier = Modifier.weight(1f)) {
+                                              Column(
+                                                  modifier = Modifier
+                                                      .weight(1f)
+                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PARA_SPACING") 1f else nonActiveAlpha)
+                                              ) {
                                                   Row(
                                                       modifier = Modifier.fillMaxWidth(),
                                                       horizontalArrangement = Arrangement.SpaceBetween
@@ -2763,10 +2774,10 @@ fun ReaderScreen(
                                                   FlyleafThinSlider(
                                                       value = prefs.paraSpacingEm,
                                                       onValueChange = {
-                                                          isDraggingSettingsSlider = true
+                                                          activeDraggingSliderKey = "PARA_SPACING"
                                                           onUpdateTypography(null, null, null, null, null, it, null, null, null, null)
                                                       },
-                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
                                                       valueRange = 0.4f..2.2f
                                                   )
                                               }
@@ -2776,7 +2787,11 @@ fun ReaderScreen(
                                               modifier = Modifier.fillMaxWidth(),
                                               horizontalArrangement = Arrangement.spacedBy(12.dp)
                                           ) {
-                                              Column(modifier = Modifier.weight(1f)) {
+                                              Column(
+                                                  modifier = Modifier
+                                                      .weight(1f)
+                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "LETTER_SPACING") 1f else nonActiveAlpha)
+                                              ) {
                                                   Row(
                                                       modifier = Modifier.fillMaxWidth(),
                                                       horizontalArrangement = Arrangement.SpaceBetween
@@ -2797,15 +2812,19 @@ fun ReaderScreen(
                                                   FlyleafThinSlider(
                                                       value = prefs.letterSpacingEm,
                                                       onValueChange = {
-                                                          isDraggingSettingsSlider = true
+                                                          activeDraggingSliderKey = "LETTER_SPACING"
                                                           onUpdateTypography(null, null, null, null, null, null, it, null, null, null)
                                                       },
-                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
                                                       valueRange = -0.02f..0.10f
                                                   )
                                               }
 
-                                              Column(modifier = Modifier.weight(1f)) {
+                                              Column(
+                                                  modifier = Modifier
+                                                      .weight(1f)
+                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "WORD_SPACING") 1f else nonActiveAlpha)
+                                              ) {
                                                   Row(
                                                       modifier = Modifier.fillMaxWidth(),
                                                       horizontalArrangement = Arrangement.SpaceBetween
@@ -2826,10 +2845,10 @@ fun ReaderScreen(
                                                   FlyleafThinSlider(
                                                       value = prefs.wordSpacingPx.toFloat(),
                                                       onValueChange = {
-                                                          isDraggingSettingsSlider = true
+                                                          activeDraggingSliderKey = "WORD_SPACING"
                                                           onUpdateTypography(null, null, null, null, null, null, null, it.roundToInt(), null, null)
                                                       },
-                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
                                                       valueRange = 0f..8f
                                                   )
                                               }
@@ -2841,7 +2860,11 @@ fun ReaderScreen(
                                               horizontalArrangement = Arrangement.spacedBy(12.dp),
                                               verticalAlignment = Alignment.CenterVertically
                                           ) {
-                                              Column(modifier = Modifier.weight(1f)) {
+                                              Column(
+                                                  modifier = Modifier
+                                                      .weight(1f)
+                                                      .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PAGE_MARGIN") 1f else nonActiveAlpha)
+                                              ) {
                                                   Row(
                                                       modifier = Modifier.fillMaxWidth(),
                                                       horizontalArrangement = Arrangement.SpaceBetween
@@ -2862,15 +2885,19 @@ fun ReaderScreen(
                                                   FlyleafThinSlider(
                                                       value = prefs.pageMarginDp.toFloat(),
                                                       onValueChange = {
-                                                          isDraggingSettingsSlider = true
+                                                          activeDraggingSliderKey = "PAGE_MARGIN"
                                                           onUpdateTypography(null, null, null, null, null, null, null, null, it.roundToInt(), null)
                                                       },
-                                                      onValueChangeFinished = { isDraggingSettingsSlider = false },
+                                                      onValueChangeFinished = { activeDraggingSliderKey = null },
                                                       valueRange = 12f..48f
                                                   )
                                              }
 
-                                             Column(modifier = Modifier.weight(1f)) {
+                                             Column(
+                                                 modifier = Modifier
+                                                     .weight(1f)
+                                                     .alpha(nonActiveAlpha)
+                                             ) {
                                                   Text(
                                                       text = if (strings.isId) "INDENTASI PARAGRAF" else "PARA INDENT",
                                                       color = palette.textMuted,
@@ -2894,101 +2921,108 @@ fun ReaderScreen(
 
                                    // TAB 3: FLOW MODES & PAGE ANIMATION (1:1 with #sheetTabTurn)
                                    "turn" -> {
-                                      Text(
-                                          text = if (strings.isId) "MODE ALUR BACA" else "READING FLOW MODE",
-                                          color = palette.textMuted,
-                                          fontSize = 10.sp,
-                                          fontFamily = FontFamily.Monospace,
-                                          letterSpacing = 1.sp
-                                      )
-                                      val modePairs = ReadingFlowMode.entries.chunked(2)
-                                      modePairs.forEach { rowModes ->
-                                          Row(
-                                              modifier = Modifier.fillMaxWidth(),
-                                              horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                          ) {
-                                              rowModes.forEach { mode ->
-                                                  val selected = prefs.readingFlowMode == mode
-                                                  val cardBg = if (palette.isGlass) {
-                                                      if (selected) palette.pillActiveBg else palette.bgSurface
-                                                  } else {
-                                                      if (selected) palette.accentDark else palette.bgSurface
-                                                  }
-                                                  val cardBorder = if (palette.isGlass) {
-                                                      if (selected) palette.pillActiveBorder else palette.borderSoft
-                                                  } else {
-                                                      if (selected) palette.accentDark else palette.borderSoft
-                                                  }
-                                                  val titleColor = if (selected && !palette.isGlass) palette.bgApp else palette.textMain
-                                                  val subtitleColor = if (selected && !palette.isGlass) palette.bgApp.copy(alpha = 0.75f) else palette.textMuted
-                                                   val modeIcon = when (mode) {
-                                                       ReadingFlowMode.PAGINATED -> PrototypeIconType.CHEVRON_RIGHT
-                                                       ReadingFlowMode.SCROLL -> PrototypeIconType.CHEVRON_DOWN
-                                                       ReadingFlowMode.WEBTOON -> PrototypeIconType.LIST_BULLETS
-                                                       ReadingFlowMode.SPREAD -> PrototypeIconType.FULL_COVER
-                                                   }
-
-                                                   Row(
-                                                       modifier = Modifier
-                                                           .weight(1f)
-                                                           .heightIn(min = 62.dp)
-                                                           .clip(RoundedCornerShape(14.dp))
-                                                           .background(if (selected) palette.textPrimary else palette.bgCard)
-                                                           .border(1.dp, if (selected) palette.textPrimary else palette.borderSoft, RoundedCornerShape(14.dp))
-                                                           .clickable { onSetReadingFlowMode(mode) }
-                                                           .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                       verticalAlignment = Alignment.CenterVertically
-                                                   ) {
-                                                       PrototypeSvgIcon(
-                                                           type = modeIcon,
-                                                           tint = if (selected) palette.bgApp else palette.textSecondary,
-                                                           modifier = Modifier.size(16.dp),
-                                                           strokeWidthDp = 1.8f
-                                                       )
-                                                       Spacer(modifier = Modifier.width(10.dp))
-                                                       Column(modifier = Modifier.weight(1f)) {
-                                                           Text(
-                                                               text = mode.localizedLabel(prefs.lang),
-                                                               fontSize = 12.5.sp,
-                                                               lineHeight = 15.sp,
-                                                               fontWeight = FontWeight.SemiBold,
-                                                               color = if (selected) palette.bgApp else palette.textPrimary,
-                                                               maxLines = 1,
-                                                               overflow = TextOverflow.Ellipsis,
-                                                               style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                                           )
-                                                           Spacer(modifier = Modifier.height(2.dp))
-                                                           Text(
-                                                               text = mode.localizedDesc(prefs.lang),
-                                                               fontSize = 10.sp,
-                                                               lineHeight = 13.sp,
-                                                               color = if (selected) palette.bgApp.copy(alpha = 0.78f) else palette.textSecondary,
-                                                               maxLines = 1,
-                                                               overflow = TextOverflow.Ellipsis,
-                                                               style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                                           )
+                                       Column(
+                                           modifier = Modifier
+                                               .fillMaxWidth()
+                                               .alpha(nonActiveAlpha),
+                                           verticalArrangement = Arrangement.spacedBy(10.dp)
+                                       ) {
+                                           Text(
+                                               text = if (strings.isId) "MODE ALUR BACA" else "READING FLOW MODE",
+                                               color = palette.textMuted,
+                                               fontSize = 10.sp,
+                                               fontFamily = FontFamily.Monospace,
+                                               letterSpacing = 1.sp
+                                           )
+                                           val modePairs = ReadingFlowMode.entries.chunked(2)
+                                           modePairs.forEach { rowModes ->
+                                               Row(
+                                                   modifier = Modifier.fillMaxWidth(),
+                                                   horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                               ) {
+                                                   rowModes.forEach { mode ->
+                                                       val selected = prefs.readingFlowMode == mode
+                                                       val cardBg = if (palette.isGlass) {
+                                                           if (selected) palette.pillActiveBg else palette.bgSurface
+                                                       } else {
+                                                           if (selected) palette.accentDark else palette.bgSurface
                                                        }
-                                                   }
-                                               }
-                                           }
+                                                       val cardBorder = if (palette.isGlass) {
+                                                           if (selected) palette.pillActiveBorder else palette.borderSoft
+                                                       } else {
+                                                           if (selected) palette.accentDark else palette.borderSoft
+                                                       }
+                                                       val titleColor = if (selected && !palette.isGlass) palette.bgApp else palette.textMain
+                                                       val subtitleColor = if (selected && !palette.isGlass) palette.bgApp.copy(alpha = 0.75f) else palette.textMuted
+                                                        val modeIcon = when (mode) {
+                                                            ReadingFlowMode.PAGINATED -> PrototypeIconType.CHEVRON_RIGHT
+                                                            ReadingFlowMode.SCROLL -> PrototypeIconType.CHEVRON_DOWN
+                                                            ReadingFlowMode.WEBTOON -> PrototypeIconType.LIST_BULLETS
+                                                            ReadingFlowMode.SPREAD -> PrototypeIconType.FULL_COVER
+                                                        }
+
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .heightIn(min = 62.dp)
+                                                                .clip(RoundedCornerShape(14.dp))
+                                                                .background(if (selected) palette.textPrimary else palette.bgCard)
+                                                                .border(1.dp, if (selected) palette.textPrimary else palette.borderSoft, RoundedCornerShape(14.dp))
+                                                                .clickable { onSetReadingFlowMode(mode) }
+                                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            PrototypeSvgIcon(
+                                                                type = modeIcon,
+                                                                tint = if (selected) palette.bgApp else palette.textSecondary,
+                                                                modifier = Modifier.size(16.dp),
+                                                                strokeWidthDp = 1.8f
+                                                            )
+                                                            Spacer(modifier = Modifier.width(10.dp))
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = mode.localizedLabel(prefs.lang),
+                                                                    fontSize = 12.5.sp,
+                                                                    lineHeight = 15.sp,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    color = if (selected) palette.bgApp else palette.textPrimary,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                                                )
+                                                                Spacer(modifier = Modifier.height(2.dp))
+                                                                Text(
+                                                                    text = mode.localizedDesc(prefs.lang),
+                                                                    fontSize = 10.sp,
+                                                                    lineHeight = 13.sp,
+                                                                    color = if (selected) palette.bgApp.copy(alpha = 0.78f) else palette.textSecondary,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                           HorizontalDivider(color = palette.borderSoft)
+
+                                           Text(
+                                               text = if (strings.isId) "GAYA ANIMASI HALAMAN" else "PAGE ANIMATION STYLE",
+                                               color = palette.textMuted,
+                                               fontSize = 10.sp,
+                                               fontFamily = FontFamily.Monospace,
+                                               letterSpacing = 1.sp
+                                           )
+                                           ClassicGlassSegmentedControl(
+                                               items = PageAnimStyle.entries.map { it to it.label },
+                                               selectedItem = prefs.pageAnimStyle,
+                                               onItemSelected = { onSetPageAnimStyle(it) },
+                                               height = 36.dp
+                                           )
                                        }
-
-                                      HorizontalDivider(color = palette.borderSoft)
-
-                                      Text(
-                                          text = if (strings.isId) "GAYA ANIMASI HALAMAN" else "PAGE ANIMATION STYLE",
-                                          color = palette.textMuted,
-                                          fontSize = 10.sp,
-                                          fontFamily = FontFamily.Monospace,
-                                          letterSpacing = 1.sp
-                                      )
-                                      ClassicGlassSegmentedControl(
-                                          items = PageAnimStyle.entries.map { it to it.label },
-                                          selectedItem = prefs.pageAnimStyle,
-                                          onItemSelected = { onSetPageAnimStyle(it) },
-                                          height = 36.dp
-                                      )
-                                }
+                                   }
                             }
                         }
                     }
