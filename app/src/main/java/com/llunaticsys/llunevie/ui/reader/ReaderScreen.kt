@@ -101,6 +101,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,6 +109,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntOffset
@@ -383,7 +385,7 @@ fun ReaderScreen(
                     stableNavBarBottomDp = currentNavBarBottom
                 }
                 val topClearanceDp = stableStatusBarTopDp + 64.dp
-                val bottomClearanceDp = stableNavBarBottomDp + 60.dp
+                val bottomClearanceDp = stableNavBarBottomDp + 76.dp
 
                 val horizontalMarginDp = when (prefs.pageMargin) {
                     0 -> 12.dp
@@ -399,69 +401,76 @@ fun ReaderScreen(
                     ReadingFlowMode.PAGINATED, ReadingFlowMode.SPREAD -> {
                         val curZero = displayPageIndex
                         val step = if (isSpread) 2 else 1
+                        val spreadStart = if (isSpread) (curZero / 2) * 2 else curZero
+                        val curLeftIdx = spreadStart
+                        val curRightIdx = spreadStart + 1
+                        val nextLeftIdx = if (isSpread) spreadStart + 2 else curZero + 1
+                        val nextRightIdx = if (isSpread) spreadStart + 3 else curZero + 2
+                        val prevLeftIdx = if (isSpread) spreadStart - 2 else curZero - 1
+                        val prevRightIdx = if (isSpread) spreadStart - 1 else curZero
 
                         val curLeftPdfBmp by produceState<Bitmap?>(
                             initialValue = if (isPdfBook) {
-                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero)
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curLeftIdx)
                             } else null,
-                            isPdfBook, curZero, book.localFilePath, stageW
+                            isPdfBook, curLeftIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook) PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero, stageW) else null
+                            value = if (isPdfBook) PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curLeftIdx, if (isSpread) stageW / 2 else stageW) else null
                         }
                         val curRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && isSpread && curZero + 1 < metrics.totalBookPages) {
-                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero + 1, ((stageW / 240) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero + 1)
+                            initialValue = if (isPdfBook && isSpread && curRightIdx < metrics.totalBookPages) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curRightIdx)
                             } else null,
-                            isPdfBook, isSpread, curZero, book.localFilePath, stageW
+                            isPdfBook, isSpread, curRightIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && isSpread && curZero + 1 < metrics.totalBookPages) {
-                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero + 1, stageW / 2)
+                            value = if (isPdfBook && isSpread && curRightIdx < metrics.totalBookPages) {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curRightIdx, stageW / 2)
                             } else null
                         }
                         val nextLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && curZero + step < metrics.totalBookPages) {
-                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero + step, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero + step)
+                            initialValue = if (isPdfBook && nextLeftIdx < metrics.totalBookPages) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx)
                             } else null,
-                            isPdfBook, curZero, step, book.localFilePath, stageW
+                            isPdfBook, nextLeftIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && curZero + step < metrics.totalBookPages) {
-                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero + step, stageW)
+                            value = if (isPdfBook && nextLeftIdx < metrics.totalBookPages) {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextLeftIdx, if (isSpread) stageW / 2 else stageW)
                             } else null
                         }
                         val nextRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && isSpread && curZero + step + 1 < metrics.totalBookPages) {
-                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero + step + 1, ((stageW / 240) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero + step + 1)
+                            initialValue = if (isPdfBook && isSpread && nextRightIdx < metrics.totalBookPages) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextRightIdx)
                             } else null,
-                            isPdfBook, isSpread, curZero, step, book.localFilePath, stageW
+                            isPdfBook, isSpread, nextRightIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && isSpread && curZero + step + 1 < metrics.totalBookPages) {
-                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero + step + 1, stageW / 2)
+                            value = if (isPdfBook && isSpread && nextRightIdx < metrics.totalBookPages) {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextRightIdx, stageW / 2)
                             } else null
                         }
                         val prevLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && curZero - step >= 0) {
-                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero - step, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero - step)
+                            initialValue = if (isPdfBook && prevLeftIdx >= 0) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx)
                             } else null,
-                            isPdfBook, curZero, step, book.localFilePath, stageW
+                            isPdfBook, prevLeftIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && curZero - step >= 0) {
-                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero - step, stageW)
+                            value = if (isPdfBook && prevLeftIdx >= 0) {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevLeftIdx, if (isSpread) stageW / 2 else stageW)
                             } else null
                         }
                         val prevRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && isSpread && curZero - step + 1 >= 0) {
-                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero - step + 1, ((stageW / 240) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero - step + 1)
+                            initialValue = if (isPdfBook && isSpread && prevRightIdx >= 0) {
+                                PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevRightIdx)
                             } else null,
-                            isPdfBook, isSpread, curZero, step, book.localFilePath, stageW
+                            isPdfBook, isSpread, prevRightIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && isSpread && curZero - step + 1 >= 0) {
-                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curZero - step + 1, stageW / 2)
+                            value = if (isPdfBook && isSpread && prevRightIdx >= 0) {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevRightIdx, stageW / 2)
                             } else null
                         }
 
@@ -1008,6 +1017,8 @@ fun ReaderScreen(
                                     val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
                                     val curPInCh = curTriple?.second ?: uiState.activePageIndex
                                     InteractiveTextPageContent(
+                                        bookId = book.id,
+                                        displayPageIndex = curZero,
                                         chapterTitle = curCh?.title.orEmpty(),
                                         pageText = curText,
                                         currentChapterIndex = curChIdx,
@@ -1183,6 +1194,8 @@ fun ReaderScreen(
                                         val chIdx = pageTriple?.first ?: uiState.activeChapterIndex
                                         val pInCh = pageTriple?.second ?: uiState.activePageIndex
                                         InteractiveTextPageContent(
+                                            bookId = book.id,
+                                            displayPageIndex = pageZero,
                                             chapterTitle = ch?.title.orEmpty(),
                                             pageText = pText,
                                             currentChapterIndex = chIdx,
@@ -1430,6 +1443,8 @@ fun ReaderScreen(
                                         key = { pIdx, _ -> "ch_${chIdx}_p_$pIdx" }
                                     ) { _, pgRaw ->
                                         InteractiveTextPageContent(
+                                            bookId = book.id,
+                                            displayPageIndex = -1,
                                             chapterTitle = ch.title,
                                             pageText = pgRaw,
                                             showChapterHeader = false,
@@ -1976,39 +1991,40 @@ fun ReaderScreen(
                             }
 
                             // Middle: Interactive Vertical Slider Track & Thumb (dragging vertically from top = Page 1 to bottom = totalPages)
+                            val currentTotalPages by rememberUpdatedState(totalPages)
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth()
-                                    .pointerInput(totalPages) {
+                                    .pointerInput(Unit) {
                                         awaitEachGesture {
-                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                            down.consume()
                                             isVerticalDragging = true
                                             val thumbRadiusPx = 8.dp.toPx()
                                             val trackHeightPx = (size.height.toFloat() - thumbRadiusPx * 2f).coerceAtLeast(1f)
-                                            verticalDragFraction = ((down.position.y - thumbRadiusPx) / trackHeightPx).coerceIn(0f, 1f)
-                                            val targetZero = (verticalDragFraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
-                                            val leftZero = if (isSpread) (targetZero / 2) * 2 else targetZero
-                                            if (leftZero != displayPageIndex) {
-                                                displayPageIndex = leftZero
-                                                viewModel?.jumpToGlobalPage(leftZero)
+                                            fun updateFromY(y: Float) {
+                                                val totPages = currentTotalPages
+                                                val frac = ((y - thumbRadiusPx) / trackHeightPx).coerceIn(0f, 1f)
+                                                verticalDragFraction = frac
+                                                val targetZero = (frac * (totPages - 1)).roundToInt().coerceIn(0, (totPages - 1).coerceAtLeast(0))
+                                                val leftZero = if (isSpread) (targetZero / 2) * 2 else targetZero
+                                                if (leftZero != displayPageIndex) {
+                                                    displayPageIndex = leftZero
+                                                    viewModel?.jumpToGlobalPage(leftZero)
+                                                }
                                             }
+                                            updateFromY(down.position.y)
 
                                             while (true) {
-                                                val event = awaitPointerEvent()
-                                                val change = event.changes.firstOrNull() ?: break
-                                                if (change.changedToUp()) {
+                                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                if (!change.pressed) {
                                                     change.consume()
                                                     break
                                                 }
                                                 change.consume()
-                                                verticalDragFraction = ((change.position.y - thumbRadiusPx) / trackHeightPx).coerceIn(0f, 1f)
-                                                val currZero = (verticalDragFraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
-                                                val spreadZero = if (isSpread) (currZero / 2) * 2 else currZero
-                                                if (spreadZero != displayPageIndex) {
-                                                    displayPageIndex = spreadZero
-                                                    viewModel?.jumpToGlobalPage(spreadZero)
-                                                }
+                                                updateFromY(change.position.y)
                                             }
                                             isVerticalDragging = false
                                         }
@@ -3191,12 +3207,12 @@ fun ReaderScreen(
                                                         onItemSelected = { onUpdateTypography(null, null, null, null, null, null, null, null, null, it, true) },
                                                         height = 34.dp
                                                     )
-                                               }
-                                           }
-                                       }
-                                   }
+                                        }
+                                    }
+                                }
+                            }
 
-                                   // TAB 3: FLOW MODES & PAGE ANIMATION (1:1 with #sheetTabTurn)
+                            // TAB 3: FLOW MODES & PAGE ANIMATION (1:1 with #sheetTabTurn)
                                    "turn" -> {
                                        Column(
                                            modifier = Modifier
@@ -3298,14 +3314,14 @@ fun ReaderScreen(
                                                onItemSelected = { onSetPageAnimStyle(it) },
                                                height = 36.dp
                                            )
-                                       }
-                                   }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
         // 5. LEFT SIDEBAR TOC & ILLUSTRATIONS DRAWER (`#readerTocDrawer` with Footer Progress Bar!)
         if (uiState.showReaderTocDrawer) {
@@ -4061,16 +4077,16 @@ fun ReaderScreen(
                                                     fontSize = 12.sp,
                                                     lineHeight = 17.sp
                                                 )
-                                            }
                                         }
                                     }
                                 }
-                                    }
                             }
                         }
                     }
                 }
             }
+        }
+    }
         }
 
         // 7. OPAQUE ILLUSTRATION VIEWER MODAL (`#illustViewerModal`)
@@ -4421,6 +4437,7 @@ private fun buildEpubPageAnnotatedString(
     bookHighlights: List<HighlightNoteEntity>,
     currentChapterIndex: Int,
     currentPageInChapter: Int,
+    displayPageIndex: Int = -1,
     palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette
 ): AnnotatedString {
     val lineHeightSp = (prefs.fontSizeSp * fontScale * prefs.lineHeightMultiplier).sp
@@ -4506,6 +4523,8 @@ private fun InteractiveTextPageContent(
     pageText: String,
     currentChapterIndex: Int = 0,
     currentPageInChapter: Int = 0,
+    bookId: String = "",
+    displayPageIndex: Int = 0,
     showChapterHeader: Boolean,
     scrollable: Boolean,
     prefs: UserPreferencesState,
@@ -4602,21 +4621,31 @@ private fun InteractiveTextPageContent(
         TextIndent.None
     }
 
-    // Build unified AnnotatedString with ParagraphStyle, word spacing, indent, and pastel highlights
+    val pageHighlights = remember(bookHighlights, currentChapterIndex, currentPageInChapter, displayPageIndex, pageText) {
+        val clean = sanitizeBookOrChapterText(pageText)
+        bookHighlights.filter { hl ->
+            (hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter) ||
+            (displayPageIndex >= 0 && hl.pageIndex == displayPageIndex) ||
+            (hl.quoteText.isNotBlank() && clean.contains(hl.quoteText.trim(), ignoreCase = true))
+        }
+    }
+
+    // Build unified AnnotatedString with ParagraphStyle, word spacing, indent, and dark ink highlighted text
     val annotatedString = remember(
         textParagraphs, prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.paraIndent,
         prefs.pageMargin, prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-        fontScale, prefs.fontWeight, prefs.textAlign, prefs.fontFamily, bookHighlights,
-        currentChapterIndex, currentPageInChapter, palette
+        fontScale, prefs.fontWeight, prefs.textAlign, prefs.fontFamily, pageHighlights,
+        currentChapterIndex, currentPageInChapter, displayPageIndex, palette
     ) {
         buildEpubPageAnnotatedString(
             textParagraphs = textParagraphs,
             prefs = prefs,
             fontScale = fontScale,
             resolvedTextAlign = resolvedTextAlign,
-            bookHighlights = bookHighlights,
+            bookHighlights = pageHighlights,
             currentChapterIndex = currentChapterIndex,
             currentPageInChapter = currentPageInChapter,
+            displayPageIndex = displayPageIndex,
             palette = palette
         )
     }
@@ -4746,9 +4775,14 @@ private fun InteractiveTextPageContent(
             }
 
             // Deterministic Single-Text Selection Canvas
+            val currentTextLayout by rememberUpdatedState(textLayoutResult)
+            val currentFullText by rememberUpdatedState(fullPageText)
+            val currentPageHighlights by rememberUpdatedState(pageHighlights)
+
             Box(modifier = Modifier.fillMaxWidth()) {
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val availHeightPx = with(density) { maxHeight.toPx() }
+                    val padBottomPx = with(density) { bottomPadDp.toPx() }
+                    val availHeightPx = (with(density) { maxHeight.toPx() } - padBottomPx).coerceAtLeast(100f)
                     Text(
                         text = annotatedString,
                         style = pageTextStyle,
@@ -4757,8 +4791,9 @@ private fun InteractiveTextPageContent(
                             .fillMaxWidth()
                             .drawWithContent {
                                 val l = textLayoutResult
-                                if (!transparentTextForFlipbook) {
-                                    if (l != null && availHeightPx > 0f && l.size.height > availHeightPx) {
+                                if (!transparentTextForFlipbook && l != null) {
+                                    // 2. Draw page text
+                                    if (availHeightPx > 0f && l.size.height > availHeightPx) {
                                         val lastCompleteLine = (0 until l.lineCount)
                                             .lastOrNull { l.getLineBottom(it) <= availHeightPx + 2f }
                                             ?: (l.lineCount - 1)
@@ -4768,190 +4803,293 @@ private fun InteractiveTextPageContent(
                                             if (prefs.fontWeight == 500) {
                                                 drawText(
                                                     textLayoutResult = l,
-                                                    color = palette.textMain,
                                                     drawStyle = Stroke(width = 0.45f * density.density)
                                                 )
                                             }
                                         }
                                     } else {
                                         drawContent()
-                                        if (prefs.fontWeight == 500 && l != null) {
+                                        if (prefs.fontWeight == 500) {
                                             drawText(
                                                 textLayoutResult = l,
-                                                color = palette.textMain,
                                                 drawStyle = Stroke(width = 0.45f * density.density)
                                             )
                                         }
                                     }
                                 }
 
+                                // 3. Draw active selection highlight and handles
                                 if (hasActiveSelection && l != null && fullPageText.isNotEmpty()) {
-                                val safeStart = selStart.coerceIn(0, fullPageText.lastIndex)
-                                val safeEnd = (selEnd - 1).coerceIn(safeStart, fullPageText.lastIndex)
-
-                                // 1. Draw active selection highlight rects using l.getPathForRange
-                                val selectionPath = l.getPathForRange(safeStart, safeEnd + 1)
-                                drawPath(
-                                    path = selectionPath,
-                                    color = Color(0xFF0EA5E9).copy(alpha = 0.24f)
-                                )
-
-                                val startRect = l.getCursorRect(safeStart)
-                                val endRect = l.getCursorRect((safeEnd + 1).coerceAtMost(fullPageText.length))
-                                val barColor = Color(0xFF0284C7)
-                                val barStroke = 2.dp.toPx()
-                                val handleRadius = 7.dp.toPx()
-
-                                // Left (Start) vertical bar + bottom teardrop circle
-                                drawLine(
-                                    color = barColor,
-                                    start = Offset(startRect.left, startRect.top),
-                                    end = Offset(startRect.left, startRect.bottom),
-                                    strokeWidth = barStroke
-                                )
-                                drawCircle(
-                                    color = barColor,
-                                    radius = handleRadius,
-                                    center = Offset(startRect.left, startRect.bottom + handleRadius)
-                                )
-
-                                // Right (End) vertical bar + bottom teardrop circle
-                                drawLine(
-                                    color = barColor,
-                                    start = Offset(endRect.left, endRect.top),
-                                    end = Offset(endRect.left, endRect.bottom),
-                                    strokeWidth = barStroke
-                                )
-                                drawCircle(
-                                    color = barColor,
-                                    radius = handleRadius,
-                                    center = Offset(endRect.left, endRect.bottom + handleRadius)
-                                )
-                            }
-                        }
-                        .pointerInput(fullPageText, hasActiveSelection, selStart, selEnd) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val l = textLayoutResult ?: return@awaitEachGesture
-                                if (fullPageText.isEmpty()) return@awaitEachGesture
-
-                                if (selStart >= 0 && selEnd > selStart) {
                                     val safeStart = selStart.coerceIn(0, fullPageText.lastIndex)
                                     val safeEnd = (selEnd - 1).coerceIn(safeStart, fullPageText.lastIndex)
-                                    val startRect = l.getCursorRect(safeStart)
-                                    val endRect = l.getCursorRect((safeEnd + 1).coerceAtMost(fullPageText.length))
+                                    val startLine = l.getLineForOffset(safeStart)
+                                    val endLine = l.getLineForOffset(safeEnd)
+                                    val startX = l.getHorizontalPosition(safeStart, usePrimaryDirection = true)
+                                    val endX = l.getHorizontalPosition(safeEnd + 1, usePrimaryDirection = true)
+
+                                    for (line in startLine..endLine) {
+                                        val lineLeft = if (line == startLine) startX else l.getLineLeft(line)
+                                        val lineRight = if (line == endLine) endX else l.getLineRight(line)
+                                        val rawTop = l.getLineTop(line)
+                                        val rawBottom = l.getLineBottom(line)
+                                        val lineH = rawBottom - rawTop
+                                        val tightTop = rawTop + lineH * 0.06f
+                                        val tightBottom = rawBottom - lineH * 0.14f
+                                        if (lineRight > lineLeft) {
+                                            drawRoundRect(
+                                                color = Color(0xFF38BDF8).copy(alpha = 0.28f),
+                                                topLeft = Offset(lineLeft, tightTop),
+                                                size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
+                                                cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                                            )
+                                        }
+                                    }
+
+                                    val barColor = Color(0xFF0284C7)
+                                    val barStroke = 2.dp.toPx()
                                     val handleRadius = 7.dp.toPx()
-                                    val startHandlePos = Offset(startRect.left, startRect.bottom + handleRadius)
-                                    val endHandlePos = Offset(endRect.left, endRect.bottom + handleRadius)
+
+                                    val startRawTop = l.getLineTop(startLine)
+                                    val startRawBottom = l.getLineBottom(startLine)
+                                    val startLineH = startRawBottom - startRawTop
+                                    val startTightTop = startRawTop + startLineH * 0.06f
+                                    val startTightBottom = startRawBottom - startLineH * 0.14f
+
+                                    drawLine(
+                                        color = barColor,
+                                        start = Offset(startX, startTightTop),
+                                        end = Offset(startX, startTightBottom),
+                                        strokeWidth = barStroke
+                                    )
+                                    drawCircle(
+                                        color = barColor,
+                                        radius = handleRadius,
+                                        center = Offset(startX, startTightBottom + handleRadius)
+                                    )
+
+                                    val endRawTop = l.getLineTop(endLine)
+                                    val endRawBottom = l.getLineBottom(endLine)
+                                    val endLineH = endRawBottom - endRawTop
+                                    val endTightTop = endRawTop + endLineH * 0.06f
+                                    val endTightBottom = endRawBottom - endLineH * 0.14f
+
+                                    drawLine(
+                                        color = barColor,
+                                        start = Offset(endX, endTightTop),
+                                        end = Offset(endX, endTightBottom),
+                                        strokeWidth = barStroke
+                                    )
+                                    drawCircle(
+                                        color = barColor,
+                                        radius = handleRadius,
+                                        center = Offset(endX, endTightBottom + handleRadius)
+                                    )
+                                }
+                            }
+                            .pointerInput(bookId, displayPageIndex) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    val l = currentTextLayout ?: return@awaitEachGesture
+                                    val txt = currentFullText
+                                    if (txt.isEmpty()) return@awaitEachGesture
+
                                     val hitRadius = 36.dp.toPx()
+                                    val curStart = selStart
+                                    val curEnd = selEnd
+                                    val hasSelection = curStart >= 0 && curEnd > curStart && curEnd <= txt.length
 
-                                    val distStart = (down.position - startHandlePos).getDistance()
-                                    val distEnd = (down.position - endHandlePos).getDistance()
+                                    // Handle hit check
+                                    if (hasSelection) {
+                                        val safeStart = curStart.coerceIn(0, txt.lastIndex)
+                                        val safeEnd = (curEnd - 1).coerceIn(safeStart, txt.lastIndex)
+                                        val startLine = l.getLineForOffset(safeStart)
+                                        val endLine = l.getLineForOffset(safeEnd)
+                                        val startX = l.getHorizontalPosition(safeStart, usePrimaryDirection = true)
+                                        val endX = l.getHorizontalPosition(safeEnd + 1, usePrimaryDirection = true)
+                                        val handleRadius = 7.dp.toPx()
+                                        val startTightBottom = l.getLineBottom(startLine) - (l.getLineBottom(startLine) - l.getLineTop(startLine)) * 0.14f
+                                        val endTightBottom = l.getLineBottom(endLine) - (l.getLineBottom(endLine) - l.getLineTop(endLine)) * 0.14f
 
-                                    if (distStart <= hitRadius || distEnd <= hitRadius) {
-                                        val draggingStart = distStart <= distEnd
-                                        activeDraggingHandle = if (draggingStart) 0 else 1
-                                        down.consume()
-                                        val touchOffset = if (draggingStart) {
-                                            Offset(startRect.left, startRect.center.y) - down.position
-                                        } else {
-                                            Offset(endRect.left, endRect.center.y) - down.position
+                                        val startHandleCenter = Offset(startX, startTightBottom + handleRadius)
+                                        val endHandleCenter = Offset(endX, endTightBottom + handleRadius)
+
+                                        val distStart = (down.position - startHandleCenter).getDistance()
+                                        val distEnd = (down.position - endHandleCenter).getDistance()
+
+                                        if (distStart <= hitRadius || distEnd <= hitRadius) {
+                                            down.consume()
+                                            val draggingStart = distStart <= distEnd
+                                            activeDraggingHandle = if (draggingStart) 0 else 1
+
+                                            while (true) {
+                                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                if (!change.pressed) {
+                                                    change.consume()
+                                                    break
+                                                }
+                                                change.consume()
+                                                val targetOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
+                                                if (draggingStart) {
+                                                    selStart = targetOffset.coerceIn(0, (selEnd - 1).coerceAtLeast(0))
+                                                } else {
+                                                    selEnd = targetOffset.coerceIn(selStart + 1, txt.length)
+                                                }
+                                            }
+                                            activeDraggingHandle = null
+                                            return@awaitEachGesture
+                                        }
+                                    }
+
+                                    // Normal text touch: monitor for 340ms long press
+                                    val startTime = System.currentTimeMillis()
+                                    var movedBeyondJitter = false
+                                    var abortedToPageTurn = false
+                                    var isLongPressTriggered = false
+                                    var initialWordStart = -1
+                                    var initialWordEnd = -1
+
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                                        if (!change.pressed) {
+                                            if (isLongPressTriggered) {
+                                                change.consume()
+                                            } else if (!abortedToPageTurn) {
+                                                val elapsed = System.currentTimeMillis() - startTime
+                                                if (elapsed < 340L && !movedBeyondJitter) {
+                                                    change.consume()
+                                                    if (hasSelection) {
+                                                        selStart = -1
+                                                        selEnd = -1
+                                                        selectedHighlightId = null
+                                                    } else {
+                                                        val tapOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
+                                                        val matchedHl = currentPageHighlights.find { hl ->
+                                                            val hlS = if (hl.startCharIndex in 0 until txt.length && hl.endCharIndex in (hl.startCharIndex + 1)..txt.length) {
+                                                                hl.startCharIndex
+                                                            } else {
+                                                                val q = hl.quoteText.trim()
+                                                                if (q.isNotBlank()) txt.indexOf(q, ignoreCase = true) else -1
+                                                            }
+                                                            val hlE = if (hl.startCharIndex in 0 until txt.length && hl.endCharIndex in (hl.startCharIndex + 1)..txt.length) {
+                                                                hl.endCharIndex
+                                                            } else if (hlS >= 0) {
+                                                                hlS + hl.quoteText.trim().length
+                                                            } else -1
+
+                                                            hlS >= 0 && hlE > hlS && tapOffset in hlS until hlE
+                                                        }
+                                                        if (matchedHl != null) {
+                                                            val hlS = if (matchedHl.startCharIndex in 0 until txt.length && matchedHl.endCharIndex in (matchedHl.startCharIndex + 1)..txt.length) {
+                                                                matchedHl.startCharIndex
+                                                            } else {
+                                                                val q = matchedHl.quoteText.trim()
+                                                                if (q.isNotBlank()) txt.indexOf(q, ignoreCase = true) else -1
+                                                            }
+                                                            val hlE = if (matchedHl.startCharIndex in 0 until txt.length && matchedHl.endCharIndex in (matchedHl.startCharIndex + 1)..txt.length) {
+                                                                matchedHl.endCharIndex
+                                                            } else if (hlS >= 0) {
+                                                                hlS + matchedHl.quoteText.trim().length
+                                                            } else -1
+
+                                                            if (hlS >= 0 && hlE > hlS) {
+                                                                selStart = hlS
+                                                                selEnd = hlE
+                                                                selectedHighlightId = matchedHl.id
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            break
                                         }
 
-                                        while (true) {
-                                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                            if (!change.pressed) {
-                                                change.consume()
+                                        val dx = change.position.x - down.position.x
+                                        val dy = change.position.y - down.position.y
+                                        val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                                        if (!isLongPressTriggered) {
+                                            if (dist > 18.dp.toPx()) {
+                                                movedBeyondJitter = true
+                                            }
+                                            if (kotlin.math.abs(dx) > 22.dp.toPx() && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
+                                                abortedToPageTurn = true
                                                 break
                                             }
+
+                                            val elapsed = System.currentTimeMillis() - startTime
+                                            if (elapsed >= 340L && !abortedToPageTurn) {
+                                                isLongPressTriggered = true
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                change.consume()
+
+                                                val rawOffset = l.getOffsetForPosition(down.position).coerceIn(0, txt.length)
+                                                var wStart = rawOffset
+                                                while (wStart > 0 && !txt[wStart - 1].isWhitespace() && txt[wStart - 1] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
+                                                    wStart--
+                                                }
+                                                var wEnd = rawOffset
+                                                while (wEnd < txt.length && !txt[wEnd].isWhitespace() && txt[wEnd] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
+                                                    wEnd++
+                                                }
+                                                if (wEnd <= wStart) {
+                                                    wEnd = (wStart + 1).coerceAtMost(txt.length)
+                                                }
+                                                initialWordStart = wStart
+                                                initialWordEnd = wEnd
+                                                selStart = wStart
+                                                selEnd = wEnd
+                                                selectedHighlightId = null
+                                            }
+                                        } else {
                                             change.consume()
-                                            val targetPoint = Offset(
-                                                x = (change.position.x + touchOffset.x).coerceIn(0f, l.size.width.toFloat()),
-                                                y = (change.position.y + touchOffset.y).coerceIn(0f, l.size.height.toFloat())
-                                            )
-                                            val rawIdx = l.getOffsetForPosition(targetPoint)
-                                            if (draggingStart) {
-                                                selStart = rawIdx.coerceIn(0, (selEnd - 1).coerceAtLeast(0))
+                                            val currentOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
+                                            if (currentOffset >= initialWordStart) {
+                                                selStart = initialWordStart
+                                                selEnd = currentOffset.coerceIn(initialWordEnd, txt.length)
                                             } else {
-                                                selEnd = rawIdx.coerceIn(selStart + 1, fullPageText.length)
+                                                selStart = currentOffset.coerceIn(0, initialWordStart)
+                                                selEnd = initialWordEnd
                                             }
                                         }
-                                        activeDraggingHandle = null
-                                        return@awaitEachGesture
                                     }
                                 }
                             }
-                        }
-                        .pointerInput(fullPageText) {
-                            detectTapGestures(
-                                onLongPress = { pressPos ->
-                                    val l = textLayoutResult ?: return@detectTapGestures
-                                    val rawOffset = l.getOffsetForPosition(pressPos).coerceIn(0, fullPageText.length)
-                                    var wStart = rawOffset
-                                    while (wStart > 0 && !fullPageText[wStart - 1].isWhitespace() && fullPageText[wStart - 1] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
-                                        wStart--
-                                    }
-                                    var wEnd = rawOffset
-                                    while (wEnd < fullPageText.length && !fullPageText[wEnd].isWhitespace() && fullPageText[wEnd] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
-                                        wEnd++
-                                    }
-                                    if (wEnd <= wStart) {
-                                        wEnd = (wStart + 1).coerceAtMost(fullPageText.length)
-                                    }
-                                    selStart = wStart
-                                    selEnd = wEnd
-                                    selectedHighlightId = null
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                },
-                                onTap = { tapPos ->
-                                    val l = textLayoutResult ?: return@detectTapGestures
-                                    if (hasActiveSelection) {
-                                        selStart = -1
-                                        selEnd = -1
-                                        selectedHighlightId = null
-                                        return@detectTapGestures
-                                    }
-                                    val tapOffset = l.getOffsetForPosition(tapPos).coerceIn(0, fullPageText.length)
-                                    val matchedHl = bookHighlights.find { hl ->
-                                        if (hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter) {
-                                            if (hl.startCharIndex in 0 until fullPageText.length && hl.endCharIndex in (hl.startCharIndex + 1)..fullPageText.length) {
-                                                tapOffset in hl.startCharIndex until hl.endCharIndex
-                                            } else {
-                                                val q = hl.quoteText.trim()
-                                                val idx = fullPageText.indexOf(q, ignoreCase = true)
-                                                idx >= 0 && tapOffset in idx until (idx + q.length)
-                                            }
-                                        } else false
-                                    }
-                                    if (matchedHl != null) {
-                                        if (matchedHl.startCharIndex in 0 until fullPageText.length && matchedHl.endCharIndex in (matchedHl.startCharIndex + 1)..fullPageText.length) {
-                                            selStart = matchedHl.startCharIndex
-                                            selEnd = matchedHl.endCharIndex
-                                        } else {
-                                            val idx = fullPageText.indexOf(matchedHl.quoteText.trim(), ignoreCase = true)
-                                            if (idx >= 0) {
-                                                selStart = idx
-                                                selEnd = idx + matchedHl.quoteText.trim().length
-                                            }
-                                        }
-                                        selectedHighlightId = matchedHl.id
-                                    }
-                                }
-                            )
-                        }
-                )
+                    )
                 }
             }
         }
 
         // 5. Floating Highlight & Note Popover (#highlightPopover)
-        if (hasActiveSelection && activeDraggingHandle == null && layout != null) {
-            val selectedText = fullPageText.substring(selStart, selEnd).trim()
-            val popoverY = if (startBox.top < 80f) {
-                (endBox.bottom + 12f).roundToInt()
+        val popoverVisible = hasActiveSelection && activeDraggingHandle == null && layout != null
+        val popoverAlpha by animateFloatAsState(
+            targetValue = if (popoverVisible) 1f else 0f,
+            animationSpec = tween(160, easing = FastOutSlowInEasing),
+            label = "popoverAlpha"
+        )
+        val popoverScale by animateFloatAsState(
+            targetValue = if (popoverVisible) 1f else 0.88f,
+            animationSpec = tween(160, easing = FastOutSlowInEasing),
+            label = "popoverScale"
+        )
+
+        if (popoverAlpha > 0.01f && layout != null && selStart >= 0 && selEnd > selStart) {
+            val selectedText = fullPageText.substring(
+                selStart.coerceIn(0, fullPageText.length),
+                selEnd.coerceIn(0, fullPageText.length)
+            ).trim()
+            val sStart = selStart.coerceIn(0, fullPageText.lastIndex)
+            val sEnd = (selEnd - 1).coerceIn(sStart, fullPageText.lastIndex)
+            val sLine = layout.getLineForOffset(sStart)
+            val eLine = layout.getLineForOffset(sEnd)
+            val sTop = layout.getLineTop(sLine)
+            val eBottom = layout.getLineBottom(eLine)
+            val popoverY = if (sTop < with(density) { 80.dp.toPx() }) {
+                (eBottom + with(density) { 12.dp.toPx() }).roundToInt()
             } else {
-                with(density) { (startBox.top - 64.dp.toPx()).roundToInt().coerceAtLeast(0) }
+                with(density) { (sTop - 64.dp.toPx()).roundToInt().coerceAtLeast(0) }
             }
 
             Surface(
@@ -4963,6 +5101,11 @@ private fun InteractiveTextPageContent(
                     .align(Alignment.TopCenter)
                     .offset { IntOffset(0, popoverY) }
                     .zIndex(100f)
+                    .graphicsLayer {
+                        alpha = popoverAlpha
+                        scaleX = popoverScale
+                        scaleY = popoverScale
+                    }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -5002,7 +5145,7 @@ private fun InteractiveTextPageContent(
                     // + Note button
                     Surface(
                         onClick = {
-                            onParagraphClicked(selectedText, startBox.top <= 200f)
+                            onParagraphClicked(selectedText, sTop <= 200f)
                             selStart = -1
                             selEnd = -1
                             selectedHighlightId = null
@@ -5210,6 +5353,7 @@ private fun renderEpubPageSnapshot(
             bookHighlights = highlights,
             currentChapterIndex = chapterIndex,
             currentPageInChapter = pageIndex,
+            displayPageIndex = -1,
             palette = palette
         )
 
@@ -5218,6 +5362,7 @@ private fun renderEpubPageSnapshot(
             style = pageTextStyle,
             constraints = Constraints(maxWidth = contentW)
         )
+
         drawText(layout, topLeft = Offset(padX, currentY))
         if (pageTextStyle.fontWeight == FontWeight.Medium) {
             drawText(

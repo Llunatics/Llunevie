@@ -56,6 +56,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -988,6 +989,10 @@ fun FlyleafThinSlider(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
+    val currentValueRange by rememberUpdatedState(valueRange)
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
+
     val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
     val externalFraction = ((value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
 
@@ -1004,17 +1009,19 @@ fun FlyleafThinSlider(
         modifier = modifier
             .height(28.dp)
             .fillMaxWidth()
-            .pointerInput(valueRange, onValueChange, onValueChangeFinished) {
+            .pointerInput(Unit) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     down.consume()
                     isDragging = true
                     val trackStartPx = 8.dp.toPx()
                     val trackWidthPx = (size.width.toFloat() - trackStartPx * 2f).coerceAtLeast(1f)
                     fun updateFromTouchX(x: Float) {
-                        dragFraction = ((x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
-                        val mappedVal = valueRange.start + dragFraction * rangeSpan
-                        onValueChange(mappedVal)
+                        val span = (currentValueRange.endInclusive - currentValueRange.start).coerceAtLeast(0.0001f)
+                        val frac = ((x - trackStartPx) / trackWidthPx).coerceIn(0f, 1f)
+                        dragFraction = frac
+                        val mappedVal = currentValueRange.start + frac * span
+                        currentOnValueChange(mappedVal)
                     }
                     updateFromTouchX(down.position.x)
 
@@ -1029,7 +1036,7 @@ fun FlyleafThinSlider(
                         updateFromTouchX(change.position.x)
                     }
                     isDragging = false
-                    onValueChangeFinished?.invoke()
+                    currentOnValueChangeFinished?.invoke()
                 }
             },
         contentAlignment = Alignment.CenterStart
