@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -13,6 +14,19 @@ import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.model.BookIllustration
 import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionGoTo
+import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNamedDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.PDFTextStripperByArea
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -280,284 +294,6 @@ object PdfNativeRenderer {
         return false
     }
 
-    suspend fun extractLogicalPdfChapters(
-        destPdfFile: File,
-        totalPages: Int,
-        bookId: String,
-        coversDir: File,
-        coverFilePath: String?,
-        defaultTitle: String = "Dokumen PDF"
-    ): Pair<List<BookChapterEntity>, List<BookIllustration>> = withContext(Dispatchers.IO) {
-        val extractedIllustrations = mutableListOf<BookIllustration>()
-        if (coverFilePath != null && File(coverFilePath).exists()) {
-            extractedIllustrations.add(BookIllustration(uriOrPath = coverFilePath, caption = "Cover (Hal 1)"))
-        }
-
-        // Use PDF stream pre-filter: test only candidate pages (capped to 12)
-        val candidatePages = scanCandidateIllustrationPagesFromPdfStream(destPdfFile, totalPages).take(12)
-        if (candidatePages.isNotEmpty()) {
-            runCatching {
-                ParcelFileDescriptor.open(destPdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                    PdfRenderer(pfd).use { renderer ->
-                        for (pIdx in candidatePages) {
-                            if (pIdx >= renderer.pageCount) continue
-                            renderer.openPage(pIdx).use { page ->
-                                val thumbW = 360
-                                val thumbH = (page.height.toFloat() / page.width.toFloat() * thumbW).toInt().coerceIn(360, 600)
-                                val smallBmp = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
-                                val smallCanvas = Canvas(smallBmp)
-                                smallCanvas.drawColor(Color.WHITE)
-                                page.render(smallBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-
-                                if (isTrueIllustrationPageBitmap(smallBmp)) {
-                                    val illustFile = File(coversDir, "illust_p${pIdx + 1}.jpg")
-                                    if (!illustFile.exists()) {
-                                        val hiW = 540
-                                        val hiH = (page.height.toFloat() / page.width.toFloat() * hiW).toInt().coerceIn(400, 1200)
-                                        val hiBmp = Bitmap.createBitmap(hiW, hiH, Bitmap.Config.ARGB_8888)
-                                        val hiCanvas = Canvas(hiBmp)
-                                        hiCanvas.drawColor(Color.WHITE)
-                                        page.render(hiBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                        FileOutputStream(illustFile).use { out ->
-                                            hiBmp.compress(Bitmap.CompressFormat.JPEG, 88, out)
-                                        }
-                                        hiBmp.recycle()
-                                    }
-                                    extractedIllustrations.add(
-                                        BookIllustration(
-                                            uriOrPath = illustFile.absolutePath,
-                                            caption = "Ilustrasi (Hal ${pIdx + 1})",
-                                            pageIndexInBook = pIdx
-                                        )
-                                    )
-                                }
-                                smallBmp.recycle()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Deterministic PDF outline & bookmark detection with accurate page-tree destination mapping
-        val detectedBookmarks = mutableListOf<PdfBookmark>()
-
-        runCatching {
-            val bytes = destPdfFile.readBytes()
-            val contentStr = String(bytes, Charsets.ISO_8859_1)
-
-            // 1. Build an index of object body definitions: objId -> content
-            val objBodies = mutableMapOf<Int, String>()
-            val objRegex = Regex("""(\d+)\s+0\s+obj\b([\s\S]*?)\bendobj\b""")
-            for (m in objRegex.findAll(contentStr)) {
-                val objId = m.groupValues[1].toIntOrNull()
-                if (objId != null) {
-                    objBodies[objId] = m.groupValues[2]
-                }
-            }
-
-            // 2. Resolve PDF /Pages tree root from Catalog or /Pages objects
-            var pagesRootId: Int? = null
-            for ((id, body) in objBodies) {
-                if (body.contains("/Type") && body.contains("/Catalog")) {
-                    val rootPagesMatch = Regex("""/Pages\s+(\d+)\s+0\s+R""").find(body)
-                    if (rootPagesMatch != null) {
-                        pagesRootId = rootPagesMatch.groupValues[1].toIntOrNull()
-                        break
-                    }
-                }
-            }
-
-            // 3. Traverse /Pages tree depth-first to obtain EXACT 1-to-1 sequential list of /Page leaf objects
-            val orderedPageObjIds = mutableListOf<Int>()
-            fun traversePages(nodeId: Int, visited: MutableSet<Int>) {
-                if (!visited.add(nodeId)) return
-                val body = objBodies[nodeId] ?: return
-                val kidsMatch = Regex("""/Kids\s*\[([\s\S]*?)\]""").find(body)
-                if (kidsMatch != null) {
-                    val refRegex = Regex("""(\d+)\s+0\s+R""")
-                    for (ref in refRegex.findAll(kidsMatch.groupValues[1])) {
-                        val kidId = ref.groupValues[1].toIntOrNull() ?: continue
-                        val kidBody = objBodies[kidId].orEmpty()
-                        if (kidBody.contains("/Type") && kidBody.contains("/Pages")) {
-                            traversePages(kidId, visited)
-                        } else {
-                            orderedPageObjIds.add(kidId)
-                        }
-                    }
-                } else if (body.contains("/Type") && body.contains("/Page\b")) {
-                    orderedPageObjIds.add(nodeId)
-                }
-            }
-
-            if (pagesRootId != null) {
-                traversePages(pagesRootId, mutableSetOf())
-            }
-
-            // Fallback if /Pages tree could not be traversed: scan /Type /Page objects in document order
-            if (orderedPageObjIds.isEmpty()) {
-                val fallbackRegex = Regex("""(\d+)\s+0\s+obj\s*<<[^>]*?/Type\s*/Page\b""")
-                for (m in fallbackRegex.findAll(contentStr)) {
-                    m.groupValues[1].toIntOrNull()?.let { orderedPageObjIds.add(it) }
-                }
-            }
-
-            val pageObjToZero = orderedPageObjIds.mapIndexed { idx, objId -> objId to idx }.toMap()
-
-            // 4. Find all outline bookmark objects and map to exact 0-based page index
-            for ((_, body) in objBodies) {
-                if (!body.contains("/Title")) continue
-                val titleMatch = Regex("""/Title\s*(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F]+>)""").find(body) ?: continue
-                val raw = titleMatch.groupValues[1]
-                val parsed = if (raw.startsWith("(")) {
-                    raw.removeSurrounding("(", ")")
-                        .replace("\\(", "(")
-                        .replace("\\)", ")")
-                        .replace("\\n", " ")
-                        .replace("\\r", " ")
-                        .trim()
-                } else if (raw.startsWith("<") && raw.endsWith(">")) {
-                    val hex = raw.removeSurrounding("<", ">").trim()
-                    runCatching {
-                        val byteArray = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                        if (byteArray.size >= 2 && byteArray[0] == 0xFE.toByte() && byteArray[1] == 0xFF.toByte()) {
-                            String(byteArray, 2, byteArray.size - 2, Charsets.UTF_16BE)
-                        } else {
-                            String(byteArray, Charsets.UTF_8)
-                        }
-                    }.getOrDefault("")
-                } else ""
-
-                val clean = sanitizeBookOrChapterText(normalizeBookTitle(parsed.trim()))
-                if (clean.length in 3..80 &&
-                    !clean.contains("Microsoft Word", true) &&
-                    !clean.contains("Acrobat", true) &&
-                    !clean.contains("untitled", true) &&
-                    !clean.matches(Regex("""^page\s*\d+$""", RegexOption.IGNORE_CASE))
-                ) {
-                    val destMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
-                    var destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
-                        ?: destMatch?.groupValues?.get(2)?.toIntOrNull()
-                    if (destObj == null) {
-                        val aInlineMatch = Regex("""/A\s*<<[^>]*?/(?:Dest|D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(body)
-                        destObj = aInlineMatch?.groupValues?.get(1)?.toIntOrNull() ?: aInlineMatch?.groupValues?.get(2)?.toIntOrNull()
-                    }
-                    if (destObj == null) {
-                        val aRefMatch = Regex("""/A\s+(\d+)\s+0\s+R""").find(body)
-                        val aObjId = aRefMatch?.groupValues?.get(1)?.toIntOrNull()
-                        if (aObjId != null) {
-                            val aBody = objBodies[aObjId].orEmpty()
-                            val aDestMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(aBody)
-                            destObj = aDestMatch?.groupValues?.get(1)?.toIntOrNull() ?: aDestMatch?.groupValues?.get(2)?.toIntOrNull()
-                        }
-                    }
-                    val targetPageZero = destObj?.let { pageObjToZero[it] }
-
-                    if (targetPageZero != null && targetPageZero in 0 until totalPages) {
-                        if (detectedBookmarks.none { it.startPageZero == targetPageZero }) {
-                            detectedBookmarks.add(PdfBookmark(clean, targetPageZero))
-                        }
-                    } else {
-                        // Check if title has explicit page number like "Hal 45" or "Page 45"
-                        val pageMatch = Regex("""(?:hal|page|p\.?)\s*(\d+)""", RegexOption.IGNORE_CASE).find(parsed)
-                        val num = pageMatch?.groupValues?.get(1)?.toIntOrNull()
-                        val pZero = if (num != null && num in 1..totalPages) num - 1 else null
-                        if (pZero != null && detectedBookmarks.none { it.startPageZero == pZero }) {
-                            detectedBookmarks.add(PdfBookmark(clean, pZero))
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort bookmarks strictly by startPageZero and eliminate duplicates
-        val sortedBookmarks = detectedBookmarks
-            .distinctBy { it.startPageZero }
-            .sortedBy { it.startPageZero }
-            .toMutableList()
-
-        val chapters = mutableListOf<BookChapterEntity>()
-        if (sortedBookmarks.isNotEmpty()) {
-            if (sortedBookmarks.first().startPageZero > 0) {
-                sortedBookmarks.add(0, PdfBookmark(sanitizeBookOrChapterText(normalizeBookTitle(defaultTitle)), 0))
-            }
-            for (i in sortedBookmarks.indices) {
-                val bm = sortedBookmarks[i]
-                val startIdx = bm.startPageZero
-                val nextStartIdx = if (i + 1 < sortedBookmarks.size) sortedBookmarks[i + 1].startPageZero else totalPages
-                val endIdx = nextStartIdx.coerceIn(startIdx + 1, totalPages)
-
-                val pagesArr = JSONArray()
-                for (pIdx in startIdx until endIdx) {
-                    pagesArr.put("[PDF_PAGE:$pIdx]")
-                }
-                val illustArr = JSONArray()
-                if (i == 0) {
-                    extractedIllustrations.forEach { il ->
-                        illustArr.put(JSONObject().apply {
-                            put("uriOrPath", il.uriOrPath)
-                            put("caption", il.caption)
-                        })
-                    }
-                }
-                chapters.add(
-                    BookChapterEntity(
-                        bookId = bookId,
-                        chapterIndex = i,
-                        title = bm.title,
-                        pagesJson = pagesArr.toString(),
-                        illustrationsJson = illustArr.toString()
-                    )
-                )
-            }
-        } else {
-            // Document without embedded bookmarks: use natural chapter/bagian subdivisions
-            val chaptersCount = when {
-                totalPages <= 24 -> 1
-                totalPages <= 60 -> 2
-                totalPages <= 120 -> 4
-                totalPages <= 240 -> 6
-                else -> 10
-            }
-            val pagesPerChapter = ceil(totalPages.toDouble() / chaptersCount.toDouble()).toInt().coerceAtLeast(1)
-            var startIdx = 0
-            var chIdx = 0
-            while (startIdx < totalPages) {
-                val endIdx = (startIdx + pagesPerChapter).coerceAtMost(totalPages)
-                val pagesArr = JSONArray()
-                for (pIdx in startIdx until endIdx) {
-                    pagesArr.put("[PDF_PAGE:$pIdx]")
-                }
-                val illustArr = JSONArray()
-                if (chIdx == 0) {
-                    extractedIllustrations.forEach { il ->
-                        illustArr.put(JSONObject().apply {
-                            put("uriOrPath", il.uriOrPath)
-                            put("caption", il.caption)
-                        })
-                    }
-                }
-                val title = if (chaptersCount == 1) {
-                    defaultTitle
-                } else {
-                    "Bagian ${chIdx + 1} (Hal ${startIdx + 1})"
-                }
-                chapters.add(
-                    BookChapterEntity(
-                        bookId = bookId,
-                        chapterIndex = chIdx,
-                        title = title,
-                        pagesJson = pagesArr.toString(),
-                        illustrationsJson = illustArr.toString()
-                    )
-                )
-                chIdx++
-                startIdx = endIdx
-            }
-        }
-
-        Pair(chapters, extractedIllustrations)
-    }
 
     suspend fun importPdfDocument(
         context: Context,
@@ -616,482 +352,302 @@ object PdfNativeRenderer {
         }
     }
 
-    fun readPdfContentString(pdfFile: File): String {
-        return runCatching {
-            String(pdfFile.readBytes(), Charsets.ISO_8859_1)
-        }.getOrDefault("")
+    fun sanitizeChapterTitle(raw: String): String {
+        var t = raw
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&#39;", "'")
+            .replace("’", "'")
+            .replace("‘", "'")
+            .replace("“", "\"")
+            .replace("”", "\"")
+            .replace("—", " — ")
+            .replace("–", " – ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return sanitizeBookOrChapterText(normalizeBookTitle(t))
     }
 
-    fun readPdfHeaderAndTrailer(pdfFile: File): String = readPdfContentString(pdfFile)
-
-    fun isImageStreamHeader(header: String): Boolean {
-        return header.contains("/Subtype /Image") ||
-            header.contains("/Subtype/Image") ||
-            header.contains("/DCTDecode") ||
-            header.contains("/JPXDecode") ||
-            header.contains("/CCITTFaxDecode") ||
-            header.contains("/BitsPerComponent") ||
-            (header.contains("/Width") && header.contains("/Height") && !header.contains("/ObjStm"))
+    fun isPlausibleChapterTitle(text: String): Boolean {
+        val lower = text.lowercase()
+        if (lower.startsWith("chapter") || lower.startsWith("bab") || lower.startsWith("bagian") ||
+            lower.startsWith("part") || lower.startsWith("act") || lower.startsWith("section") ||
+            lower.startsWith("prologue") || lower.startsWith("epilogue") || lower.startsWith("pengantar") ||
+            lower.startsWith("pendahuluan") || lower.startsWith("prakata")
+        ) return true
+        return text.length in 3..60 && !text.contains("...") && text.first().isLetter()
     }
 
-    fun decodePdfLiteral(raw: String): String {
-        val decoded = java.lang.StringBuilder()
-        var i = 0
-        while (i < raw.length) {
-            val c = raw[i]
-            if (c == '\\' && i + 1 < raw.length) {
-                val next = raw[i + 1]
-                if (next in '0'..'7') {
-                    var octalLen = 1
-                    while (octalLen < 3 && i + 1 + octalLen < raw.length && raw[i + 1 + octalLen] in '0'..'7') {
-                        octalLen++
-                    }
-                    val octalStr = raw.substring(i + 1, i + 1 + octalLen)
-                    val code = octalStr.toIntOrNull(8) ?: 32
-                    val ch = when (code) {
-                        0x91, 0x92 -> '\''
-                        0x93, 0x94 -> '"'
-                        0x96, 0x97 -> '–'
-                        0x85 -> '…'
-                        0xA0 -> ' '
-                        else -> code.toChar()
-                    }
-                    decoded.append(ch)
-                    i += 1 + octalLen
-                    continue
-                } else {
-                    when (next) {
-                        'n' -> decoded.append('\n')
-                        'r' -> decoded.append(' ')
-                        't' -> decoded.append('\t')
-                        '(' -> decoded.append('(')
-                        ')' -> decoded.append(')')
-                        '\\' -> decoded.append('\\')
-                        else -> decoded.append(next)
-                    }
-                    i += 2
-                    continue
-                }
-            } else {
-                val code = c.code
-                val ch = when (code) {
-                    0x91, 0x92 -> '\''
-                    0x93, 0x94 -> '"'
-                    0x96, 0x97 -> '–'
-                    0x85 -> '…'
-                    0xA0 -> ' '
-                    else -> c
-                }
-                decoded.append(ch)
-                i++
+    private fun resolveDestinationPage(document: PDDocument, destination: PDDestination): Int? {
+        val pageDest = when (destination) {
+            is PDPageDestination -> destination
+            is PDNamedDestination -> {
+                runCatching { document.documentCatalog.findNamedDestinationPage(destination) }.getOrNull()
+            }
+            else -> null
+        } ?: return null
+
+        // 1. Destination page object
+        runCatching {
+            val page = pageDest.page
+            if (page != null) {
+                val idx = document.pages.indexOf(page)
+                if (idx >= 0) return idx
             }
         }
-        return decoded.toString()
-    }
 
-    fun decodeHexLiteral(rawHex: String): String {
-        val clean = rawHex.replace(Regex("[^0-9a-fA-F]"), "")
-        if (clean.length < 2) return ""
-        return runCatching {
-            val bytes = clean.chunked(2).mapNotNull { it.toIntOrNull(16)?.toByte() }.toByteArray()
-            if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-                String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
-            } else {
-                String(bytes, Charsets.UTF_8)
-            }
-        }.getOrDefault("")
-    }
-
-    fun extractTextLinesFromContentStream(streamText: String): List<String> {
-        val lines = mutableListOf<String>()
-        val currentLine = java.lang.StringBuilder()
-
-        fun flushLine() {
-            val s = currentLine.toString().trim()
-            if (s.isNotEmpty()) {
-                lines.add(s)
-            }
-            currentLine.setLength(0)
+        // 2. retrievePageNumber() (0-based)
+        runCatching {
+            val num = pageDest.retrievePageNumber()
+            if (num >= 0 && num < document.numberOfPages) return num
         }
 
-        val opRegex = Regex("""(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F\s]+>)\s*(\'|\"|Tj)|\[([\s\S]*?)\]\s*TJ|(\bT\*\b|\bET\b|\bTd\b|\bTD\b|\bTm\b)""")
-
-        for (m in opRegex.findAll(streamText)) {
-            val tjStr = m.groupValues[1]
-            val tjOp = m.groupValues[2]
-            val arrayContent = m.groupValues[3]
-            val lineBreakOp = m.groupValues[4]
-
-            if (lineBreakOp.isNotEmpty()) {
-                flushLine()
-                continue
-            }
-
-            if (tjStr.isNotEmpty()) {
-                val text = if (tjStr.startsWith("(")) {
-                    decodePdfLiteral(tjStr.removeSurrounding("(", ")"))
-                } else if (tjStr.startsWith("<")) {
-                    decodeHexLiteral(tjStr.removeSurrounding("<", ">"))
-                } else ""
-
-                if (tjOp == "'" || tjOp == "\"") {
-                    flushLine()
-                }
-                currentLine.append(text)
-                if (tjOp == "'" || tjOp == "\"") {
-                    flushLine()
-                }
-            } else if (arrayContent.isNotEmpty()) {
-                val elemRegex = Regex("""(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F\s]+>|[-+]?[0-9]*\.?[0-9]+)""")
-                for (em in elemRegex.findAll(arrayContent)) {
-                    val token = em.groupValues[1]
-                    if (token.startsWith("(")) {
-                        currentLine.append(decodePdfLiteral(token.removeSurrounding("(", ")")))
-                    } else if (token.startsWith("<")) {
-                        currentLine.append(decodeHexLiteral(token.removeSurrounding("<", ">")))
-                    } else {
-                        val spacing = token.toFloatOrNull()
-                        if (spacing != null && spacing < -120f) {
-                            if (currentLine.isNotEmpty() && !currentLine.endsWith(" ")) {
-                                currentLine.append(" ")
-                            }
-                        }
-                    }
-                }
-            }
+        // 3. pageNumber
+        runCatching {
+            val num = pageDest.pageNumber
+            if (num >= 0 && num < document.numberOfPages) return num
         }
-        flushLine()
-        return lines.map { it.trim() }.filter { it.length >= 2 }
+
+        // 4. findPageNumber() (1-based fallback)
+        runCatching {
+            val num = pageDest.findPageNumber()
+            if (num > 0 && num <= document.numberOfPages) return num - 1
+        }
+
+        return null
     }
 
-    fun extractAllPdfChaptersAndOutlines(
-        pdfFile: File,
+    fun deduplicateChapters(
+        rawChapters: List<PdfBookmark>,
         totalPages: Int,
         defaultTitle: String
+    ): List<PdfBookmark> {
+        val noiseWords = setOf("contents", "tableofcontents", "daftarisi", "isibuku", "copyright", "hakcipta", "cover", "sampul")
+        val seenKeys = mutableSetOf<String>()
+        val seenPages = mutableSetOf<Int>()
+        val result = mutableListOf<PdfBookmark>()
+
+        for (ch in rawChapters) {
+            val clean = sanitizeChapterTitle(ch.title)
+            if (clean.length < 2) continue
+            if (clean.all { it.isDigit() || it.isWhitespace() || it == '.' }) continue
+            val normKey = clean.lowercase().replace(Regex("[^a-z0-9]"), "")
+            if (normKey in noiseWords) continue
+            if (normKey.isEmpty()) continue
+            if (seenKeys.contains(normKey)) continue
+
+            val page = ch.startPageZero.coerceIn(0, totalPages - 1)
+            if (seenPages.contains(page)) continue
+
+            seenKeys.add(normKey)
+            seenPages.add(page)
+            result.add(PdfBookmark(clean, page))
+        }
+
+        result.sortBy { it.startPageZero }
+        if (result.isNotEmpty() && result.first().startPageZero > 0) {
+            result.add(0, PdfBookmark(sanitizeChapterTitle(defaultTitle), 0))
+        }
+        return result
+    }
+
+    suspend fun extractChaptersWithPdfBox(
+        context: Context,
+        pdfFile: File,
+        totalPages: Int,
+        defaultTitle: String,
+        onStageProgress: suspend (Int) -> Unit = {}
     ): List<PdfBookmark> {
         val detectedBookmarks = mutableListOf<PdfBookmark>()
         val tocBookmarks = mutableListOf<PdfBookmark>()
 
         runCatching {
-            val contentStr = readPdfContentString(pdfFile)
-            if (contentStr.isEmpty()) return emptyList()
+            PDFBoxResourceLoader.init(context.applicationContext)
+            val memSetting = MemoryUsageSetting.setupTempFileOnly()
+                .setTempDir(context.cacheDir)
 
-            val objBodies = mutableMapOf<Int, String>()
-            val objRegex = Regex("""(\d+)\s+0\s+obj\b([\s\S]*?)\bendobj\b""")
-            for (m in objRegex.findAll(contentStr)) {
-                val objId = m.groupValues[1].toIntOrNull() ?: continue
-                objBodies[objId] = m.groupValues[2]
-            }
+            PDDocument.load(pdfFile, memSetting).use { document ->
+                val pageCount = document.numberOfPages.coerceAtLeast(1)
+                val safeTotalPages = if (totalPages > 0) minOf(totalPages, pageCount) else pageCount
 
-            val inflatedStreams = mutableMapOf<Int, ByteArray>()
-            val objStmTexts = mutableListOf<String>()
-
-            for ((objId, body) in objBodies) {
-                val streamIdx = body.indexOf("stream")
-                if (streamIdx == -1) continue
-                val dictHeader = body.substring(0, streamIdx)
-                if (isImageStreamHeader(dictHeader)) continue
-
-                val isCandidate = dictHeader.contains("/ObjStm") ||
-                    dictHeader.contains("/Contents") ||
-                    dictHeader.contains("/Outlines") ||
-                    dictHeader.contains("/Annot") ||
-                    dictHeader.contains("/Title") ||
-                    !dictHeader.contains("/Subtype")
-
-                if (!isCandidate) continue
-
-                val endStreamIdx = body.lastIndexOf("endstream")
-                if (endStreamIdx <= streamIdx) continue
-
-                var start = streamIdx + 6
-                if (start < body.length && body[start] == '\r') start++
-                if (start < body.length && body[start] == '\n') start++
-                var end = endStreamIdx
-                if (end > start && body[end - 1] == '\n') end--
-                if (end > start && body[end - 1] == '\r') end--
-                if (end <= start) continue
-
-                val rawData = body.substring(start, end).toByteArray(Charsets.ISO_8859_1)
-                val inflated = if (dictHeader.contains("/FlateDecode")) {
-                    inflatePdfStream(rawData) ?: rawData
-                } else {
-                    rawData
-                }
-                inflatedStreams[objId] = inflated
-
-                if (dictHeader.contains("/ObjStm")) {
-                    objStmTexts.add(String(inflated, Charsets.ISO_8859_1))
-                }
-            }
-
-            var pagesRootId: Int? = null
-            for ((_, body) in objBodies) {
-                if (body.contains("/Type") && body.contains("/Catalog")) {
-                    val rootPagesMatch = Regex("""/Pages\s+(\d+)\s+0\s+R""").find(body)
-                    if (rootPagesMatch != null) {
-                        pagesRootId = rootPagesMatch.groupValues[1].toIntOrNull()
-                        break
-                    }
-                }
-            }
-
-            val orderedPageObjIds = mutableListOf<Int>()
-            fun traversePages(nodeId: Int, visited: MutableSet<Int>) {
-                if (!visited.add(nodeId)) return
-                val body = objBodies[nodeId] ?: return
-                val kidsMatch = Regex("""/Kids\s*\[([\s\S]*?)\]""").find(body)
-                if (kidsMatch != null) {
-                    val refRegex = Regex("""(\d+)\s+0\s+R""")
-                    for (ref in refRegex.findAll(kidsMatch.groupValues[1])) {
-                        val kidId = ref.groupValues[1].toIntOrNull() ?: continue
-                        val kidBody = objBodies[kidId].orEmpty()
-                        if (kidBody.contains("/Type") && kidBody.contains("/Pages")) {
-                            traversePages(kidId, visited)
-                        } else {
-                            orderedPageObjIds.add(kidId)
-                        }
-                    }
-                } else if (body.contains("/Type") && body.contains("/Page\b")) {
-                    orderedPageObjIds.add(nodeId)
-                }
-            }
-
-            if (pagesRootId != null) {
-                traversePages(pagesRootId, mutableSetOf())
-            }
-
-            if (orderedPageObjIds.isEmpty()) {
-                val fallbackRegex = Regex("""(\d+)\s+0\s+obj\s*<<[^>]*?/Type\s*/Page\b""")
-                for (m in fallbackRegex.findAll(contentStr)) {
-                    m.groupValues[1].toIntOrNull()?.let { orderedPageObjIds.add(it) }
-                }
-            }
-
-            val pageObjToZero = orderedPageObjIds.mapIndexed { idx, objId -> objId to idx }.toMap()
-
-            fun parseBookmarksFromText(text: String) {
-                val titleRegex = Regex("""/Title\s*(\((?:[^()\\]|\\.)*\)|<[0-9a-fA-F]+>)([\s\S]*?)(?=/Title|\bendobj\b|>>)""")
-                for (m in titleRegex.findAll(text)) {
-                    val raw = m.groupValues[1]
-                    val context = m.groupValues[2]
-
-                    val parsed = if (raw.startsWith("(")) {
-                        decodePdfLiteral(raw.removeSurrounding("(", ")"))
-                    } else if (raw.startsWith("<")) {
-                        decodeHexLiteral(raw.removeSurrounding("<", ">"))
-                    } else ""
-
-                    val clean = sanitizeBookOrChapterText(normalizeBookTitle(parsed.trim()))
-                    if (clean.length in 2..80 &&
-                        !clean.contains("Microsoft Word", true) &&
-                        !clean.contains("Acrobat", true) &&
-                        !clean.contains("untitled", true) &&
-                        !clean.matches(Regex("""^page\s*\d+$""", RegexOption.IGNORE_CASE))
-                    ) {
-                        val destMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(context)
-                        var destObj = destMatch?.groupValues?.get(1)?.toIntOrNull()
-                            ?: destMatch?.groupValues?.get(2)?.toIntOrNull()
-                        if (destObj == null) {
-                            val aInlineMatch = Regex("""/A\s*<<[^>]*?/(?:Dest|D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(context)
-                            destObj = aInlineMatch?.groupValues?.get(1)?.toIntOrNull() ?: aInlineMatch?.groupValues?.get(2)?.toIntOrNull()
-                        }
-                        if (destObj == null) {
-                            val aRefMatch = Regex("""/A\s+(\d+)\s+0\s+R""").find(context)
-                            val aObjId = aRefMatch?.groupValues?.get(1)?.toIntOrNull()
-                            if (aObjId != null) {
-                                val aBody = objBodies[aObjId].orEmpty()
-                                val aDestMatch = Regex("""(?:/Dest|/D)\s*(?:\[\s*(\d+)\s+0\s+R|(\d+)\s+0\s+R)""").find(aBody)
-                                destObj = aDestMatch?.groupValues?.get(1)?.toIntOrNull() ?: aDestMatch?.groupValues?.get(2)?.toIntOrNull()
+                // Stage 1: Native PDF Outline / Bookmark Tree (5% -> 25%)
+                onStageProgress(10)
+                val outline = runCatching { document.documentCatalog.documentOutline }.getOrNull()
+                if (outline != null) {
+                    fun walkOutline(node: PDOutlineNode) {
+                        var cur = node.firstChild
+                        while (cur != null) {
+                            val rawTitle = cur.title?.trim().orEmpty()
+                            val dest = cur.destination ?: (cur.action as? PDActionGoTo)?.destination
+                            if (dest != null && rawTitle.isNotBlank()) {
+                                val targetPage = resolveDestinationPage(document, dest)
+                                if (targetPage != null && targetPage in 0 until safeTotalPages) {
+                                    val clean = sanitizeChapterTitle(rawTitle)
+                                    if (clean.length in 2..120) {
+                                        detectedBookmarks.add(PdfBookmark(clean, targetPage))
+                                    }
+                                }
                             }
-                        }
-
-                        val targetPageZero = destObj?.let { pageObjToZero[it] }
-                        if (targetPageZero != null && targetPageZero in 0 until totalPages) {
-                            if (detectedBookmarks.none { it.title.equals(clean, ignoreCase = true) && it.startPageZero == targetPageZero }) {
-                                detectedBookmarks.add(PdfBookmark(clean, targetPageZero))
+                            if (cur.hasChildren()) {
+                                walkOutline(cur)
                             }
-                        } else {
-                            val pageMatch = Regex("""(?:hal|page|p\.?)\s*(\d+)""", RegexOption.IGNORE_CASE).find(parsed)
-                            val num = pageMatch?.groupValues?.get(1)?.toIntOrNull()
-                            val pZero = if (num != null && num in 1..totalPages) num - 1 else null
-                            if (pZero != null && detectedBookmarks.none { it.title.equals(clean, ignoreCase = true) && it.startPageZero == pZero }) {
-                                detectedBookmarks.add(PdfBookmark(clean, pZero))
-                            }
+                            cur = cur.nextSibling
                         }
                     }
-                }
-            }
-
-            for ((_, body) in objBodies) {
-                if (body.contains("/Title")) {
-                    parseBookmarksFromText(body)
-                }
-            }
-            for (stmText in objStmTexts) {
-                if (stmText.contains("/Title")) {
-                    parseBookmarksFromText(stmText)
-                }
-            }
-
-            val pageTexts = mutableMapOf<Int, List<String>>()
-            for (p in 0 until minOf(totalPages, orderedPageObjIds.size)) {
-                val pageObjId = orderedPageObjIds[p]
-                val pageBody = objBodies[pageObjId].orEmpty()
-
-                val contentObjIds = mutableListOf<Int>()
-                val contentsArrayMatch = Regex("""/Contents\s*\[([\s\S]*?)\]""").find(pageBody)
-                if (contentsArrayMatch != null) {
-                    val refRegex = Regex("""(\d+)\s+0\s+R""")
-                    for (ref in refRegex.findAll(contentsArrayMatch.groupValues[1])) {
-                        ref.groupValues[1].toIntOrNull()?.let { contentObjIds.add(it) }
-                    }
-                } else {
-                    val singleRefMatch = Regex("""/Contents\s+(\d+)\s+0\s+R""").find(pageBody)
-                    singleRefMatch?.groupValues?.get(1)?.toIntOrNull()?.let { contentObjIds.add(it) }
+                    walkOutline(outline)
                 }
 
-                val pageLines = mutableListOf<String>()
-                for (cId in contentObjIds) {
-                    val streamData = inflatedStreams[cId]
-                    if (streamData != null) {
-                        val streamStr = String(streamData, Charsets.ISO_8859_1)
-                        pageLines.addAll(extractTextLinesFromContentStream(streamStr))
-                    }
-                }
-                pageTexts[p] = pageLines
-            }
+                onStageProgress(25)
 
-            val tocHeaderRegex = Regex("""(?i)^\s*(contents|table of contents|daftar isi|isi buku)\s*$""")
-            var tocStartPage: Int? = null
+                // Stage 2: Contents / Table of Contents / Daftar Isi Pages (25% -> 55%)
+                val maxScan = minOf(25, safeTotalPages)
+                val textStripper = runCatching { PDFTextStripper() }.getOrNull()
 
-            for (p in 0 until minOf(25, totalPages)) {
-                val lines = pageTexts[p] ?: emptyList()
-                if (lines.any { tocHeaderRegex.matches(it.trim()) }) {
-                    tocStartPage = p
-                    break
-                }
-            }
-
-            if (tocStartPage != null) {
-                val tocPages = mutableListOf(tocStartPage)
-                var curP = tocStartPage + 1
-                while (curP < minOf(tocStartPage + 4, totalPages)) {
-                    val lines = pageTexts[curP] ?: emptyList()
-                    if (lines.isEmpty()) break
-                    val shortLines = lines.count { it.trim().length in 3..68 }
-                    val hasLongParagraphs = lines.any { it.trim().length > 130 }
-                    if (!hasLongParagraphs && shortLines >= (lines.size * 0.60).toInt().coerceAtLeast(3)) {
-                        tocPages.add(curP)
-                        curP++
-                    } else {
-                        break
-                    }
-                }
-
-                val rawTocLines = tocPages.flatMap { pageTexts[it] ?: emptyList() }
-                val tocLineWithNumRegex = Regex("""^(.*?)(?:[.\u2026_\s]{2,}|\t+)\s*(\d{1,4})\s*$""")
-                val numberedCount = rawTocLines.count { tocLineWithNumRegex.matches(it.trim()) }
-
-                if (numberedCount >= 3) {
-                    val entries = mutableListOf<Pair<String, Int>>()
-                    for (line in rawTocLines) {
-                        val m = tocLineWithNumRegex.find(line.trim()) ?: continue
-                        val rawTitle = m.groupValues[1].trim()
-                        val printedPage = m.groupValues[2].toIntOrNull() ?: continue
-                        if (rawTitle.length in 3..75 && !tocHeaderRegex.matches(rawTitle)) {
-                            entries.add(rawTitle to printedPage)
-                        }
-                    }
-                    if (entries.isNotEmpty()) {
-                        val minPrinted = entries.minOf { it.second }
-                        val offset = if (minPrinted > 0 && minPrinted < 25) (tocStartPage - minPrinted + 1).coerceAtLeast(0) else 0
-                        for ((title, pNum) in entries) {
-                            val targetZero = (pNum - 1 + offset).coerceIn(0, totalPages - 1)
-                            tocBookmarks.add(PdfBookmark(title, targetZero))
-                        }
-                    }
-                } else {
-                    val noiseTitles = setOf(
-                        "cover", "title page", "copyright", "a note about this ebook",
-                        "contents", "table of contents", "daftar isi", "isi buku"
+                if (textStripper != null) {
+                    val tocHeadingRegex = Regex(
+                        "\\b(Table\\s+of\\s+Contents|Contents|Daftar\\s+Isi|Table\\s+des\\s+mati[èe]res|Inhaltsverzeichnis|Índice|Indice)\\b",
+                        RegexOption.IGNORE_CASE
                     )
-                    val candidateTitles = rawTocLines.map { it.trim() }.filter { line ->
-                        line.length in 3..68 &&
-                            !line.all { it.isDigit() || it.isWhitespace() || it == '.' } &&
-                            line.lowercase().replace(Regex("[^a-z0-9]"), "") !in noiseTitles
+                    val tocPages = mutableListOf<Int>()
+
+                    for (p in 0 until maxScan) {
+                        textStripper.startPage = p + 1
+                        textStripper.endPage = p + 1
+                        val text = runCatching { textStripper.getText(document) }.getOrDefault("")
+                        if (tocHeadingRegex.containsMatchIn(text)) {
+                            tocPages.add(p)
+                        } else if (tocPages.isNotEmpty() && tocPages.last() == p - 1) {
+                            val pdPage = runCatching { document.getPage(p) }.getOrNull()
+                            val hasLinks = pdPage?.annotations?.filterIsInstance<PDAnnotationLink>()?.isNotEmpty() == true
+                            val hasNumberedLines = text.lines().count { line ->
+                                Regex("(?:[.\\s_\\-–—·…]{2,}|\\t+)\\s*(\\d{1,4})\\s*$").containsMatchIn(line.trim())
+                            } >= 3
+                            if (hasLinks || hasNumberedLines) {
+                                tocPages.add(p)
+                            }
+                        }
                     }
 
-                    var lastFoundPage = (tocPages.last() + 1).coerceAtMost(totalPages - 1)
-                    for (tocTitle in candidateTitles) {
-                        val normToc = tocTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
-                        if (normToc.length < 3) continue
+                    onStageProgress(35)
 
-                        val existingBm = detectedBookmarks.find {
-                            it.title.lowercase().replace(Regex("[^a-z0-9]"), "") == normToc
-                        }
-                        if (existingBm != null) {
-                            tocBookmarks.add(existingBm)
-                            lastFoundPage = existingBm.startPageZero
-                            continue
+                    val pageLabels = runCatching { document.documentCatalog.pageLabels?.pageIndicesByLabels }.getOrNull()
+                    val numberedLineRegex = Regex("^(.+?)(?:[.\\s_\\-–—·…]{2,}|\\t+)\\s*(\\d{1,4})\\s*$")
+                    val unnumberedCandidates = mutableListOf<String>()
+
+                    for (tocPageZero in tocPages) {
+                        val pdPage = runCatching { document.getPage(tocPageZero) }.getOrNull() ?: continue
+
+                        // Strategy 2A: Interactive Link Annotations (PDAnnotationLink)
+                        val links = runCatching { pdPage.annotations.filterIsInstance<PDAnnotationLink>() }.getOrDefault(emptyList())
+                        if (links.isNotEmpty()) {
+                            val mediaBox = pdPage.mediaBox ?: pdPage.cropBox
+                            val pageH = mediaBox.height
+                            val areaStripper = runCatching { PDFTextStripperByArea() }.getOrNull()
+
+                            for ((linkIdx, link) in links.withIndex()) {
+                                val dest = link.destination ?: (link.action as? PDActionGoTo)?.destination ?: continue
+                                val targetPage = resolveDestinationPage(document, dest) ?: continue
+                                if (targetPage !in 0 until safeTotalPages) continue
+
+                                var linkText: String? = null
+                                if (areaStripper != null) {
+                                    val rect = link.rectangle
+                                    if (rect != null) {
+                                        val left = minOf(rect.lowerLeftX, rect.upperRightX)
+                                        val right = maxOf(rect.lowerLeftX, rect.upperRightX)
+                                        val top = (pageH - maxOf(rect.lowerLeftY, rect.upperRightY)).coerceAtLeast(0f)
+                                        val bottom = (pageH - minOf(rect.lowerLeftY, rect.upperRightY)).coerceAtLeast(0f)
+                                        val rectF = RectF(left - 2f, top - 2f, right + 2f, bottom + 2f)
+                                        val rKey = "link_$linkIdx"
+                                        areaStripper.addRegion(rKey, rectF)
+                                        runCatching { areaStripper.extractRegions(pdPage) }
+                                        linkText = areaStripper.getTextForRegion(rKey)?.trim()
+                                        areaStripper.removeRegion(rKey)
+                                    }
+                                }
+                                if (!linkText.isNullOrBlank()) {
+                                    val clean = sanitizeChapterTitle(linkText)
+                                    if (clean.length in 2..120) {
+                                        tocBookmarks.add(PdfBookmark(clean, targetPage))
+                                    }
+                                }
+                            }
                         }
 
-                        var matchedPage: Int? = null
-                        for (searchP in lastFoundPage until totalPages) {
-                            val linesOnPage = pageTexts[searchP] ?: emptyList()
-                            val topLines = linesOnPage.take(15)
-                            val matched = topLines.any { line ->
-                                val normLine = line.lowercase().replace(Regex("[^a-z0-9]"), "")
-                                normLine == normToc ||
-                                    (normToc.length >= 6 && normLine.contains(normToc)) ||
-                                    (normToc.length >= 6 && normLine.length >= 6 && normToc.contains(normLine))
-                            }
-                            if (matched) {
-                                matchedPage = searchP
-                                break
+                        // Strategy 2B: Numbered ToC lines
+                        textStripper.startPage = tocPageZero + 1
+                        textStripper.endPage = tocPageZero + 1
+                        val text = runCatching { textStripper.getText(document) }.getOrDefault("")
+
+                        for (line in text.lines()) {
+                            val trimmed = line.trim()
+                            if (trimmed.length < 3) continue
+                            val match = numberedLineRegex.find(trimmed)
+                            if (match != null) {
+                                val rawTitle = match.groupValues[1].trim()
+                                val pageStr = match.groupValues[2]
+                                val clean = sanitizeChapterTitle(rawTitle)
+                                if (clean.length in 2..120) {
+                                    val targetPage: Int? = if (pageLabels != null && pageLabels.containsKey(pageStr)) {
+                                        pageLabels[pageStr]
+                                    } else {
+                                        val pNum = pageStr.toIntOrNull()
+                                        if (pNum != null && pNum in 1..safeTotalPages) {
+                                            pNum - 1
+                                        } else null
+                                    }
+                                    if (targetPage != null && targetPage in 0 until safeTotalPages) {
+                                        tocBookmarks.add(PdfBookmark(clean, targetPage))
+                                    } else {
+                                        unnumberedCandidates.add(clean)
+                                    }
+                                }
+                            } else {
+                                val clean = sanitizeChapterTitle(trimmed)
+                                if (clean.length in 3..80 && isPlausibleChapterTitle(clean)) {
+                                    unnumberedCandidates.add(clean)
+                                }
                             }
                         }
-                        if (matchedPage != null) {
-                            tocBookmarks.add(PdfBookmark(tocTitle, matchedPage))
-                            lastFoundPage = matchedPage
+                    }
+
+                    onStageProgress(45)
+
+                    // Strategy 2C: Unnumbered ToC Lines Fallback
+                    if (tocBookmarks.isEmpty() && unnumberedCandidates.isNotEmpty() && detectedBookmarks.size < 2) {
+                        var searchStart = (tocPages.maxOrNull() ?: 0) + 1
+                        for (cand in unnumberedCandidates) {
+                            val normCand = cand.lowercase().replace(Regex("[^a-z0-9]"), "")
+                            if (normCand.length < 3) continue
+                            for (p in searchStart until minOf(safeTotalPages, searchStart + 80)) {
+                                textStripper.startPage = p + 1
+                                textStripper.endPage = p + 1
+                                val pageText = runCatching { textStripper.getText(document) }.getOrDefault("")
+                                val topLines = pageText.lines().take(6).map { it.lowercase().replace(Regex("[^a-z0-9]"), "") }
+                                if (topLines.any { it.contains(normCand) || (normCand.contains(it) && it.length > 5) }) {
+                                    tocBookmarks.add(PdfBookmark(cand, p))
+                                    searchStart = p + 1
+                                    break
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            if (detectedBookmarks.isEmpty() && tocBookmarks.isEmpty()) {
-                for (p in 0 until totalPages) {
-                    val lines = pageTexts[p] ?: emptyList()
-                    val topLines = lines.take(6)
-                    val heading = topLines.firstOrNull { line ->
-                        val t = line.trim()
-                        val isKeyword = t.startsWith("Chapter", ignoreCase = true) ||
-                            t.startsWith("Bab ", ignoreCase = true) ||
-                            t.startsWith("Part ", ignoreCase = true) ||
-                            t.startsWith("Bagian ", ignoreCase = true) ||
-                            t.startsWith("Book ", ignoreCase = true) ||
-                            t.startsWith("Prologue", ignoreCase = true) ||
-                            t.startsWith("Epilogue", ignoreCase = true) ||
-                            t.startsWith("Act ", ignoreCase = true)
-                        isKeyword || (t.length in 4..40 && t.all { it.isUpperCase() || it.isWhitespace() || it == '-' || it == '&' || it == '\'' })
-                    }
-                    if (heading != null) {
-                        tocBookmarks.add(PdfBookmark(heading.trim(), p))
-                    }
-                }
+                onStageProgress(55)
             }
         }
 
-        val allChapters = detectedBookmarks + tocBookmarks
-        return deduplicateChapters(allChapters, totalPages, defaultTitle)
-    }
+        val combined = when {
+            detectedBookmarks.size >= 2 -> detectedBookmarks
+            tocBookmarks.size >= 2 -> tocBookmarks
+            else -> detectedBookmarks + tocBookmarks
+        }
 
-    fun extractPdfBookmarksFromPdfFile(
-        destPdfFile: File,
-        totalPages: Int,
-        defaultTitle: String
-    ): List<PdfBookmark> {
-        return extractAllPdfChaptersAndOutlines(destPdfFile, totalPages, defaultTitle)
+        return deduplicateChapters(combined, totalPages, defaultTitle)
     }
 
     fun isTrueIllustrationPage(bmp: Bitmap): Boolean = isTrueIllustrationPageBitmap(bmp)
@@ -1317,177 +873,6 @@ object PdfNativeRenderer {
         return false
     }
 
-    /**
-     * PDF Stream Pre-Filter:
-     * Scans the PDF byte stream without rendering pages. Counts occurrences of /XObject /Image references.
-     * Any image referenced on >= 4 pages is a repeating parchment background or header decoration.
-     * Returns 0-based page indices of candidate illustration pages (pages with non-repeating image XObjects).
-     */
-    fun scanCandidateIllustrationPagesFromPdfStream(pdfFile: File, totalPages: Int): List<Int> {
-        val candidates = mutableListOf<Int>()
-        runCatching {
-            val bytes = pdfFile.readBytes()
-            val contentStr = String(bytes, Charsets.ISO_8859_1)
-
-            val objBodies = mutableMapOf<Int, String>()
-            val objRegex = Regex("""(\d+)\s+0\s+obj\b([\s\S]*?)\bendobj\b""")
-            for (m in objRegex.findAll(contentStr)) {
-                val id = m.groupValues[1].toIntOrNull()
-                if (id != null) objBodies[id] = m.groupValues[2]
-            }
-
-            // Find ordered page object IDs
-            var pagesRootId: Int? = null
-            for ((id, body) in objBodies) {
-                if (body.contains("/Type") && body.contains("/Catalog")) {
-                    val rootPagesMatch = Regex("""/Pages\s+(\d+)\s+0\s+R""").find(body)
-                    if (rootPagesMatch != null) {
-                        pagesRootId = rootPagesMatch.groupValues[1].toIntOrNull()
-                        break
-                    }
-                }
-            }
-
-            val orderedPageObjIds = mutableListOf<Int>()
-            fun traversePages(nodeId: Int, visited: MutableSet<Int>) {
-                if (!visited.add(nodeId)) return
-                val body = objBodies[nodeId] ?: return
-                val kidsMatch = Regex("""/Kids\s*\[([\s\S]*?)\]""").find(body)
-                if (kidsMatch != null) {
-                    val refRegex = Regex("""(\d+)\s+0\s+R""")
-                    for (ref in refRegex.findAll(kidsMatch.groupValues[1])) {
-                        val kidId = ref.groupValues[1].toIntOrNull() ?: continue
-                        val kidBody = objBodies[kidId].orEmpty()
-                        if (kidBody.contains("/Type") && kidBody.contains("/Pages")) {
-                            traversePages(kidId, visited)
-                        } else {
-                            orderedPageObjIds.add(kidId)
-                        }
-                    }
-                } else if (body.contains("/Type") && body.contains("/Page\b")) {
-                    orderedPageObjIds.add(nodeId)
-                }
-            }
-
-            if (pagesRootId != null) traversePages(pagesRootId, mutableSetOf())
-            if (orderedPageObjIds.isEmpty()) {
-                val fallbackRegex = Regex("""(\d+)\s+0\s+obj\s*<<[^>]*?/Type\s*/Page\b""")
-                for (m in fallbackRegex.findAll(contentStr)) {
-                    m.groupValues[1].toIntOrNull()?.let { orderedPageObjIds.add(it) }
-                }
-            }
-
-            // Map image XObject references across pages
-            val imageRefOccurrences = mutableMapOf<String, Int>()
-            val pageToImageRefs = mutableMapOf<Int, Set<String>>()
-
-            for (pZero in orderedPageObjIds.indices) {
-                val pageId = orderedPageObjIds[pZero]
-                val pageBody = objBodies[pageId].orEmpty()
-                val imageRefsInPage = mutableSetOf<String>()
-
-                // Look for /XObject << ... >> directly in page body or via referenced Resources
-                val resRefMatch = Regex("""/Resources\s+(\d+)\s+0\s+R""").find(pageBody)
-                val resBody = if (resRefMatch != null) {
-                    val resObjId = resRefMatch.groupValues[1].toIntOrNull()
-                    resObjId?.let { objBodies[it] }.orEmpty()
-                } else pageBody
-
-                val xObjMatch = Regex("""/XObject\s*(?:<<([\s\S]*?)>>|(\d+)\s+0\s+R)""").find(resBody)
-                val xObjContent = if (xObjMatch != null) {
-                    val directDict = xObjMatch.groupValues[1]
-                    val refId = xObjMatch.groupValues[2].toIntOrNull()
-                    if (directDict.isNotBlank()) directDict
-                    else refId?.let { objBodies[it] }.orEmpty()
-                } else ""
-
-                if (xObjContent.isNotBlank()) {
-                    val entryRegex = Regex("""(/[\w\.\-]+)\s+(\d+)\s+0\s+R""")
-                    for (entry in entryRegex.findAll(xObjContent)) {
-                        val refObjId = entry.groupValues[2]
-                        val targetObjBody = refObjId.toIntOrNull()?.let { objBodies[it] }.orEmpty()
-                        if (targetObjBody.contains(Regex("""/Subtype\s*/Image""")) || !targetObjBody.contains(Regex("""/Subtype\s*/Form"""))) {
-                            imageRefsInPage.add(refObjId)
-                        }
-                    }
-                }
-                pageToImageRefs[pZero] = imageRefsInPage
-                for (img in imageRefsInPage) {
-                    imageRefOccurrences[img] = (imageRefOccurrences[img] ?: 0) + 1
-                }
-            }
-
-            // Candidate pages: pages > 0 with at least one image referenced on < 4 pages
-            for (pZero in 1 until minOf(totalPages, orderedPageObjIds.size)) {
-                val images = pageToImageRefs[pZero] ?: emptySet()
-                val hasUniqueImage = images.any { (imageRefOccurrences[it] ?: 0) < 4 }
-                if (hasUniqueImage) {
-                    candidates.add(pZero)
-                }
-            }
-        }
-        return candidates
-    }
-
-    fun inflatePdfStream(compressed: ByteArray): ByteArray? {
-        fun tryInflate(nowrap: Boolean): ByteArray? {
-            val inflater = java.util.zip.Inflater(nowrap)
-            return try {
-                inflater.setInput(compressed)
-                val out = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(4096)
-                var iterations = 0
-                while (!inflater.finished() && !inflater.needsInput() && !inflater.needsDictionary() && iterations < 128) {
-                    val count = inflater.inflate(buffer)
-                    if (count <= 0) break // CRITICAL: prevents infinite loop when inflate() returns 0!
-                    out.write(buffer, 0, count)
-                    if (out.size() > 64 * 1024) break
-                    iterations++
-                }
-                out.toByteArray()
-            } catch (_: Exception) {
-                null
-            } finally {
-                inflater.end()
-            }
-        }
-        return tryInflate(false) ?: tryInflate(true)
-    }
-
-    fun extractBookmarksFromTableOfContentsPage(pdfFile: File, totalPages: Int): List<PdfBookmark> {
-        return extractAllPdfChaptersAndOutlines(pdfFile, totalPages, "PDF Document")
-    }
-
-    fun deduplicateChapters(
-        rawChapters: List<PdfBookmark>,
-        totalPages: Int,
-        defaultTitle: String
-    ): List<PdfBookmark> {
-        val noiseWords = setOf("contents", "tableofcontents", "daftarisi", "isibuku", "copyright", "hakcipta", "cover", "sampul")
-        val seenKeys = mutableSetOf<String>()
-        val result = mutableListOf<PdfBookmark>()
-
-        for (ch in rawChapters) {
-            val clean = sanitizeBookOrChapterText(normalizeBookTitle(ch.title)).trim()
-            if (clean.length < 2) continue
-            if (clean.all { it.isDigit() || it.isWhitespace() || it == '.' }) continue
-            val normKey = clean.lowercase().replace(Regex("[^a-z0-9]"), "")
-            if (normKey in noiseWords) continue
-            if (normKey.isEmpty()) continue
-            if (seenKeys.contains(normKey)) continue
-            val page = ch.startPageZero.coerceIn(0, totalPages - 1)
-
-            seenKeys.add(normKey)
-            result.add(PdfBookmark(clean, page))
-        }
-
-        result.sortBy { it.startPageZero }
-        if (result.isNotEmpty() && result.first().startPageZero > 0) {
-            result.add(0, PdfBookmark(sanitizeBookOrChapterText(normalizeBookTitle(defaultTitle)), 0))
-        }
-        return result
-    }
-
     suspend fun scanPdfChaptersAndIllustrationsAsync(
         context: Context,
         bookId: String,
@@ -1501,17 +886,22 @@ object PdfNativeRenderer {
         if (!pdfFile.exists() || totalPages <= 0) return@withContext
 
         val coversDir = File(context.filesDir, "covers/$bookId").apply { mkdirs() }
-        val detectedChapters = mutableListOf<PdfBookmark>()
         val detectedIllusts = mutableListOf<BookIllustration>()
 
         onProgress(5)
-        val allChapters = extractAllPdfChaptersAndOutlines(pdfFile, totalPages, defaultTitle)
-        detectedChapters.addAll(allChapters)
 
-        onProgress(20)
-        val finalBookmarks = deduplicateChapters(detectedChapters, totalPages, defaultTitle)
+        // Stage 1 & 2: Extract Outline & TOC via memory-safe PDFBox
+        val finalBookmarks = extractChaptersWithPdfBox(
+            context = context,
+            pdfFile = pdfFile,
+            totalPages = totalPages,
+            defaultTitle = defaultTitle,
+            onStageProgress = onProgress
+        )
 
-        // Fast, Non-Blocking Visual Page Scan (20% -> 100%) Using Dedicated PdfRenderer
+        onProgress(55)
+
+        // Stage 3 (55% -> 95%): Illustration Detection using dedicated PdfRenderer
         runCatching {
             ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
@@ -1520,7 +910,7 @@ object PdfNativeRenderer {
                     val pagesToInspect = (1 until minOf(totalPages, pageCount) step step).toList()
 
                     for ((idx, pIdx) in pagesToInspect.withIndex()) {
-                        kotlinx.coroutines.delay(6L)
+                        kotlinx.coroutines.delay(4L)
                         renderer.openPage(pIdx).use { page ->
                             val thumbW = 200
                             val thumbH = 280
@@ -1547,8 +937,8 @@ object PdfNativeRenderer {
                             }
                             smallBmp.recycle()
                         }
-                        val pct = 20 + ((idx + 1) * 80 / pagesToInspect.size.coerceAtLeast(1))
-                        onProgress(pct.coerceIn(20, 99))
+                        val pct = 55 + ((idx + 1) * 40 / pagesToInspect.size.coerceAtLeast(1))
+                        onProgress(pct.coerceIn(55, 95))
                     }
                 }
             }
@@ -1556,6 +946,7 @@ object PdfNativeRenderer {
 
         onProgress(100)
 
+        // Build BookChapterEntity list with bookmarks & detected illustrations
         val finalChapters = if (finalBookmarks.isNotEmpty()) {
             val result = mutableListOf<BookChapterEntity>()
             for (i in finalBookmarks.indices) {
@@ -1585,7 +976,7 @@ object PdfNativeRenderer {
                     BookChapterEntity(
                         bookId = bookId,
                         chapterIndex = i,
-                        title = sanitizeBookOrChapterText(bm.title),
+                        title = sanitizeChapterTitle(bm.title),
                         pagesJson = pagesArr.toString(),
                         illustrationsJson = illustArr.toString()
                     )
@@ -1593,6 +984,7 @@ object PdfNativeRenderer {
             }
             result
         } else {
+            // Fallback sections if no bookmarks found anywhere
             val chCount = when {
                 totalPages <= 16 -> 1
                 totalPages <= 32 -> 2
@@ -1627,7 +1019,7 @@ object PdfNativeRenderer {
                         put("pageIndexInBook", il.pageIndexInBook)
                     })
                 }
-                val title = if (chCount == 1) sanitizeBookOrChapterText(defaultTitle) else if (isEn) "Section ${cIdx + 1} (pp. ${s + 1}–$e)" else "Bagian ${cIdx + 1} (Hal ${s + 1}–$e)"
+                val title = if (chCount == 1) sanitizeChapterTitle(defaultTitle) else if (isEn) "Section ${cIdx + 1} (pp. ${s + 1}–$e)" else "Bagian ${cIdx + 1} (Hal ${s + 1}–$e)"
                 result.add(
                     BookChapterEntity(
                         bookId = bookId,

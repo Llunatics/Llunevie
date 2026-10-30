@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -13,7 +15,7 @@ import androidx.room.RoomDatabase
         DailyReadingLogEntity::class,
         ShelfEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class LlunevieDatabase : RoomDatabase() {
@@ -23,6 +25,12 @@ abstract class LlunevieDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: LlunevieDatabase? = null
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN tocIndexed INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): LlunevieDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -30,6 +38,7 @@ abstract class LlunevieDatabase : RoomDatabase() {
                     LlunevieDatabase::class.java,
                     "llunevie_native_v02.db"
                 )
+                    .addMigrations(MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

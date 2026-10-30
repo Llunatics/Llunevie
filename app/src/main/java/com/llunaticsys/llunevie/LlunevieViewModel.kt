@@ -702,8 +702,6 @@ class LlunevieViewModel(
 
                     val isEn = preferences.value.lang == "en"
                     val totalPagesInChapters = parsedChapters.sumOf { it.pages.size }
-                    val hasGenericChapters = parsedChapters.isEmpty() ||
-                        parsedChapters.any { it.title.startsWith("Bagian ", ignoreCase = true) || it.title.startsWith("Section ", ignoreCase = true) }
 
                     if (parsedChapters.isEmpty() || totalPagesInChapters != actualPageCount) {
                         val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
@@ -716,8 +714,9 @@ class LlunevieViewModel(
                         }
                     }
 
-                    // Force replace generic Bagian 1.. / Section 1.. chapters by launching indexing immediately
-                    if (hasGenericChapters || _pdfIndexingState.value[bookId] == null) {
+                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false).
+                    // On all subsequent opens (tocIndexed == true), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
+                    if (!book.tocIndexed && _pdfIndexingState.value[bookId] == null) {
                         indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                     }
                 }
@@ -779,7 +778,12 @@ class LlunevieViewModel(
                         _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
                     }
                 ) { updatedChapters, updatedIllusts ->
-                    dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), updatedChapters)
+                    val currentBook = dao.getBookById(book.id) ?: book
+                    val updatedBook = currentBook.copy(
+                        pagesCount = actualPageCount,
+                        tocIndexed = true
+                    )
+                    dao.saveBookWithChapters(updatedBook, updatedChapters)
                     if (_uiState.value.activeBookId == book.id) {
                         val liveChs = updatedChapters.map { ce ->
                             val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
@@ -788,6 +792,12 @@ class LlunevieViewModel(
                         }
                         _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
                     }
+                }
+            } catch (t: Throwable) {
+                android.util.Log.e("LlunevieViewModel", "PDF indexing error for ${book.id}", t)
+                runCatching {
+                    val currentBook = dao.getBookById(book.id) ?: book
+                    dao.updateBook(currentBook.copy(tocIndexed = true))
                 }
             } finally {
                 _pdfIndexingState.update { it - book.id }

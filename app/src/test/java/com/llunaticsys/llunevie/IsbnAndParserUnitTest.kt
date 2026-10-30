@@ -130,4 +130,31 @@ class IsbnAndParserUnitTest {
         assertEquals(45, chapters[2].first())
         assertEquals(90, chapters[3].first())
     }
+
+    @Test
+    fun testPdfChapterDeduplicationAndSanitization() {
+        val raw = listOf(
+            com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.PdfBookmark("Contents", 2),
+            com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.PdfBookmark("Chapter 1 &amp; The Beginning", 5),
+            com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.PdfBookmark("Chapter 1 & The Beginning", 5), // duplicate page and title
+            com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.PdfBookmark("Another Title for Same Page", 5), // duplicate page
+            com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.PdfBookmark("Chapter 2 &quot;The Quest&quot;", 20),
+            com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.PdfBookmark("Chapter 3 &#39;The End&#39;", 35)
+        )
+
+        val deduplicated = com.llunaticsys.llunevie.data.parser.PdfNativeRenderer.deduplicateChapters(raw, 50, "Sample Book")
+        // Should include title at 0, chapter 1 at 5, chapter 2 at 20, chapter 3 at 35
+        assertEquals(4, deduplicated.size)
+        assertEquals(0, deduplicated[0].startPageZero)
+        assertEquals("Sample Book", deduplicated[0].title)
+
+        assertEquals(5, deduplicated[1].startPageZero)
+        assertEquals("Chapter 1 & the Beginning", deduplicated[1].title)
+
+        assertEquals(20, deduplicated[2].startPageZero)
+        assertEquals("Chapter 2 \"The Quest\"", deduplicated[2].title)
+
+        assertEquals(35, deduplicated[3].startPageZero)
+        assertEquals("Chapter 3 'The End'", deduplicated[3].title)
+    }
 }

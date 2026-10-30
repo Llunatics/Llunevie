@@ -19,15 +19,20 @@ import androidx.camera.view.PreviewView
 import java.util.concurrent.TimeUnit
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -47,6 +52,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -68,6 +74,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -91,7 +98,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import com.llunaticsys.llunevie.data.local.ShelfEntity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -179,15 +189,6 @@ fun IsbnCameraScannerScreen(
             repeatMode = RepeatMode.Reverse
         ),
         label = "laserY"
-    )
-    val pulseAlpha by transition.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "emeraldPulse"
     )
 
     LaunchedEffect(uiState.cameraTorchEnabled, cameraRef) {
@@ -297,7 +298,36 @@ fun IsbnCameraScannerScreen(
             )
         }
 
-        // 2. Top Camera Overlay Chrome (statusBarsPadding(), Theme-Adaptive Switcher & Buttons)
+        // 2. Top Camera Overlay Chrome (statusBarsPadding(), Minimalist Underline Tab Selector & Semi-Transparent Buttons)
+        val density = LocalDensity.current
+        val isBatchMode = uiState.cameraMode == "batch"
+        val isbnInteractionSource = remember { MutableInteractionSource() }
+        val batchInteractionSource = remember { MutableInteractionSource() }
+        val isIsbnPressed by isbnInteractionSource.collectIsPressedAsState()
+        val isBatchPressed by batchInteractionSource.collectIsPressedAsState()
+
+        var tab0CenterX by remember { mutableFloatStateOf(0f) }
+        var tab1CenterX by remember { mutableFloatStateOf(0f) }
+
+        val indicatorWidth = 28.dp
+        val indicatorWidthPx = with(density) { indicatorWidth.toPx() }
+        val targetCenterX = if (isBatchMode) tab1CenterX else tab0CenterX
+        val targetOffsetDp = with(density) {
+            if (targetCenterX > 0f) {
+                (targetCenterX - indicatorWidthPx / 2f).coerceAtLeast(0f).toDp()
+            } else {
+                0.dp
+            }
+        }
+        val animatedIndicatorOffset by animateDpAsState(
+            targetValue = targetOffsetDp,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "tabIndicatorOffset"
+        )
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -310,49 +340,105 @@ fun IsbnCameraScannerScreen(
             Surface(
                 onClick = onClose,
                 shape = CircleShape,
-                color = palette.bgSurface.copy(alpha = 0.92f),
-                border = BorderStroke(1.dp, palette.borderSoft),
+                color = Color.Black.copy(alpha = 0.32f),
+                border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.16f)),
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.CLOSE_X,
-                        tint = palette.textMain,
+                        tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // Theme-adaptive 40dp capsule switcher
-            val isBatchMode = uiState.cameraMode == "batch"
-            Row(
+            // Minimalist borderless transparent text tab bar with animated underline indicator
+            Column(
                 modifier = Modifier
-                    .width(220.dp)
-                    .height(40.dp)
-                    .clip(CircleShape)
-                    .background(palette.bgSurface.copy(alpha = 0.94f))
-                    .border(1.dp, palette.borderSoft, CircleShape)
-                    .padding(3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .wrapContentWidth()
+                    .background(Color.Transparent),
+                horizontalAlignment = Alignment.Start
             ) {
-                listOf(false to strings.tabIsbn, true to strings.tabBatch).forEach { (batchTab, label) ->
-                    val selected = (isBatchMode == batchTab)
+                Row(
+                    modifier = Modifier.background(Color.Transparent),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val selected0 = !isBatchMode
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(CircleShape)
-                            .background(if (selected) palette.textMain else Color.Transparent)
-                            .clickable { onSetCameraMode(if (batchTab) "batch" else "isbn") },
+                            .onGloballyPositioned { coords ->
+                                tab0CenterX = coords.positionInParent().x + coords.size.width / 2f
+                            }
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isIsbnPressed) Color.White.copy(alpha = 0.20f)
+                                else Color.Transparent
+                            )
+                            .clickable(
+                                interactionSource = isbnInteractionSource,
+                                indication = null
+                            ) {
+                                onSetCameraMode("isbn")
+                            }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = label,
-                            fontSize = 12.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected) palette.bgApp else palette.textMuted,
+                            text = strings.tabIsbn,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected0) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected0) Color.White else Color.White.copy(alpha = 0.55f),
                             maxLines = 1,
                             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                        )
+                    }
+
+                    val selected1 = isBatchMode
+                    Box(
+                        modifier = Modifier
+                            .onGloballyPositioned { coords ->
+                                tab1CenterX = coords.positionInParent().x + coords.size.width / 2f
+                            }
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isBatchPressed) Color.White.copy(alpha = 0.20f)
+                                else Color.Transparent
+                            )
+                            .clickable(
+                                interactionSource = batchInteractionSource,
+                                indication = null
+                            ) {
+                                onSetCameraMode("batch")
+                            }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = strings.tabBatch,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected1) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected1) Color.White else Color.White.copy(alpha = 0.55f),
+                            maxLines = 1,
+                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(5.dp))
+
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (targetCenterX > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = animatedIndicatorOffset)
+                                .width(indicatorWidth)
+                                .height(2.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
                         )
                     }
                 }
@@ -361,17 +447,17 @@ fun IsbnCameraScannerScreen(
             Surface(
                 onClick = onToggleTorch,
                 shape = CircleShape,
-                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B) else palette.bgSurface.copy(alpha = 0.92f),
+                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.32f),
                 border = BorderStroke(
-                    1.dp,
-                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D) else palette.borderSoft
+                    0.75.dp,
+                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D).copy(alpha = 0.75f) else Color.White.copy(alpha = 0.16f)
                 ),
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.TORCH_BOLT,
-                        tint = if (uiState.cameraTorchEnabled) Color(0xFF141518) else palette.textMain,
+                        tint = if (uiState.cameraTorchEnabled) Color(0xFF141518) else Color.White,
                         modifier = Modifier.size(17.dp),
                         strokeWidthDp = 1.8f
                     )
@@ -407,29 +493,29 @@ fun IsbnCameraScannerScreen(
             val bracketLen = 28.dp.toPx()
             val strokeW = 2.5.dp.toPx()
             val bracketPath = Path().apply {
-                // Top-Left corner
+                // Top-Left corner: starts (left, top + arm) -> (left, top + rad) -> curve around (left, top) to (left + rad, top) -> (left + arm, top)
                 moveTo(scanRect.left, scanRect.top + bracketLen)
                 lineTo(scanRect.left, scanRect.top + cornerRad)
                 quadraticTo(scanRect.left, scanRect.top, scanRect.left + cornerRad, scanRect.top)
                 lineTo(scanRect.left + bracketLen, scanRect.top)
 
-                // Top-Right corner
+                // Top-Right corner: starts (right - arm, top) -> (right - rad, top) -> curve around (right, top) to (right, top + rad) -> (right, top + arm)
                 moveTo(scanRect.right - bracketLen, scanRect.top)
                 lineTo(scanRect.right - cornerRad, scanRect.top)
                 quadraticTo(scanRect.right, scanRect.top, scanRect.right, scanRect.top + cornerRad)
-                lineTo(scanRect.right + bracketLen, scanRect.top)
+                lineTo(scanRect.right, scanRect.top + bracketLen)
 
-                // Bottom-Right corner
+                // Bottom-Right corner: starts (right, bottom - arm) -> (right, bottom - rad) -> curve around (right, bottom) to (right - rad, bottom) -> (right - arm, bottom)
                 moveTo(scanRect.right, scanRect.bottom - bracketLen)
                 lineTo(scanRect.right, scanRect.bottom - cornerRad)
                 quadraticTo(scanRect.right, scanRect.bottom, scanRect.right - cornerRad, scanRect.bottom)
                 lineTo(scanRect.right - bracketLen, scanRect.bottom)
 
-                // Bottom-Left corner
+                // Bottom-Left corner: starts (left + arm, bottom) -> (left + rad, bottom) -> curve around (left, bottom) to (left, bottom - rad) -> (left, bottom - arm)
                 moveTo(scanRect.left + bracketLen, scanRect.bottom)
                 lineTo(scanRect.left + cornerRad, scanRect.bottom)
                 quadraticTo(scanRect.left, scanRect.bottom, scanRect.left, scanRect.bottom - cornerRad)
-                lineTo(scanRect.left - bracketLen, scanRect.bottom)
+                lineTo(scanRect.left, scanRect.bottom - bracketLen)
             }
             drawPath(
                 path = bracketPath,
@@ -462,44 +548,7 @@ fun IsbnCameraScannerScreen(
         val boxWDp = 248.dp
         val boxHDp = 180.dp
         val centerYDp = maxHeight * 0.42f
-        val pillTop = centerYDp - boxHDp / 2f - 44.dp
         val helperTextTop = centerYDp + boxHDp / 2f + 16.dp
-
-        // Floating glass status pill placed centered at y = centerY - boxH / 2f - 44.dp
-        Surface(
-            shape = CircleShape,
-            color = Color.Black.copy(alpha = 0.58f),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = pillTop)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .alpha(pulseAlpha)
-                        .clip(CircleShape)
-                        .background(Color(0xFF34D399))
-                )
-                Text(
-                    text = if (uiState.isLookingUpIsbn) {
-                        if (strings.isId) "MENCARI ISBN..." else "LOOKING UP ISBN..."
-                    } else {
-                        lastScannedCode.ifBlank { "ISBN / QR READY" }
-                    },
-                    color = Color.White.copy(alpha = 0.95f),
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.4.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
 
         // Helper text centered at y = centerY + boxH / 2f + 16.dp
         Text(
@@ -515,7 +564,6 @@ fun IsbnCameraScannerScreen(
         )
 
         // 4. Floating Rounded Bottom Console Card (Unclipped, navigationBarsPadding().imePadding())
-        val isBatchMode = uiState.cameraMode == "batch"
         val batchScannedBooks = uiState.batchScanQueue
         val isEn = strings.isEn
         var showUnresolvedDialog by remember { mutableStateOf(false) }
