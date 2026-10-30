@@ -308,6 +308,7 @@ fun IsbnCameraScannerScreen(
 
         var tab0CenterX by remember { mutableFloatStateOf(0f) }
         var tab1CenterX by remember { mutableFloatStateOf(0f) }
+        var rowWidthPx by remember { mutableFloatStateOf(0f) }
 
         val indicatorWidth = 28.dp
         val indicatorWidthPx = with(density) { indicatorWidth.toPx() }
@@ -328,40 +329,45 @@ fun IsbnCameraScannerScreen(
             label = "tabIndicatorOffset"
         )
 
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
-                .align(Alignment.TopCenter),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .align(Alignment.TopCenter)
         ) {
             Surface(
                 onClick = onClose,
                 shape = CircleShape,
-                color = Color.Black.copy(alpha = 0.32f),
-                border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.16f)),
-                modifier = Modifier.size(40.dp)
+                color = Color.Black.copy(alpha = 0.34f),
+                border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.18f)),
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterStart)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.CLOSE_X,
                         tint = Color.White,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(16.dp),
+                        strokeWidthDp = 1.8f
                     )
                 }
             }
 
-            // Minimalist borderless transparent text tab bar with animated underline indicator
+            // Minimalist borderless transparent text tab bar with animated underline indicator (strictly centered)
             Column(
                 modifier = Modifier
                     .wrapContentWidth()
-                    .background(Color.Transparent),
-                horizontalAlignment = Alignment.Start
+                    .align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
-                    modifier = Modifier.background(Color.Transparent),
+                    modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            rowWidthPx = coords.size.width.toFloat()
+                        }
+                        .background(Color.Transparent),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -373,7 +379,7 @@ fun IsbnCameraScannerScreen(
                             }
                             .clip(RoundedCornerShape(10.dp))
                             .background(
-                                if (isIsbnPressed) Color.White.copy(alpha = 0.20f)
+                                if (isIsbnPressed) Color.White.copy(alpha = 0.16f)
                                 else Color.Transparent
                             )
                             .clickable(
@@ -389,7 +395,7 @@ fun IsbnCameraScannerScreen(
                             text = strings.tabIsbn,
                             fontSize = 13.sp,
                             fontWeight = if (selected0) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected0) Color.White else Color.White.copy(alpha = 0.55f),
+                            color = if (selected0) Color.White else Color.White.copy(alpha = 0.62f),
                             maxLines = 1,
                             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
                         )
@@ -403,7 +409,7 @@ fun IsbnCameraScannerScreen(
                             }
                             .clip(RoundedCornerShape(10.dp))
                             .background(
-                                if (isBatchPressed) Color.White.copy(alpha = 0.20f)
+                                if (isBatchPressed) Color.White.copy(alpha = 0.16f)
                                 else Color.Transparent
                             )
                             .clickable(
@@ -419,7 +425,7 @@ fun IsbnCameraScannerScreen(
                             text = strings.tabBatch,
                             fontSize = 13.sp,
                             fontWeight = if (selected1) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected1) Color.White else Color.White.copy(alpha = 0.55f),
+                            color = if (selected1) Color.White else Color.White.copy(alpha = 0.62f),
                             maxLines = 1,
                             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
                         )
@@ -429,7 +435,9 @@ fun IsbnCameraScannerScreen(
                 Spacer(modifier = Modifier.height(5.dp))
 
                 Box(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .width(with(density) { rowWidthPx.toDp() })
+                        .height(2.dp)
                 ) {
                     if (targetCenterX > 0f) {
                         Box(
@@ -447,17 +455,19 @@ fun IsbnCameraScannerScreen(
             Surface(
                 onClick = onToggleTorch,
                 shape = CircleShape,
-                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.32f),
+                color = if (uiState.cameraTorchEnabled) Color(0xFFF59E0B).copy(alpha = 0.40f) else Color.Black.copy(alpha = 0.34f),
                 border = BorderStroke(
                     0.75.dp,
-                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D).copy(alpha = 0.75f) else Color.White.copy(alpha = 0.16f)
+                    if (uiState.cameraTorchEnabled) Color(0xFFFCD34D).copy(alpha = 0.60f) else Color.White.copy(alpha = 0.18f)
                 ),
-                modifier = Modifier.size(40.dp)
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterEnd)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.TORCH_BOLT,
-                        tint = if (uiState.cameraTorchEnabled) Color(0xFF141518) else Color.White,
+                        tint = Color.White,
                         modifier = Modifier.size(17.dp),
                         strokeWidthDp = 1.8f
                     )
@@ -523,24 +533,24 @@ fun IsbnCameraScannerScreen(
                 style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
 
-            // 3. Animated cyan laser line strictly inside scanRect
+            // 3. Single, crisp, clean horizontal scan line (height = 2.dp, StrokeCap.Round) strictly inside viewfinder bounds
             val laserY = scanRect.top + cornerRad + (scanRect.height - 2f * cornerRad) * laserProgress
             val laserLeft = scanRect.left + 10.dp.toPx()
             val laserRight = scanRect.right - 10.dp.toPx()
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color(0xFF38BDF8).copy(alpha = 0.35f), Color(0xFFE0F2FE)),
-                    startY = (laserY - 18.dp.toPx()).coerceAtLeast(scanRect.top),
-                    endY = laserY
-                ),
-                topLeft = Offset(laserLeft, (laserY - 18.dp.toPx()).coerceAtLeast(scanRect.top)),
-                size = Size(laserRight - laserLeft, (laserY - (laserY - 18.dp.toPx()).coerceAtLeast(scanRect.top)))
-            )
             drawLine(
-                color = Color.White.copy(alpha = 0.92f),
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.95f),
+                        Color.White.copy(alpha = 0.95f),
+                        Color.Transparent
+                    ),
+                    startX = laserLeft,
+                    endX = laserRight
+                ),
                 start = Offset(laserLeft, laserY),
                 end = Offset(laserRight, laserY),
-                strokeWidth = 1.5.dp.toPx(),
+                strokeWidth = 2.dp.toPx(),
                 cap = StrokeCap.Round
             )
         }
