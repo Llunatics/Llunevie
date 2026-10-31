@@ -2,7 +2,9 @@ package com.llunaticsys.llunevie
 
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -82,6 +84,26 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: LlunevieViewModel by viewModels {
         LlunevieViewModel.Factory(application as LlunevieApplication)
+    }
+
+    private var pendingOnboardingData: Triple<Boolean, String, String?>? = null
+    private var pendingAutoImportEnable = false
+
+    private fun launchAllFilesAccessSettings() {
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                startActivity(intent)
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -193,7 +215,12 @@ class MainActivity : ComponentActivity() {
                             onSetLanguage = { viewModel.setLanguage(it) },
                             onSetTheme = { viewModel.setTheme(it) },
                             onComplete = { enabled, path, uri ->
-                                viewModel.completeOnboarding(enabled, path, uri)
+                                if (enabled && !viewModel.hasAllFilesAccess()) {
+                                    pendingOnboardingData = Triple(enabled, path, uri)
+                                    launchAllFilesAccessSettings()
+                                } else {
+                                    viewModel.completeOnboarding(enabled, path, uri)
+                                }
                             },
                             onSkip = {
                                 viewModel.skipOnboarding()
@@ -239,7 +266,24 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.scanAutoImportFolder()
+        
+        pendingOnboardingData?.let { (enabled, path, uri) ->
+            if (viewModel.hasAllFilesAccess()) {
+                viewModel.completeOnboarding(enabled, path, uri)
+                pendingOnboardingData = null
+            }
+        }
+        
+        if (pendingAutoImportEnable && viewModel.hasAllFilesAccess()) {
+            viewModel.setAutoImportFolderEnabled(true)
+            viewModel.scanAutoImportFolder()
+            pendingAutoImportEnable = false
+        }
+        
+        val prefs = viewModel.preferences.value
+        if (prefs.autoImportFolderEnabled && viewModel.hasAllFilesAccess()) {
+            viewModel.scanAutoImportFolder()
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -378,7 +422,14 @@ private fun LlunevieMainContainer(
                     onSetAnimatePageTurn = { viewModel.setAnimatePageTurn(it) },
                     onSetPageAnimStyle = { viewModel.setPageAnimStyle(it) },
                     onSetVolumeKeysTurn = { viewModel.setVolumeKeysTurn(it) },
-                    onToggleAutoImportFolder = { viewModel.setAutoImportFolderEnabled(it) },
+                    onToggleAutoImportFolder = { checked ->
+                        if (checked && !viewModel.hasAllFilesAccess()) {
+                            pendingAutoImportEnable = true
+                            launchAllFilesAccessSettings()
+                        } else {
+                            viewModel.setAutoImportFolderEnabled(checked)
+                        }
+                    },
                     onSelectAutoImportFolder = { path, uri -> viewModel.setAutoImportFolder(path, uri) },
                     onRescanFolder = { viewModel.scanAutoImportFolder(force = true) },
                     onExportBackup = { onShareBackupJson(viewModel.buildBackupJsonString()) },

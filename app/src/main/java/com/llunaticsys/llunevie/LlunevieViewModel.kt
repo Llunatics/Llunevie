@@ -27,6 +27,7 @@ import coil.Coil
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import android.graphics.drawable.BitmapDrawable
+import android.os.Build
 import android.os.Environment
 import androidx.documentfile.provider.DocumentFile
 import com.llunaticsys.llunevie.model.AppThemeMode
@@ -191,6 +192,10 @@ class LlunevieViewModel(
     }
     private val _pdfIndexingState = MutableStateFlow<Map<String, Int?>>(emptyMap())
     val pdfIndexingState: StateFlow<Map<String, Int?>> = _pdfIndexingState.asStateFlow()
+
+    /** True when the app may use raw File paths on external storage (pre-R or MANAGE_EXTERNAL_STORAGE granted). */
+    fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
 
     fun getCachedPdfBitmap(bookId: String, pageIndex: Int): Bitmap? {
         val bmp = pdfBitmapCache.get("$bookId:$pageIndex")
@@ -1329,9 +1334,6 @@ class LlunevieViewModel(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val defaultDir = File(Environment.getExternalStorageDirectory(), "Llunevie/Books")
-                runCatching { defaultDir.mkdirs() }
-
                 val currentPrefs = preferences.value
                 val isEn = currentPrefs.lang == "en"
                 val existingBooks = dao.getAllBooks()
@@ -1346,39 +1348,45 @@ class LlunevieViewModel(
                 )
                 val pendingFiles = mutableListOf<PendingBookFile>()
 
-                val dirsToScan = mutableListOf<File>()
-                dirsToScan.add(defaultDir)
-                if (currentPrefs.autoImportFolderPath.isNotBlank()) {
-                    val customDir = File(currentPrefs.autoImportFolderPath)
-                    if (customDir.exists() && customDir.absolutePath != defaultDir.absolutePath) {
-                        dirsToScan.add(customDir)
+                // Raw-path scanning: only when All Files Access is granted (or pre-R)
+                if (hasAllFilesAccess()) {
+                    val defaultDir = File(Environment.getExternalStorageDirectory(), "Llunevie/Books")
+                    runCatching { defaultDir.mkdirs() }
+
+                    val dirsToScan = mutableListOf<File>()
+                    dirsToScan.add(defaultDir)
+                    if (currentPrefs.autoImportFolderPath.isNotBlank()) {
+                        val customDir = File(currentPrefs.autoImportFolderPath)
+                        if (customDir.exists() && customDir.absolutePath != defaultDir.absolutePath) {
+                            dirsToScan.add(customDir)
+                        }
                     }
-                }
 
-                for (dir in dirsToScan) {
-                    if (!dir.exists() || !dir.isDirectory) continue
-                    val files = runCatching { dir.listFiles() }.getOrNull() ?: continue
-                    for (file in files) {
-                        if (!file.isFile) continue
-                        val name = file.name
-                        val ext = file.extension.lowercase()
-                        if (ext !in setOf("epub", "pdf", "txt")) continue
-                        val size = file.length()
-                        val sig = "$name:$size"
-                        if (sig in alreadyImported) continue
+                    for (dir in dirsToScan) {
+                        if (!dir.exists() || !dir.isDirectory) continue
+                        val files = runCatching { dir.listFiles() }.getOrNull() ?: continue
+                        for (file in files) {
+                            if (!file.isFile) continue
+                            val name = file.name
+                            val ext = file.extension.lowercase()
+                            if (ext !in setOf("epub", "pdf", "txt")) continue
+                            val size = file.length()
+                            val sig = "$name:$size"
+                            if (sig in alreadyImported) continue
 
-                        val matchesRoom = existingBooks.any { b ->
-                            (b.localFilePath != null && File(b.localFilePath).name.equals(name, ignoreCase = true)) ||
-                                b.title.equals(normalizeBookTitle(name), ignoreCase = true)
-                        }
-                        if (matchesRoom) {
-                            alreadyImported.add(sig)
-                            newlyImportedSignatures.add(sig)
-                            continue
-                        }
+                            val matchesRoom = existingBooks.any { b ->
+                                (b.localFilePath != null && File(b.localFilePath).name.equals(name, ignoreCase = true)) ||
+                                    b.title.equals(normalizeBookTitle(name), ignoreCase = true)
+                            }
+                            if (matchesRoom) {
+                                alreadyImported.add(sig)
+                                newlyImportedSignatures.add(sig)
+                                continue
+                            }
 
-                        if (pendingFiles.none { it.fileName == name && it.fileSize == size }) {
-                            pendingFiles.add(PendingBookFile(name, size, Uri.fromFile(file), ext))
+                            if (pendingFiles.none { it.fileName == name && it.fileSize == size }) {
+                                pendingFiles.add(PendingBookFile(name, size, Uri.fromFile(file), ext))
+                            }
                         }
                     }
                 }
@@ -1511,7 +1519,7 @@ class LlunevieViewModel(
     fun setAutoImportFolderEnabled(enabled: Boolean) {
         viewModelScope.launch {
             prefsRepo.setAutoImportFolderEnabled(enabled)
-            if (enabled) {
+            if (enabled && hasAllFilesAccess()) {
                 val dir = File(Environment.getExternalStorageDirectory(), "Llunevie/Books")
                 runCatching { dir.mkdirs() }
                 scanAutoImportFolder(force = true)
