@@ -85,9 +85,23 @@ object EpubNativeParser {
         onInitialBookCreated: suspend (BookEntity) -> Unit = {},
         onProgressUpdate: (String, Int) -> Unit = { _, _ -> }
     ): ParsedBookBundle = withContext(Dispatchers.IO) {
-        val bookId = "epub-${System.currentTimeMillis()}"
-        val booksDir = File(context.filesDir, "books").apply { mkdirs() }
+        val bookId = "epub-${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(6)}"
         val coversDir = File(context.filesDir, "covers/$bookId").apply { mkdirs() }
+
+        var tempEpubToDelete: File? = null
+        val (zipFile, resolvedLocalFilePath) = if (uri.scheme == "file" && uri.path != null && File(uri.path!!).canRead()) {
+            val directFile = File(uri.path!!)
+            Pair(ZipFile(directFile), directFile.absolutePath)
+        } else {
+            val tmp = File(context.cacheDir, "tmp_$bookId.epub")
+            tempEpubToDelete = tmp
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(tmp).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Pair(ZipFile(tmp), uri.toString())
+        }
 
         var bookTitle = sanitizeBookOrChapterText(normalizeBookTitle(fallbackFileName))
         val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
@@ -114,22 +128,15 @@ object EpubNativeParser {
             savedChapterIndex = 0,
             savedPageIndex = 0,
             bookmarked = false,
-            localFilePath = null,
+            localFilePath = resolvedLocalFilePath,
             coverImagePath = null,
             spineColorHex = 0xFF2B3A4AL,
             spineTextColorHex = 0xFFFAF6EBL,
             synopsis = bookTitle
         )
         onInitialBookCreated(initialBook)
-        onProgressUpdate(bookId, 15)
-
-        val destEpubFile = File(booksDir, "$bookId.epub")
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(destEpubFile).use { output ->
-                input.copyTo(output)
-            }
-        }
         onProgressUpdate(bookId, 35)
+
         var bookAuthor = ""
         var bookYear = SimpleDateFormat("yyyy", Locale.US).format(Date())
         var bookPublisher = "EPUB Edition"
@@ -141,7 +148,8 @@ object EpubNativeParser {
         val extractedImagesByFileName = mutableMapOf<String, String>()
         val chapterEntities = mutableListOf<BookChapterEntity>()
 
-        ZipFile(destEpubFile).use { zip ->
+        try {
+            zipFile.use { zip ->
             // 1. Extract images to internal storage so covers & chapter illustrations persist
             val entries = zip.entries()
             var imgCounter = 0
@@ -149,17 +157,56 @@ object EpubNativeParser {
                 val entry = entries.nextElement()
                 if (!entry.isDirectory && entry.name.matches(Regex(""".*\.(jpe?g|png|webp|gif)$""", RegexOption.IGNORE_CASE))) {
                     val normPath = entry.name.trimStart('/')
-                    val ext = normPath.substringAfterLast('.', "jpg")
-                    val outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
+                    val baseName = normPath.substringAfterLast('/')
+                    val ext = normPath.substringAfterLast('.', "jpg").lowercase()
+
                     runCatching {
-                        zip.getInputStream(entry).use { input ->
-                            FileOutputStream(outImgFile).use { output ->
-                                input.copyTo(output)
+                        val rawBytes = zip.getInputStream(entry).use { it.readBytes() }
+                        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOpts)
+                        val w = boundsOpts.outWidth
+                        val h = boundsOpts.outHeight
+                        val compressedSize = entry.compressedSize.takeIf { it > 0 } ?: rawBytes.size.toLong()
+                        val shouldCompress = (w > 1600 || h > 1600 || compressedSize > 350 * 1024)
+
+                        val outImgFile: File
+                        if (shouldCompress && w > 0 && h > 0) {
+                            var sampleSize = 1
+                            while ((w / sampleSize) > 3200 || (h / sampleSize) > 3200) {
+                                sampleSize *= 2
                             }
+                            val decodeOpts = BitmapFactory.Options().apply {
+                                inSampleSize = sampleSize
+                            }
+                            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOpts)
+                            if (decoded != null) {
+                                val maxDim = maxOf(decoded.width, decoded.height)
+                                val finalBmp = if (maxDim > 1600) {
+                                    val scale = 1600f / maxDim.toFloat()
+                                    val sw = (decoded.width * scale).toInt().coerceAtLeast(1)
+                                    val sh = (decoded.height * scale).toInt().coerceAtLeast(1)
+                                    val scaled = Bitmap.createScaledBitmap(decoded, sw, sh, true)
+                                    if (scaled != decoded) decoded.recycle()
+                                    scaled
+                                } else {
+                                    decoded
+                                }
+                                outImgFile = File(coversDir, "img_${imgCounter++}.jpg")
+                                FileOutputStream(outImgFile).use { out ->
+                                    finalBmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                                }
+                                finalBmp.recycle()
+                            } else {
+                                outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
+                                FileOutputStream(outImgFile).use { it.write(rawBytes) }
+                            }
+                        } else {
+                            outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
+                            FileOutputStream(outImgFile).use { it.write(rawBytes) }
                         }
+
                         extractedImagesByZipPath[normPath] = outImgFile.absolutePath
                         extractedImagesByZipPath[normPath.lowercase()] = outImgFile.absolutePath
-                        val baseName = normPath.substringAfterLast('/')
                         extractedImagesByFileName[baseName] = outImgFile.absolutePath
                         extractedImagesByFileName[baseName.lowercase()] = outImgFile.absolutePath
                     }
@@ -197,8 +244,23 @@ object EpubNativeParser {
                 val opfXml = zip.getInputStream(zip.getEntry(opfPath)).bufferedReader().use { it.readText() }
                 val opfDoc = Jsoup.parse(opfXml, "", Parser.xmlParser())
 
-                opfDoc.selectFirst("dc|title, title")?.text()?.trim()?.takeIf { it.isNotBlank() }?.let {
-                    bookTitle = sanitizeBookOrChapterText(it)
+                opfDoc.selectFirst("dc|title, title")?.text()?.trim()?.takeIf { it.isNotBlank() }?.let { rawTitle ->
+                    val cleanOpf = sanitizeBookOrChapterText(rawTitle)
+                    val normFallback = normalizeBookTitle(fallbackFileName)
+                    val volRegex = Regex("""(?i)\b(?:vol(?:ume|\.)?|jilid|part|bagian|v|#|book)\s*(\d+(?:\.\d+)?|[IVXLCDM]+)\b""")
+                    val volMatchFallback = volRegex.find(normFallback)
+                    val volMatchOpf = volRegex.find(cleanOpf)
+                    val digitRegex = Regex("""\b(\d{1,3})\b""")
+                    val fallbackDigits = digitRegex.findAll(normFallback).map { it.value }.toList()
+                    val opfDigits = digitRegex.findAll(cleanOpf).map { it.value }.toSet()
+                    val missingDigit = fallbackDigits.lastOrNull { it !in opfDigits }
+                    bookTitle = if (volMatchFallback != null && volMatchOpf == null) {
+                        "$cleanOpf — ${volMatchFallback.value.trim()}"
+                    } else if (missingDigit != null && volMatchOpf == null) {
+                        "$cleanOpf — Vol. $missingDigit"
+                    } else {
+                        cleanOpf
+                    }
                 }
                 opfDoc.selectFirst("dc|creator, creator")?.text()?.trim()?.takeIf { it.isNotBlank() }?.let {
                     bookAuthor = it
@@ -417,18 +479,55 @@ object EpubNativeParser {
                     }
 
                     if (pagesArr.length() > 0) {
-                        chapterEntities.add(
-                            BookChapterEntity(
-                                bookId = bookId,
-                                chapterIndex = chapterEntities.size,
-                                title = chTitle,
-                                pagesJson = pagesArr.toString(),
-                                illustrationsJson = chapterIllustrations.toString()
+                        val pagesJsonStr = pagesArr.toString()
+                        if (pagesJsonStr.length <= 750_000) {
+                            chapterEntities.add(
+                                BookChapterEntity(
+                                    bookId = bookId,
+                                    chapterIndex = chapterEntities.size,
+                                    title = chTitle,
+                                    pagesJson = pagesJsonStr,
+                                    illustrationsJson = chapterIllustrations.toString()
+                                )
                             )
-                        )
+                        } else {
+                            var chunkArr = JSONArray()
+                            var curChars = 2
+                            val subChunks = mutableListOf<JSONArray>()
+                            for (pIdx in 0 until pagesArr.length()) {
+                                val pStr = pagesArr.getString(pIdx)
+                                val escLen = JSONObject.quote(pStr).length + 1
+                                if (chunkArr.length() > 0 && curChars + escLen > 700_000) {
+                                    subChunks.add(chunkArr)
+                                    chunkArr = JSONArray()
+                                    curChars = 2
+                                }
+                                chunkArr.put(pStr)
+                                curChars += escLen
+                            }
+                            if (chunkArr.length() > 0) {
+                                subChunks.add(chunkArr)
+                            }
+                            subChunks.forEachIndexed { partIdx, subArr ->
+                                val partTitle = if (subChunks.size > 1) "$chTitle — Part ${partIdx + 1}" else chTitle
+                                val partIllust = if (partIdx == 0) chapterIllustrations.toString() else "[]"
+                                chapterEntities.add(
+                                    BookChapterEntity(
+                                        bookId = bookId,
+                                        chapterIndex = chapterEntities.size,
+                                        title = partTitle,
+                                        pagesJson = subArr.toString(),
+                                        illustrationsJson = partIllust
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
+            }
+        } finally {
+            tempEpubToDelete?.delete()
         }
 
         if (coverFilePath == null && extractedImagesByFileName.isNotEmpty()) {
@@ -451,8 +550,12 @@ object EpubNativeParser {
         }
 
         val totalPages = chapterEntities.sumOf { JSONArray(it.pagesJson).length() }.coerceAtLeast(1)
-        val coverBitmap = coverFilePath?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() }
+        val coverBitmap = coverFilePath?.let {
+            val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+            runCatching { BitmapFactory.decodeFile(it, opts) }.getOrNull()
+        }
         val (spineHex, spineTextHex) = SpineColorExtractor.extractSpineColors(coverBitmap)
+        coverBitmap?.recycle()
 
         val bookEntity = BookEntity(
             id = bookId,
@@ -475,7 +578,7 @@ object EpubNativeParser {
             savedChapterIndex = 0,
             savedPageIndex = 0,
             bookmarked = false,
-            localFilePath = destEpubFile.absolutePath,
+            localFilePath = resolvedLocalFilePath,
             coverImagePath = coverFilePath,
             spineColorHex = spineHex,
             spineTextColorHex = spineTextHex,

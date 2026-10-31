@@ -24,9 +24,8 @@ object TxtNativeParser {
         onInitialBookCreated: suspend (BookEntity) -> Unit = {},
         onProgressUpdate: (String, Int) -> Unit = { _, _ -> }
     ): ParsedBookBundle = withContext(Dispatchers.IO) {
-        val bookId = "txt-${System.currentTimeMillis()}"
-        val booksDir = File(context.filesDir, "books").apply { mkdirs() }
-        val destTxtFile = File(booksDir, "$bookId.txt")
+        val bookId = "txt-${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(6)}"
+        val resolvedPath = if (uri.scheme == "file") uri.path else uri.toString()
         val cleanTitle = normalizeBookTitle(fallbackFileName)
         val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val yearStr = SimpleDateFormat("yyyy", Locale.US).format(Date())
@@ -52,7 +51,7 @@ object TxtNativeParser {
             savedChapterIndex = 0,
             savedPageIndex = 0,
             bookmarked = false,
-            localFilePath = destTxtFile.absolutePath,
+            localFilePath = resolvedPath,
             coverImagePath = null,
             spineColorHex = 0xFF2D3A3AL,
             spineTextColorHex = 0xFFFAF6EBL,
@@ -61,14 +60,9 @@ object TxtNativeParser {
         onInitialBookCreated(initialBook)
         onProgressUpdate(bookId, 25)
 
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(destTxtFile).use { output ->
-                input.copyTo(output)
-            }
-        }
+        val rawText = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
         onProgressUpdate(bookId, 60)
 
-        val rawText = destTxtFile.readText(Charsets.UTF_8)
         val paragraphs = rawText
             .split(Regex("""\r?\n\s*\r?\n|\r?\n"""))
             .map { it.trim() }
@@ -135,7 +129,7 @@ object TxtNativeParser {
             savedChapterIndex = 0,
             savedPageIndex = 0,
             bookmarked = false,
-            localFilePath = destTxtFile.absolutePath,
+            localFilePath = resolvedPath,
             coverImagePath = null,
             spineColorHex = 0xFF2D3A3AL,
             spineTextColorHex = 0xFFFAF6EBL,

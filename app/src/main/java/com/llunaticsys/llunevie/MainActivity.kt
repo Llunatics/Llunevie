@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.text.style.TextOverflow
 import com.llunaticsys.llunevie.model.AppThemeMode
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -201,67 +203,75 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                AnimatedContent(
-                    targetState = prefs.hasCompletedOnboarding,
-                    transitionSpec = {
-                        (fadeIn(tween(320)) + scaleIn(initialScale = 0.96f, animationSpec = tween(320)))
-                            .togetherWith(fadeOut(tween(240)) + scaleOut(targetScale = 1.04f, animationSpec = tween(240)))
-                    },
-                    label = "WelcomeOnboardingTransition"
-                ) { completed ->
-                    if (!completed) {
-                        WelcomeOnboardingScreen(
-                            prefs = prefs,
-                            onSetLanguage = { viewModel.setLanguage(it) },
-                            onSetTheme = { viewModel.setTheme(it) },
-                            onComplete = { enabled, path, uri ->
-                                if (enabled && !viewModel.hasAllFilesAccess()) {
-                                    pendingOnboardingData = Triple(enabled, path, uri)
-                                    launchAllFilesAccessSettings()
-                                } else {
-                                    viewModel.completeOnboarding(enabled, path, uri)
-                                }
-                            },
-                            onSkip = {
-                                viewModel.skipOnboarding()
+                if (!prefs.isLoaded && !prefs.hasCompletedOnboarding) {
+                    Box(modifier = Modifier.fillMaxSize().background(palette.bgApp))
+                } else {
+                    AnimatedContent(
+                        targetState = prefs.hasCompletedOnboarding,
+                        transitionSpec = {
+                            if (initialState == false && targetState == true) {
+                                (fadeIn(tween(320)) + scaleIn(initialScale = 0.96f, animationSpec = tween(320)))
+                                    .togetherWith(fadeOut(tween(240)) + scaleOut(targetScale = 1.04f, animationSpec = tween(240)))
+                            } else {
+                                EnterTransition.None togetherWith ExitTransition.None
                             }
-                        )
-                    } else {
-                        LlunevieMainContainer(
-                            viewModel = viewModel,
-                            prefs = prefs,
-                            books = books,
-                            shelves = shelves,
-                            dailyLogs = dailyLogs,
-                            allHighlights = allHighlights,
-                            allBookmarks = allBookmarks,
-                            uiState = uiState,
-                            strings = strings,
-                            onPickLocalFile = {
-                                openFileLauncher.launch(
-                                    arrayOf(
-                                        "application/epub+zip",
-                                        "application/pdf",
-                                        "text/plain",
-                                        "application/json",
-                                        "*/*"
+                        },
+                        label = "WelcomeOnboardingTransition"
+                    ) { completed ->
+                        if (!completed) {
+                            WelcomeOnboardingScreen(
+                                prefs = prefs,
+                                onSetLanguage = { viewModel.setLanguage(it) },
+                                onSetTheme = { viewModel.setTheme(it) },
+                                onComplete = { enabled, path, uri ->
+                                    if (enabled && !viewModel.hasAllFilesAccess()) {
+                                        pendingOnboardingData = Triple(enabled, path, uri)
+                                        launchAllFilesAccessSettings()
+                                    } else {
+                                        viewModel.completeOnboarding(enabled, path, uri)
+                                    }
+                                },
+                                onSkip = {
+                                    viewModel.skipOnboarding()
+                                }
+                            )
+                        } else {
+                            LlunevieMainContainer(
+                                viewModel = viewModel,
+                                prefs = prefs,
+                                books = books,
+                                shelves = shelves,
+                                dailyLogs = dailyLogs,
+                                allHighlights = allHighlights,
+                                allBookmarks = allBookmarks,
+                                uiState = uiState,
+                                strings = strings,
+                                onPickLocalFile = {
+                                    openFileLauncher.launch(
+                                        arrayOf(
+                                            "application/epub+zip",
+                                            "application/pdf",
+                                            "text/plain",
+                                            "application/json",
+                                            "*/*"
+                                        )
                                     )
-                                )
-                            },
-                            onPickPhoto = { pickPhotoLauncher.launch("image/*") },
-                            onShareBackupJson = { jsonPayload ->
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/json"
-                                    putExtra(Intent.EXTRA_TITLE, "llunevie-backup.json")
-                                    putExtra(Intent.EXTRA_TEXT, jsonPayload)
+                                },
+                                onPickPhoto = { pickPhotoLauncher.launch("image/*") },
+                                onShareBackupJson = { jsonPayload ->
+                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/json"
+                                        putExtra(Intent.EXTRA_TITLE, "llunevie-backup.json")
+                                        putExtra(Intent.EXTRA_TEXT, jsonPayload)
+                                    }
+                                    startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
+                                },
+                                onRequestAllFilesAccess = {
+                                    pendingAutoImportEnable = true
+                                    launchAllFilesAccessSettings()
                                 }
-                                startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
-                            },
-                            onRequestAllFilesAccess = {
-                                pendingAutoImportEnable = true
-                                launchAllFilesAccessSettings()
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }

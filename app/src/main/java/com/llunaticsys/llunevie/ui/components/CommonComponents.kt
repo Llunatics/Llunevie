@@ -935,7 +935,7 @@ fun sanitizeBookOrChapterText(raw: String): String {
 
 fun normalizeBookTitle(fileName: String): String {
     val sanitized = sanitizeBookOrChapterText(fileName)
-    var s = sanitized.substringBeforeLast(".")
+    var s = sanitized.replace(Regex("""\.(epub|pdf|txt|json|mobi|azw3|cbz|cbr|fb2|djvu)$""", RegexOption.IGNORE_CASE), "")
     // Decode common HTML entities and URL encoding first
     s = sanitizeBookOrChapterText(s)
         .replace("&quot;", "\"")
