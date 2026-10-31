@@ -1,83 +1,42 @@
 # Llunevie
 
-**Llunevie** is a native Android eReader, Light Novel reader, and personal book collection manager built with **Kotlin** and **[Jetpack Compose](https://developer.android.com/compose)**. It pairs tactile editorial typography with a dual surface system (**Classic Design** by default and an optional translucent **Glass Design** mode).
+**Llunevie** is a native Android eReader, Light Novel reader, and personal book collection manager built with **Kotlin** and **[Jetpack Compose](https://developer.android.com/compose)**. It combines book-inspired editorial typography with local-first collection management and reading analytics.
 
 ## Key Features
 
 ### 1. eReader & Light Novel Engine
-- **Local File Import**: Parses and renders local `.epub`, `.pdf`, and `.txt` files directly on-device via **[Jsoup](https://jsoup.org/)** and Android's native `PdfRenderer`. Imported books normalize raw filenames, extract cover artwork immediately, and display a minimal inline progress bar on the book card while chapters and illustrations index in the background.
-- **4 Reading Flow Modes**: Switch between **Page Turn**, **Vertical Scroll**, **Webtoon**, and **Two Pages** (auto-landscape `1.414 : 1` book spread with strict line-height pagination so bottom lines never clip, plus an auto-docking edge fullscreen toggle).
-- **Planar Page-Turn Physics**: Hardware-accelerated single-page and two-page spread flipbook engine bounded strictly to the page frame, featuring flat planar diagonal fold geometry, margin-accurate reverse page reflection, opaque paper backing, Smooth Slide and Gentle Fade transitions, interactive bottom page scrubber, and hardware volume-key navigation.
-- **Interactive Artwork Viewer**: Detects both full-color and monochrome Light Novel insert illustrations, providing a 2-column chapter drawer gallery and a full-screen viewer with multi-touch pinch-to-zoom (`1.0x–4.0x`), 2D pan, and quick zoom presets.
-- **Typography, Pastel Highlights & Manual Notes**: 15 distinct downloadable/bundled editorial and sans-serif typefaces, adjustable font size (`12sp–28sp`), alignment, weight, line/paragraph/letter/word spacing, margins, paragraph indentation, dynamic drag-range text selection with 8 pastel highlighter swatches, icon-based highlight actions, in-book quote search, and manual note creation for both EPUB and PDF documents.
+- **Local File Import**: Parses and renders local `.epub`, `.pdf`, and `.txt` files on-device using **[Jsoup](https://jsoup.org/)**, **[PDFBox-Android](https://github.com/TomRoush/PdfBox-Android)**, and Android's native `PdfRenderer`. Imported files extract cover artwork immediately and index chapters and insert illustrations in the background.
+- **Smart TOC & Illustration Indexing**: Extracts chapter structures from EPUB navigation documents (`toc.ncx` / `nav.xhtml`), PDF outlines, numbered or hyperlinked `Contents` pages, and running header/footer transitions, while isolating color and monochrome insert illustrations into a 2-column gallery.
+- **4 Reading Flow Modes**: Switch between **Page Turn**, **Vertical Scroll**, **Webtoon**, and **Two Pages** (full-screen landscape book spread with a left vertical control bar and inline vertical page scrubber).
+- **Page Turn Physics**: Hardware-accelerated **Flipbook** (single-page and two-page spread planar fold geometry), **Slide**, and **Fade** transitions with an inline page scrubber and optional volume-key navigation.
+- **High-Resolution Illustration Viewer**: Dedicated full-screen viewer for Light Novel and book artwork with multi-touch pinch-to-zoom (`1.0x–4.0x`), 2D pan, and double-tap zoom.
+- **Typography, Highlights, Notes & Bookmarks**: 15 bundled offline typefaces (*Literata*, *EB Garamond*, *Source Serif 4*, *Newsreader*, *Lora*, *Merriweather*, *Crimson Pro*, *Playfair Display*, *PT Serif*, *Bitter*, *Plus Jakarta Sans*, *Inter*, *DM Sans*, *Nunito*, *JetBrains Mono*), adjustable font size, weight (`Normal`, `Medium`, `Bold`), alignment, line/paragraph/letter/word spacing, page margins, first-line paragraph indent, unobstructed live slider preview, draggable text selection handles, pastel highlights, manual notes, and one-tap page bookmarks.
 
 ### 2. Multi-Shelf Library & Parallel Catalog Search
-- **4 Collection View Modes**: Browse shelves in a **3D Spine Bookshelf** (cover-extracted spine colors, proportional book heights, and isolated single-book touch lift), **Cover Grid** (`2:3` ratio with progress bar), **Full Cover Grid**, or **Editorial List** view.
-- **Shelf & Status Filtering**: Filter across **All Shelves (`Semua`)**, **eReader**, **Physical Collection**, or custom shelves, combined with reading status (`All`, `Unread`, `Reading`, `Finished`), category (`All`, `Light Novel`, `Novel`), one-tap sort cycling (`Newest`, `Title A–Z`, `Author`, `Progress`), and an inline **Manage Shelves** panel.
-- **Parallel Multi-API Book Search**: Queries **Gramedia**, **Goodreads**, **[Google Books API](https://developers.google.com/books)**, **[Open Library API](https://openlibrary.org/developers/api)**, and **[Jikan (MyAnimeList) API](https://jikan.moe/)** concurrently with first-response streaming results.
-- **CameraX ISBN & QR Scanner**: Powered by **[CameraX](https://developer.android.com/media/camera/camerax)** and **[ML Kit Barcode Scanning](https://developers.google.com/ml-kit/vision/barcode-scanning)**, featuring a dimmed viewfinder cutout, strict ISBN-10/ISBN-13 validation, center-reticle autofocus, first-completed parallel lookup (`<300ms`), hardware torch control, and an instant 0ms batch scan queue.
+- **4 Collection View Modes**: Browse shelves in a **3D Spine Bookshelf** (cover-extracted spine colors, proportional physical book heights, and per-row touch lift), **Cover Grid** (adjustable `2–5` books per row), **Full Cover Grid**, or **Detailed List** view.
+- **Shelf & Status Filtering**: Filter across **All**, **eReader**, **Physical Collection**, or custom shelves by reading status (`All`, `Unread`, `Reading`, `Finished`), category (`All`, `Light Novel`, `Novel`), and sort order (`Newest`, `Title A–Z`, `Author`, `Progress`).
+- **Parallel Multi-API Book Search**: Queries **[Open Library API](https://openlibrary.org/developers/api)**, **[Google Books API](https://developers.google.com/books)**, and **[Jikan (MyAnimeList) API](https://jikan.moe/)** concurrently and deduplicates results by title and publication year.
+- **CameraX ISBN & Batch Scanner**: Powered by **[CameraX](https://developer.android.com/media/camera/camerax)** and **[ML Kit Barcode Scanning](https://developers.google.com/ml-kit/vision/barcode-scanning)**, featuring single ISBN lookup with target shelf selection, parallel batch scanning with a vertically scrollable queue, torch control, and a manual entry fallback for unfound ISBNs.
 
 ### 3. On-Device Reading Analytics
-- **Local Privacy-First Tracking**: All reading sessions, streaks, highlights, and notes are stored locally on the device in Room. Books are marked finished strictly upon reaching the final page.
-- **6-Month Activity Matrix**: `24 × 7` contribution heatmap with monthly labels, daily reading duration, pace metrics, and per-book time allocation bars.
+- **Local Privacy-First Tracking**: Reading sessions, streaks, page bookmarks, highlights, and notes are stored locally on the device in Room.
+- **6-Month Contribution Matrix**: `24 × 7` reading activity heatmap with monthly labels, daily duration metrics, reading pace, and an expandable per-book time breakdown.
 
-### 4. Adaptive Themes & Dual Design System
-- **4 Reading Palettes**: **Paper**, **White**, **Sepia**, and **Black**, plus a pure `#000000` **AMOLED** toggle.
-- **Classic & Glass Design Modes**: Uses crisp **Classic Design** surfaces with solid dark active selectors by default (`Glass Design: Off`) and switches navigation docks, sheets, and segmented capsules to high-blur translucent **Glass Design** when enabled.
-- **Bilingual UI**: Instant localization across **Indonesian (`id`)** and **English (`en`)**.
+### 4. Adaptive Themes & Localization
+- **4 Reading Palettes & System Sync**: **Paper**, **White**, **Sepia**, and **Black**, paired with a pure `#000000` **AMOLED** toggle and **Follow Device Theme** for automatic light/dark switching.
+- **Profile & Cover Crop Tool**: Built-in interactive circular and cover image cropper with drag-pan, pinch-to-zoom, and `90°` rotation.
+- **Bilingual UI**: Complete localization across **Indonesian (`id`)** and **English (`en`)**.
 
 ## Tech Stack
 
 | Layer | Technology |
 | :--- | :--- |
 | **Language** | Kotlin 2.0 (`JVM Target 17`) |
-| **UI Framework** | [Jetpack Compose](https://developer.android.com/compose) (Material 3, Custom `Canvas` Vector Icons & Planar Page-Fold Engine) |
+| **UI Framework** | [Jetpack Compose](https://developer.android.com/compose) (Material 3, Custom `Canvas` Page-Fold Engine, `HorizontalPager`) |
 | **Architecture** | MVVM (`StateFlow`, Coroutines, Unidirectional Data Flow) |
 | **Local Storage** | [Room Database](https://developer.android.com/training/data-storage/room) (`SQLite`) & Jetpack DataStore Preferences |
-| **Networking & Catalog** | Parallel Coroutine Aggregator (Gramedia, Goodreads, [Google Books](https://developers.google.com/books), [Open Library](https://openlibrary.org/developers/api), [Jikan MAL](https://jikan.moe/)) |
-| **eBook Parsing & Media** | [Jsoup](https://jsoup.org/) (EPUB OPF/NCX/XHTML), Android `PdfRenderer` (`LruCache`), [Coil](https://coil-kt.github.io/coil/), AndroidX `Palette`, [CameraX](https://developer.android.com/media/camera/camerax) + [ML Kit](https://developers.google.com/ml-kit/vision/barcode-scanning) |
-
-## Project Structure
-
-```text
-Llunevie/
-├── app/
-│   ├── build.gradle.kts
-│   ├── keystore/
-│   │   └── llunevie-release.jks
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       ├── assets/
-│       │   └── llunevie-icon.svg
-│       ├── java/com/llunaticsys/llunevie/
-│       │   ├── LlunevieApplication.kt
-│       │   ├── LlunevieViewModel.kt
-│       │   ├── MainActivity.kt
-│       │   ├── data/
-│       │   │   ├── local/        # Entities, LlunevieDao, LlunevieDatabase, UserPreferencesRepository
-│       │   │   ├── parser/       # EpubNativeParser, PdfNativeRenderer, TxtNativeParser, SpineColorExtractor
-│       │   │   └── remote/       # MultiBookApiRepository
-│       │   ├── model/            # Models.kt
-│       │   └── ui/
-│       │       ├── components/   # CommonComponents.kt
-│       │       ├── reader/       # CylindricalFlipbookCanvas.kt, ReaderScreen.kt
-│       │       ├── screens/      # Home, Library, AddBook, IsbnCameraScanner, Stats, Settings
-│       │       └── theme/        # LlunevieTheme.kt, LlunevieStrings.kt
-│       └── res/
-├── llunevie_prototype.html       # Standalone UI/UX design reference
-├── build.gradle.kts
-├── gradle.properties
-└── settings.gradle.kts
-```
-
-## Native Compliance
-
-Zero `WebView` components or HTML assets are bundled inside `app/`:
-
-```bash
-$ grep -r "WebView\|loadUrl\|JavascriptInterface\|android_asset.*html" app/src/main/java app/src/main
-# 0 matches
-```
+| **Networking & Catalog** | Parallel Coroutine Aggregator ([Open Library](https://openlibrary.org/developers/api), [Google Books](https://developers.google.com/books), [Jikan MAL](https://jikan.moe/)) |
+| **eBook Parsing & Media** | [Jsoup](https://jsoup.org/) (EPUB OPF/NCX/XHTML), [PDFBox-Android](https://github.com/TomRoush/PdfBox-Android), Android `PdfRenderer` (`LruCache`), [Coil](https://coil-kt.github.io/coil/), [CameraX](https://developer.android.com/media/camera/camerax) + [ML Kit Barcode Scanning](https://developers.google.com/ml-kit/vision/barcode-scanning) |
 
 ## Getting Started
 
@@ -92,15 +51,11 @@ $ grep -r "WebView\|loadUrl\|JavascriptInterface\|android_asset.*html" app/src/m
    git clone https://github.com/Llunatics/Llunevie.git
    cd Llunevie
    ```
-2. Open the project in **Android Studio** and let Gradle sync complete.
-3. Assemble signed debug or release APKs via CLI:
+2. Open the project in **Android Studio** and wait for Gradle sync to complete.
+3. Run on a physical device or emulator (`API 26+`), or assemble debug and release APKs via CLI:
    ```bash
    ./gradlew assembleDebug assembleRelease
    ```
-
-## Roadmap
-- **v0.1 (Initial Release)**: Native Compose eReader (`.epub`, `.pdf`, `.txt`), planar single/spread flipbook engine, dynamic EPUB text selection & pastel highlighter, manual notes, multi-shelf 3D spine library, parallel multi-API catalog search, CameraX ISBN/QR scanner, and local reading analytics.
-- **v1.0 (Planned)**: **Reading Journal** (long-form notes, quote cards, and reading reflections) and **Press** modules.
 
 ## Inspiration
 
