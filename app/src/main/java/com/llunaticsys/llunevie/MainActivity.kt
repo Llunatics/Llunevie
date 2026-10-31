@@ -256,6 +256,10 @@ class MainActivity : ComponentActivity() {
                                     putExtra(Intent.EXTRA_TEXT, jsonPayload)
                                 }
                                 startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
+                            },
+                            onRequestAllFilesAccess = {
+                                pendingAutoImportEnable = true
+                                launchAllFilesAccessSettings()
                             }
                         )
                     }
@@ -315,7 +319,8 @@ private fun LlunevieMainContainer(
     strings: com.llunaticsys.llunevie.ui.theme.LlunevieStrings,
     onPickLocalFile: () -> Unit,
     onPickPhoto: () -> Unit,
-    onShareBackupJson: (String) -> Unit
+    onShareBackupJson: (String) -> Unit,
+    onRequestAllFilesAccess: () -> Unit
 ) {
     val palette = LocalLluneviePalette.current
     val isAnyModalOrSheetOpen = uiState.showAddBookSheet ||
@@ -424,8 +429,7 @@ private fun LlunevieMainContainer(
                     onSetVolumeKeysTurn = { viewModel.setVolumeKeysTurn(it) },
                     onToggleAutoImportFolder = { checked ->
                         if (checked && !viewModel.hasAllFilesAccess()) {
-                            pendingAutoImportEnable = true
-                            launchAllFilesAccessSettings()
+                            onRequestAllFilesAccess()
                         } else {
                             viewModel.setAutoImportFolderEnabled(checked)
                         }
