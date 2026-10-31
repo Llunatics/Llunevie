@@ -344,19 +344,24 @@ fun ReaderScreen(
 
     val context = LocalContext.current
     val view = LocalView.current
-    val showReaderChrome = !uiState.readerFullView
+    var showReaderChrome by remember { mutableStateOf(true) }
     val isTwoPageSpread = isSpread
+
+    LaunchedEffect(prefs.flowMode, isTwoPageSpread) {
+        showReaderChrome = true
+    }
+
     DisposableEffect(isTwoPageSpread, showReaderChrome) {
         val window = (context as? android.app.Activity)?.window
-        val controller = if (window != null) WindowCompat.getInsetsController(window, view) else null
-        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (isTwoPageSpread || !showReaderChrome) {
-            controller?.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        val insetsController = if (window != null) WindowCompat.getInsetsController(window, view) else null
+        insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (isTwoPageSpread) {
+            insetsController?.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         } else {
-            controller?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            insetsController?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         }
         onDispose {
-            controller?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            insetsController?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         }
     }
 
@@ -1486,7 +1491,7 @@ fun ReaderScreen(
             }
 
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
-        if (!uiState.readerFullView || isSpread) {
+        if (showReaderChrome) {
             val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
             val topBarStartPad = if (isSpread) maxOf(36.dp, cutoutStart + 18.dp) else 16.dp
             Row(
@@ -1586,7 +1591,7 @@ fun ReaderScreen(
         }
 
         // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
-        if (!uiState.readerFullView && !isSpread) {
+        if (showReaderChrome && !isTwoPageSpread) {
             val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
             val pageIndicatorLabel = when (prefs.readingFlowMode) {
                 ReadingFlowMode.WEBTOON -> {

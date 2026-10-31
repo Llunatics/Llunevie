@@ -420,7 +420,7 @@ class LlunevieViewModel(
             _uiState.update {
                 it.copy(
                     showReaderTypeSheet = false,
-                    readerFullView = if (mode == ReadingFlowMode.SPREAD) true else it.readerFullView
+                    readerFullView = (mode == ReadingFlowMode.SPREAD)
                 )
             }
             prefsRepo.setReadingFlowMode(mode)

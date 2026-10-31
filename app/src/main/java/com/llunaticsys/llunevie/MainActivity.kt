@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
             }
 
             val isSpreadReader = uiState.activeTab == MainNavTab.READER && prefs.readingFlowMode == ReadingFlowMode.SPREAD
-            LaunchedEffect(isSpreadReader, uiState.readerFullView, uiState.activeTab) {
+            LaunchedEffect(isSpreadReader, uiState.activeTab) {
                 runCatching {
                     val targetOrientation = if (isSpreadReader) {
                         ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
                     }
                     val controller = WindowCompat.getInsetsController(window, window.decorView)
                     controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    if (uiState.activeTab == MainNavTab.READER && uiState.readerFullView) {
+                    if (isSpreadReader) {
                         controller.hide(WindowInsetsCompat.Type.systemBars())
                     } else {
                         controller.show(WindowInsetsCompat.Type.systemBars())
