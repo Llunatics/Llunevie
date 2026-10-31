@@ -73,6 +73,7 @@ import com.llunaticsys.llunevie.ui.screens.IsbnCameraScannerScreen
 import com.llunaticsys.llunevie.ui.screens.LibraryScreen
 import com.llunaticsys.llunevie.ui.screens.SettingsScreen
 import com.llunaticsys.llunevie.ui.screens.StatsScreen
+import com.llunaticsys.llunevie.ui.screens.WelcomeOnboardingScreen
 import com.llunaticsys.llunevie.ui.theme.LlunevieTheme
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import com.llunaticsys.llunevie.ui.theme.getLlunevieStrings
@@ -178,39 +179,67 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LlunevieMainContainer(
-                    viewModel = viewModel,
-                    prefs = prefs,
-                    books = books,
-                    shelves = shelves,
-                    dailyLogs = dailyLogs,
-                    allHighlights = allHighlights,
-                    allBookmarks = allBookmarks,
-                    uiState = uiState,
-                    strings = strings,
-                    onPickLocalFile = {
-                        openFileLauncher.launch(
-                            arrayOf(
-                                "application/epub+zip",
-                                "application/pdf",
-                                "text/plain",
-                                "application/json",
-                                "*/*"
-                            )
-                        )
+                AnimatedContent(
+                    targetState = prefs.hasCompletedOnboarding,
+                    transitionSpec = {
+                        (fadeIn(tween(320)) + scaleIn(initialScale = 0.96f, animationSpec = tween(320)))
+                            .togetherWith(fadeOut(tween(240)) + scaleOut(targetScale = 1.04f, animationSpec = tween(240)))
                     },
-                    onPickPhoto = { pickPhotoLauncher.launch("image/*") },
-                    onShareBackupJson = { jsonPayload ->
-                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "application/json"
-                            putExtra(Intent.EXTRA_TITLE, "llunevie-backup.json")
-                            putExtra(Intent.EXTRA_TEXT, jsonPayload)
-                        }
-                        startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
+                    label = "WelcomeOnboardingTransition"
+                ) { completed ->
+                    if (!completed) {
+                        WelcomeOnboardingScreen(
+                            prefs = prefs,
+                            onSetLanguage = { viewModel.setLanguage(it) },
+                            onSetTheme = { viewModel.setTheme(it) },
+                            onComplete = { enabled, path, uri ->
+                                viewModel.completeOnboarding(enabled, path, uri)
+                            },
+                            onSkip = {
+                                viewModel.skipOnboarding()
+                            }
+                        )
+                    } else {
+                        LlunevieMainContainer(
+                            viewModel = viewModel,
+                            prefs = prefs,
+                            books = books,
+                            shelves = shelves,
+                            dailyLogs = dailyLogs,
+                            allHighlights = allHighlights,
+                            allBookmarks = allBookmarks,
+                            uiState = uiState,
+                            strings = strings,
+                            onPickLocalFile = {
+                                openFileLauncher.launch(
+                                    arrayOf(
+                                        "application/epub+zip",
+                                        "application/pdf",
+                                        "text/plain",
+                                        "application/json",
+                                        "*/*"
+                                    )
+                                )
+                            },
+                            onPickPhoto = { pickPhotoLauncher.launch("image/*") },
+                            onShareBackupJson = { jsonPayload ->
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/json"
+                                    putExtra(Intent.EXTRA_TITLE, "llunevie-backup.json")
+                                    putExtra(Intent.EXTRA_TEXT, jsonPayload)
+                                }
+                                startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
+                            }
+                        )
                     }
-                )
+                }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.scanAutoImportFolder()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -349,6 +378,9 @@ private fun LlunevieMainContainer(
                     onSetAnimatePageTurn = { viewModel.setAnimatePageTurn(it) },
                     onSetPageAnimStyle = { viewModel.setPageAnimStyle(it) },
                     onSetVolumeKeysTurn = { viewModel.setVolumeKeysTurn(it) },
+                    onToggleAutoImportFolder = { viewModel.setAutoImportFolderEnabled(it) },
+                    onSelectAutoImportFolder = { path, uri -> viewModel.setAutoImportFolder(path, uri) },
+                    onRescanFolder = { viewModel.scanAutoImportFolder(force = true) },
                     onExportBackup = { onShareBackupJson(viewModel.buildBackupJsonString()) },
                     onRestoreBackup = onPickLocalFile
                 )

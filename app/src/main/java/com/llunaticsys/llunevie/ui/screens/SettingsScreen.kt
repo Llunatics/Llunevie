@@ -1,7 +1,12 @@
 package com.llunaticsys.llunevie.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -26,15 +31,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.ui.graphics.StrokeCap
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +69,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -106,6 +111,9 @@ fun SettingsScreen(
     onSetAnimatePageTurn: (Boolean) -> Unit,
     onSetPageAnimStyle: (PageAnimStyle) -> Unit,
     onSetVolumeKeysTurn: (Boolean) -> Unit,
+    onToggleAutoImportFolder: (Boolean) -> Unit = {},
+    onSelectAutoImportFolder: (path: String, uri: String?) -> Unit = { _, _ -> },
+    onRescanFolder: () -> Unit = {},
     onExportBackup: () -> Unit,
     onRestoreBackup: () -> Unit,
     modifier: Modifier = Modifier
@@ -114,12 +122,28 @@ fun SettingsScreen(
     val isSystemDark = isSystemInDarkTheme()
     val effectiveTheme = prefs.effectiveTheme(isSystemDark)
     val context = LocalContext.current
+    val isEn = prefs.lang == "en"
     var showNameDialog by remember { mutableStateOf(false) }
 
     var pendingCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var cropScale by remember { mutableFloatStateOf(1f) }
     var cropOffset by remember { mutableStateOf(Offset.Zero) }
     var cropRotationDegrees by remember { mutableFloatStateOf(0f) }
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            val displayPath = resolveDisplayFolderPath(uri)
+            onSelectAutoImportFolder(displayPath, uri.toString())
+        }
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -491,6 +515,106 @@ fun SettingsScreen(
             letterSpacing = 1.4.sp,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
         )
+
+        // AUTO-IMPORT FOLDER CARD
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = palette.bgCard,
+            border = BorderStroke(1.dp, palette.borderSoft),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column {
+                // Top Row — Toggle & Folder Picker Icon
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isEn) "Import new books in selected folders to the shelf automatically"
+                        else "Impor buku baru di folder terpilih ke rak secara otomatis",
+                        color = palette.textPrimary,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f).padding(end = 12.dp)
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ModernSwitch(
+                            checked = prefs.autoImportFolderEnabled,
+                            onCheckedChange = { checked ->
+                                onToggleAutoImportFolder(checked)
+                            }
+                        )
+                        Surface(
+                            onClick = { folderPickerLauncher.launch(null) },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.FolderOpen,
+                                    contentDescription = "Pick Folder",
+                                    tint = palette.textPrimary,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(thickness = 0.75.dp, color = palette.borderSoft)
+
+                // Bottom Row — Main Folder Display
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isEn) "Main Folder" else "Folder Utama",
+                        color = palette.textSecondary,
+                        fontSize = 12.5.sp
+                    )
+                    val displayFolder = prefs.autoImportFolderPath.ifBlank { "/sdcard/Llunevie/Books" }
+                    Column(
+                        modifier = Modifier
+                            .clickable {
+                                onRescanFolder()
+                                folderPickerLauncher.launch(null)
+                            }
+                            .padding(vertical = 2.dp),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = displayFolder,
+                            color = palette.textPrimary,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .widthIn(min = 20.dp)
+                                .height(1.dp)
+                                .background(palette.accent)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -1059,4 +1183,15 @@ fun renderCroppedBitmapWithExactMatrix(
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
     canvas.drawBitmap(src, matrix, paint)
     return out
+}
+
+private fun resolveDisplayFolderPath(uri: Uri): String {
+    val path = uri.path.orEmpty()
+    val decoded = Uri.decode(path)
+    return when {
+        decoded.startsWith("/tree/primary:") -> "/sdcard/" + decoded.removePrefix("/tree/primary:")
+        decoded.startsWith("primary:") -> "/sdcard/" + decoded.removePrefix("primary:")
+        decoded.contains(":") -> "/sdcard/" + decoded.substringAfterLast(":")
+        else -> "/sdcard/Llunevie/Books"
+    }
 }

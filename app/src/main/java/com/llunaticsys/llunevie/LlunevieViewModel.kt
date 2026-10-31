@@ -27,6 +27,8 @@ import coil.Coil
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import android.graphics.drawable.BitmapDrawable
+import android.os.Environment
+import androidx.documentfile.provider.DocumentFile
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.BatchLookupStatus
 import com.llunaticsys.llunevie.model.BookChapter
@@ -36,6 +38,7 @@ import java.net.URL
 import java.net.HttpURLConnection
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import android.graphics.BitmapFactory
 import com.llunaticsys.llunevie.model.BookIllustration
 import com.llunaticsys.llunevie.model.CatalogBookCandidate
@@ -44,6 +47,7 @@ import com.llunaticsys.llunevie.model.LibrarySortOption
 import com.llunaticsys.llunevie.model.LibraryViewMode
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
+import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import com.llunaticsys.llunevie.ui.theme.canonicalShelfKey
 import kotlinx.coroutines.Job
@@ -56,6 +60,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -254,6 +259,12 @@ class LlunevieViewModel(
                         }
                     }
                 }
+            }
+        }
+        viewModelScope.launch {
+            preferences.first()
+            if (preferences.value.autoImportFolderEnabled) {
+                scanAutoImportFolder()
             }
         }
     }
@@ -1306,6 +1317,234 @@ class LlunevieViewModel(
             } finally {
                 trackedBookId?.let { setBookImportProgress(it, null) }
             }
+        }
+    }
+
+    private val isFolderScanning = AtomicBoolean(false)
+
+    fun scanAutoImportFolder(force: Boolean = false) {
+        val prefs = preferences.value
+        if (!prefs.autoImportFolderEnabled && !force) return
+        if (!isFolderScanning.compareAndSet(false, true)) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val defaultDir = File(Environment.getExternalStorageDirectory(), "Llunevie/Books")
+                runCatching { defaultDir.mkdirs() }
+
+                val currentPrefs = preferences.value
+                val isEn = currentPrefs.lang == "en"
+                val existingBooks = dao.getAllBooks()
+                val alreadyImported = currentPrefs.importedFileSignatures.toMutableSet()
+                val newlyImportedSignatures = mutableSetOf<String>()
+
+                data class PendingBookFile(
+                    val fileName: String,
+                    val fileSize: Long,
+                    val uri: Uri,
+                    val ext: String
+                )
+                val pendingFiles = mutableListOf<PendingBookFile>()
+
+                val dirsToScan = mutableListOf<File>()
+                dirsToScan.add(defaultDir)
+                if (currentPrefs.autoImportFolderPath.isNotBlank()) {
+                    val customDir = File(currentPrefs.autoImportFolderPath)
+                    if (customDir.exists() && customDir.absolutePath != defaultDir.absolutePath) {
+                        dirsToScan.add(customDir)
+                    }
+                }
+
+                for (dir in dirsToScan) {
+                    if (!dir.exists() || !dir.isDirectory) continue
+                    val files = runCatching { dir.listFiles() }.getOrNull() ?: continue
+                    for (file in files) {
+                        if (!file.isFile) continue
+                        val name = file.name
+                        val ext = file.extension.lowercase()
+                        if (ext !in setOf("epub", "pdf", "txt")) continue
+                        val size = file.length()
+                        val sig = "$name:$size"
+                        if (sig in alreadyImported) continue
+
+                        val matchesRoom = existingBooks.any { b ->
+                            (b.localFilePath != null && File(b.localFilePath).name.equals(name, ignoreCase = true)) ||
+                                b.title.equals(normalizeBookTitle(name), ignoreCase = true)
+                        }
+                        if (matchesRoom) {
+                            alreadyImported.add(sig)
+                            newlyImportedSignatures.add(sig)
+                            continue
+                        }
+
+                        if (pendingFiles.none { it.fileName == name && it.fileSize == size }) {
+                            pendingFiles.add(PendingBookFile(name, size, Uri.fromFile(file), ext))
+                        }
+                    }
+                }
+
+                if (!currentPrefs.autoImportFolderUri.isNullOrBlank()) {
+                    runCatching {
+                        val treeUri = Uri.parse(currentPrefs.autoImportFolderUri)
+                        val docDir = DocumentFile.fromTreeUri(appContext, treeUri)
+                        if (docDir != null && docDir.isDirectory) {
+                            for (docFile in docDir.listFiles()) {
+                                if (!docFile.isFile) continue
+                                val name = docFile.name.orEmpty()
+                                val ext = name.substringAfterLast('.', "").lowercase()
+                                if (ext !in setOf("epub", "pdf", "txt")) continue
+                                val size = docFile.length()
+                                val sig = "$name:$size"
+                                if (sig in alreadyImported) continue
+
+                                val matchesRoom = existingBooks.any { b ->
+                                    (b.localFilePath != null && File(b.localFilePath).name.equals(name, ignoreCase = true)) ||
+                                        b.title.equals(normalizeBookTitle(name), ignoreCase = true)
+                                }
+                                if (matchesRoom) {
+                                    alreadyImported.add(sig)
+                                    newlyImportedSignatures.add(sig)
+                                    continue
+                                }
+
+                                if (pendingFiles.none { it.fileName == name && it.fileSize == size }) {
+                                    pendingFiles.add(PendingBookFile(name, size, docFile.uri, ext))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                var successCount = 0
+                for (item in pendingFiles) {
+                    val sig = "${item.fileName}:${item.fileSize}"
+                    var trackedBookId: String? = null
+                    try {
+                        when (item.ext) {
+                            "pdf" -> {
+                                val bundle = PdfNativeRenderer.importPdfDocumentWithProgress(
+                                    context = appContext,
+                                    uri = item.uri,
+                                    fallbackFileName = item.fileName,
+                                    targetShelf = "eReader",
+                                    isEn = isEn,
+                                    onInitialBookCreated = { partialBook ->
+                                        trackedBookId = partialBook.id
+                                        dao.upsertBook(partialBook)
+                                    },
+                                    onProgressUpdate = { bId, pct ->
+                                        trackedBookId = bId
+                                        setBookImportProgress(bId, pct)
+                                    }
+                                )
+                                dao.saveBookWithChapters(bundle.book, bundle.chapters)
+                                indexPdfChaptersAndIllustrations(bundle.book)
+                                newlyImportedSignatures.add(sig)
+                                alreadyImported.add(sig)
+                                successCount++
+                            }
+                            "epub" -> {
+                                val bundle = EpubNativeParser.importAndParseEpubWithProgress(
+                                    context = appContext,
+                                    uri = item.uri,
+                                    fallbackFileName = item.fileName,
+                                    targetShelf = "eReader",
+                                    isEn = isEn,
+                                    onInitialBookCreated = { partialBook ->
+                                        trackedBookId = partialBook.id
+                                        dao.upsertBook(partialBook)
+                                    },
+                                    onProgressUpdate = { bId, pct ->
+                                        trackedBookId = bId
+                                        setBookImportProgress(bId, pct)
+                                    }
+                                )
+                                dao.saveBookWithChapters(bundle.book, bundle.chapters)
+                                newlyImportedSignatures.add(sig)
+                                alreadyImported.add(sig)
+                                successCount++
+                            }
+                            "txt" -> {
+                                val bundle = TxtNativeParser.importAndParseTxtWithProgress(
+                                    context = appContext,
+                                    uri = item.uri,
+                                    fallbackFileName = item.fileName,
+                                    targetShelf = "eReader",
+                                    onInitialBookCreated = { partialBook ->
+                                        trackedBookId = partialBook.id
+                                        dao.upsertBook(partialBook)
+                                    },
+                                    onProgressUpdate = { bId, pct ->
+                                        trackedBookId = bId
+                                        setBookImportProgress(bId, pct)
+                                    }
+                                )
+                                dao.saveBookWithChapters(bundle.book, bundle.chapters)
+                                newlyImportedSignatures.add(sig)
+                                alreadyImported.add(sig)
+                                successCount++
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Keep going with remaining files
+                    } finally {
+                        trackedBookId?.let { setBookImportProgress(it, null) }
+                    }
+                }
+
+                if (newlyImportedSignatures.isNotEmpty()) {
+                    prefsRepo.addImportedSignatures(newlyImportedSignatures)
+                }
+
+                if (successCount > 0) {
+                    showToast(
+                        if (isEn) "$successCount new book(s) imported from folder"
+                        else "$successCount buku baru diimpor dari folder"
+                    )
+                }
+            } finally {
+                isFolderScanning.set(false)
+            }
+        }
+    }
+
+    fun setAutoImportFolderEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsRepo.setAutoImportFolderEnabled(enabled)
+            if (enabled) {
+                val dir = File(Environment.getExternalStorageDirectory(), "Llunevie/Books")
+                runCatching { dir.mkdirs() }
+                scanAutoImportFolder(force = true)
+            }
+        }
+    }
+
+    fun setAutoImportFolder(path: String, uri: String? = null) {
+        viewModelScope.launch {
+            prefsRepo.setAutoImportFolder(path, uri)
+            scanAutoImportFolder(force = true)
+        }
+    }
+
+    fun completeOnboarding(autoImportEnabled: Boolean, customPath: String? = null, customUri: String? = null) {
+        viewModelScope.launch {
+            if (!customPath.isNullOrBlank()) {
+                prefsRepo.setAutoImportFolder(customPath, customUri)
+            }
+            prefsRepo.setAutoImportFolderEnabled(autoImportEnabled)
+            prefsRepo.setHasCompletedOnboarding(true)
+            if (autoImportEnabled) {
+                val dir = File(Environment.getExternalStorageDirectory(), "Llunevie/Books")
+                runCatching { dir.mkdirs() }
+                scanAutoImportFolder(force = true)
+            }
+        }
+    }
+
+    fun skipOnboarding() {
+        viewModelScope.launch {
+            prefsRepo.setAutoImportFolderEnabled(false)
+            prefsRepo.setHasCompletedOnboarding(true)
         }
     }
 

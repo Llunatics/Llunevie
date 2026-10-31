@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.LibrarySortOption
@@ -47,7 +48,12 @@ data class UserPreferencesState(
     val libStatus: String = "all",
     val libSort: LibrarySortOption = LibrarySortOption.RECENT,
     val libGridCols: Int = 0,
-    val homeRecentMode: String = "grid"
+    val homeRecentMode: String = "grid",
+    val hasCompletedOnboarding: Boolean = false,
+    val autoImportFolderEnabled: Boolean = false,
+    val autoImportFolderPath: String = "/sdcard/Llunevie/Books",
+    val autoImportFolderUri: String? = null,
+    val importedFileSignatures: Set<String> = emptySet()
 ) {
     val lineHeightMult: Float get() = lineHeightMultiplier
     val flowMode: ReadingFlowMode get() = readingFlowMode
@@ -93,6 +99,11 @@ class UserPreferencesRepository(private val context: Context) {
         val LIB_SORT = stringPreferencesKey("lib_sort")
         val LIB_GRID_COLS = intPreferencesKey("lib_grid_cols")
         val HOME_RECENT_MODE = stringPreferencesKey("home_recent_mode")
+        val HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
+        val AUTO_IMPORT_ENABLED = booleanPreferencesKey("auto_import_folder_enabled")
+        val AUTO_IMPORT_PATH = stringPreferencesKey("auto_import_folder_path")
+        val AUTO_IMPORT_URI = stringPreferencesKey("auto_import_folder_uri")
+        val IMPORTED_FILE_SIGNATURES = stringSetPreferencesKey("imported_file_signatures")
     }
 
     val preferencesFlow: Flow<UserPreferencesState> = context.llunevieDataStore.data.map { prefs ->
@@ -126,7 +137,12 @@ class UserPreferencesRepository(private val context: Context) {
             libStatus = prefs[Keys.LIB_STATUS] ?: "all",
             libSort = LibrarySortOption.fromKey(prefs[Keys.LIB_SORT]),
             libGridCols = prefs[Keys.LIB_GRID_COLS] ?: 0,
-            homeRecentMode = prefs[Keys.HOME_RECENT_MODE] ?: "grid"
+            homeRecentMode = prefs[Keys.HOME_RECENT_MODE] ?: "grid",
+            hasCompletedOnboarding = prefs[Keys.HAS_COMPLETED_ONBOARDING] ?: false,
+            autoImportFolderEnabled = prefs[Keys.AUTO_IMPORT_ENABLED] ?: false,
+            autoImportFolderPath = prefs[Keys.AUTO_IMPORT_PATH] ?: "/sdcard/Llunevie/Books",
+            autoImportFolderUri = prefs[Keys.AUTO_IMPORT_URI],
+            importedFileSignatures = prefs[Keys.IMPORTED_FILE_SIGNATURES] ?: emptySet()
         )
     }
 
@@ -237,6 +253,32 @@ class UserPreferencesRepository(private val context: Context) {
             sort?.let { prefs[Keys.LIB_SORT] = it.key }
             gridCols?.let { prefs[Keys.LIB_GRID_COLS] = it }
             homeRecentMode?.let { prefs[Keys.HOME_RECENT_MODE] = it }
+        }
+    }
+
+    suspend fun setHasCompletedOnboarding(completed: Boolean) {
+        context.llunevieDataStore.edit { it[Keys.HAS_COMPLETED_ONBOARDING] = completed }
+    }
+
+    suspend fun setAutoImportFolderEnabled(enabled: Boolean) {
+        context.llunevieDataStore.edit { it[Keys.AUTO_IMPORT_ENABLED] = enabled }
+    }
+
+    suspend fun setAutoImportFolder(path: String, uri: String? = null) {
+        context.llunevieDataStore.edit {
+            it[Keys.AUTO_IMPORT_PATH] = path.trim()
+            if (uri.isNullOrBlank()) {
+                it.remove(Keys.AUTO_IMPORT_URI)
+            } else {
+                it[Keys.AUTO_IMPORT_URI] = uri
+            }
+        }
+    }
+
+    suspend fun addImportedSignatures(signatures: Set<String>) {
+        context.llunevieDataStore.edit { prefs ->
+            val current = prefs[Keys.IMPORTED_FILE_SIGNATURES] ?: emptySet()
+            prefs[Keys.IMPORTED_FILE_SIGNATURES] = current + signatures
         }
     }
 }
