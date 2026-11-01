@@ -122,7 +122,8 @@ data class LlunevieUiState(
     val manualBookPrefillIsbn: String? = null,
     val pdfIndexingState: Map<String, Int?> = emptyMap(),
     val importingBooksProgress: Map<String, Int> = emptyMap(),
-    val toastMessage: String? = null
+    val toastMessage: String? = null,
+    val isInitialDataReady: Boolean = false
 ) {
     val showCenterSearchLoader: Boolean
         get() = isCatalogSearching && catalogSearchResults.isEmpty()
@@ -311,6 +312,25 @@ class LlunevieViewModel(
                         if (f.isDirectory) f.deleteRecursively() else f.delete()
                     }
                 }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                // Pre-warm LocalCoverBitmapCache on cold start to eliminate 1-3 frame monogram flash
+                prefsRepo.preferencesFlow.first()
+                val allBooks = dao.getAllBooks()
+                val onTheGoBooks = allBooks.filter { !it.completedAllPages }.sortedByDescending { it.createdAtMillis }.take(6)
+                val recentBooks = allBooks.sortedByDescending { it.createdAtMillis }.take(9)
+                val visibleBooks = (onTheGoBooks + recentBooks).distinctBy { it.id }
+                visibleBooks.forEach { book ->
+                    val path = book.coverImagePath
+                    if (!path.isNullOrBlank() && !path.startsWith("http", ignoreCase = true)) {
+                        com.llunaticsys.llunevie.ui.components.LocalCoverBitmapCache.loadOrDecode(path, 540)
+                    }
+                }
+                _uiState.update { it.copy(isInitialDataReady = true) }
+            }.onFailure {
+                _uiState.update { it.copy(isInitialDataReady = true) }
             }
         }
     }
@@ -836,9 +856,16 @@ class LlunevieViewModel(
                         }
                     }
 
-                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false, or if tocIndexVersion < 4 to upgrade chapter and illustration detection).
-                    // On all subsequent opens (tocIndexed == true && tocIndexVersion >= 4), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
-                    if ((!book.tocIndexed || book.tocIndexVersion < 4) && _pdfIndexingState.value[bookId] == null) {
+                    // Detect fallback "Section 1..N" chapters
+                    val hasOnlyFallbackSections = parsedChapters.isNotEmpty() && parsedChapters.all { ch ->
+                        ch.title.startsWith("Section ", ignoreCase = true) ||
+                        ch.title.startsWith("Bagian ", ignoreCase = true) ||
+                        ch.title.equals(book.title, ignoreCase = true)
+                    }
+                    
+                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false, or if tocIndexVersion < 5 to upgrade chapter and illustration detection).
+                    // On all subsequent opens (tocIndexed == true && tocIndexVersion >= 5), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
+                    if ((!book.tocIndexed || book.tocIndexVersion < 5 || hasOnlyFallbackSections) && _pdfIndexingState.value[bookId] == null) {
                         indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                     }
                 }
@@ -885,6 +912,11 @@ class LlunevieViewModel(
                 }.getOrDefault(book.pagesCount)
 
                 val existingChapters = dao.getChaptersForBook(book.id)
+                val hasOnlyFallbackSections = existingChapters.isNotEmpty() && existingChapters.all { ce ->
+                    ce.title.startsWith("Section ", ignoreCase = true) ||
+                    ce.title.startsWith("Bagian ", ignoreCase = true) ||
+                    ce.title.equals(book.title, ignoreCase = true)
+                }
                 val isEn = preferences.value.lang == "en"
                 _pdfIndexingState.update { it + (book.id to 5) }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 5)) }
@@ -896,7 +928,7 @@ class LlunevieViewModel(
                     totalPages = actualPageCount,
                     defaultTitle = book.title,
                     isEn = isEn,
-                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= 4 && existingChapters.isNotEmpty()) existingChapters else null,
+                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= 5 && !hasOnlyFallbackSections && existingChapters.isNotEmpty()) existingChapters else null,
                     onProgress = { pct ->
                         _pdfIndexingState.update { it + (book.id to pct) }
                         _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
@@ -906,7 +938,7 @@ class LlunevieViewModel(
                     val updatedBook = currentBook.copy(
                         pagesCount = actualPageCount,
                         tocIndexed = true,
-                        tocIndexVersion = 4
+                        tocIndexVersion = 5
                     )
                     dao.saveBookWithChapters(updatedBook, updatedChapters)
                     if (_uiState.value.activeBookId == book.id) {
@@ -920,10 +952,7 @@ class LlunevieViewModel(
                 }
             } catch (t: Throwable) {
                 android.util.Log.e("LlunevieViewModel", "PDF indexing error for ${book.id}", t)
-                runCatching {
-                    val currentBook = dao.getBookById(book.id) ?: book
-                    dao.updateBook(currentBook.copy(tocIndexed = true, tocIndexVersion = 4))
-                }
+                // Do NOT set tocIndexed = true on failure so it can retry cleanly on next open
             } finally {
                 _pdfIndexingState.update { it - book.id }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState - book.id) }
@@ -1956,11 +1985,7 @@ class LlunevieViewModel(
 
     fun updateBookSpineColor(bookId: String, extractedHex: Long) {
         viewModelScope.launch {
-            val all = dao.getAllBooks()
-            val book = all.find { it.id == bookId }
-            if (book != null && book.spineColorHex != extractedHex) {
-                dao.updateBook(book.copy(spineColorHex = extractedHex))
-            }
+            dao.updateBookSpineColorById(bookId, extractedHex)
         }
     }
 

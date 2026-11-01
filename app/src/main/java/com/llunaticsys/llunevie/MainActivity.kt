@@ -203,7 +203,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                if (!prefs.isLoaded && !prefs.hasCompletedOnboarding) {
+                if ((!prefs.isLoaded || !uiState.isInitialDataReady) && !prefs.hasCompletedOnboarding) {
                     Box(modifier = Modifier.fillMaxSize().background(palette.bgApp))
                 } else {
                     AnimatedContent(

@@ -97,4 +97,7 @@ interface LlunevieDao {
 
     @Query("DELETE FROM page_bookmarks WHERE bookId = :bookId AND pageNumber = :pageNumber")
     suspend fun deleteBookmarkByPage(bookId: String, pageNumber: Int)
+    
+    @Query("UPDATE books SET spineColorHex = :hex WHERE id = :bookId")
+    suspend fun updateBookSpineColorById(bookId: String, hex: Long)
 }

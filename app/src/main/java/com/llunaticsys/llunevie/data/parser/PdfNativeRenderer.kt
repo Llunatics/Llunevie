@@ -481,19 +481,23 @@ object PdfNativeRenderer {
     }
 
     val CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+|interlude|side\\s+story|extra|bonus|afterword|kata\\s+penutup|penutup|daftar\\s+isi|table\\s+of\\s+contents)\\b.*"
+        "(?i)^(prolog|prologue|monolog|monologue|soliloquy|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+|volume\\s+[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|ss\\b|extra|bonus|afterword|kata\\s+penutup|penutup|prakata|pendahuluan|daftar\\s+isi|table\\s+of\\s+contents)\\b.*"
+    )
+    
+    val CHAPTER_KEYWORD_SUFFIX_REGEX = Regex(
+        "(?i).*\\b(monologue|monolog|prologue|prolog|epilogue|epilog|soliloquy)$"
     )
 
     fun isLikelyBodySentenceOrWatermark(candidateTitle: String): Boolean {
-        if (CHAPTER_KEYWORD_REGEX.matches(candidateTitle)) return false
+        if (CHAPTER_KEYWORD_REGEX.matches(candidateTitle) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(candidateTitle)) return false
         val trimmed = candidateTitle.trim()
         if (trimmed.endsWith(".") || trimmed.endsWith(",") || trimmed.endsWith(";") || trimmed.endsWith("—") || trimmed.endsWith("–")) return true
-        if (trimmed.startsWith("—") || trimmed.startsWith("-") || trimmed.startsWith("\"") || trimmed.startsWith("“") || trimmed.startsWith("”") || trimmed.startsWith("«")) return true
-        if (trimmed.any { it in "\"“”«»" }) return true
+        if (trimmed.startsWith("—") || trimmed.startsWith("-") || trimmed.startsWith("\"") || trimmed.startsWith(""") || trimmed.startsWith(""") || trimmed.startsWith("«")) return true
+        if (trimmed.any { it == '"' || it == '"' || it == '"' || it == '«' || it == '»' }) return true
         val words = trimmed.split(Regex("""\s+""")).filter { it.isNotEmpty() }
         if (words.size > 7 || trimmed.length > 48) return true
         val proseConjunctionRegex = Regex("""(?i)\b(yang|akan|untuk|dengan|karena|tetapi|namun|bahwa|ketika|seperti|mereka|dirinya|tidak\s+tahu|memiliki|mempersiapkan|menemukannya|terjadi)\b""")
-        val explicitPrefixRegex = Regex("""(?i)^(bab|chapter|bagian|part|prolog|prologue|epilog|epilogue|interlude|side\s+story|afterword|kata\s+penutup)\b""")
+        val explicitPrefixRegex = Regex("""(?i)^(bab|chapter|bagian|part|prolog|prologue|monolog|monologue|epilog|epilogue|interlude|side\s+story|afterword|kata\s+penutup)\b""")
         if (proseConjunctionRegex.containsMatchIn(trimmed) && !explicitPrefixRegex.containsMatchIn(trimmed)) {
             return true
         }
@@ -816,15 +820,26 @@ object PdfNativeRenderer {
                                 pageBottomTitles[p] = bestFooter
                             }
 
-                            // Always run Condition B: explicit chapter headings in topLines
-                            val topHeadingLines = lines.take(3)
+                            // Always run Condition B: explicit chapter headings in topLines AND cleaned bottom footers
+                            val topHeadingLines = lines.take(6)
                             for (line in topHeadingLines) {
                                 val cleanLine = sanitizeChapterTitle(line)
-                                if (cleanLine.length in 4..85 && CHAPTER_KEYWORD_REGEX.matches(cleanLine)) {
+                                if (cleanLine.length in 4..85 && (CHAPTER_KEYWORD_REGEX.matches(cleanLine) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(cleanLine))) {
                                     val n = norm(cleanLine)
                                     if (n != normBookTitle && !cleanLine.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
                                         conditionBBookmarks.add(PdfBookmark(cleanLine, p))
                                         break
+                                    }
+                                }
+                            }
+                            
+                            // Also check cleaned bottom running footer
+                            if (bestFooter != null) {
+                                val cleanFooter = sanitizeChapterTitle(bestFooter)
+                                if (cleanFooter.length in 4..85 && (CHAPTER_KEYWORD_REGEX.matches(cleanFooter) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(cleanFooter))) {
+                                    val n = norm(cleanFooter)
+                                    if (n != normBookTitle && !conditionBBookmarks.any { norm(it.title) == n }) {
+                                        conditionBBookmarks.add(PdfBookmark(cleanFooter, p))
                                     }
                                 }
                             }
@@ -837,9 +852,49 @@ object PdfNativeRenderer {
                     }
                 }
 
-                val watermarkThreshold = maxOf(8, (safeTotalPages * 0.12f).toInt())
+                // NEVER blacklist chapter keywords - they are real chapters, not watermarks!
+                val lineSpanTracking = mutableMapOf<String, Pair<Int, Int>>() // normalized -> (firstPage, lastPage)
                 for ((nLine, pages) in linePageOccurrences) {
-                    if (pages.size >= watermarkThreshold) {
+                    if (pages.isNotEmpty()) {
+                        val firstPage = pages.minOrNull() ?: 0
+                        val lastPage = pages.maxOrNull() ?: 0
+                        lineSpanTracking[nLine] = Pair(firstPage, lastPage)
+                    }
+                }
+                
+                for ((nLine, pages) in linkPageOccurrences) {
+                    if (pages.size >= 5) {
+                        globalWatermarkBlacklist.add(nLine)
+                    }
+                }
+                
+                // Only blacklist non-keyword strings that span > 35% of the book from front to back
+                for ((nLine, pages) in linePageOccurrences) {
+                    val occurrenceCount = pages.size
+                    if (occurrenceCount < 5) continue
+                    
+                    val (firstPage, lastPage) = lineSpanTracking[nLine] ?: continue
+                    val span = lastPage - firstPage
+                    
+                    // Check if this normalized line matches any chapter keyword
+                    val matchesKeyword = linePageOccurrences.keys
+                        .filter { it == nLine }
+                        .any { normalizedKey ->
+                            // Find original titles with this normalized key
+                            conditionBBookmarks.any { bm ->
+                                norm(bm.title) == normalizedKey && 
+                                (CHAPTER_KEYWORD_REGEX.matches(bm.title) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(bm.title))
+                            } || 
+                            pageBottomTitles.filterNotNull().any { title ->
+                                norm(cleanFooterTitle(title)) == normalizedKey &&
+                                (CHAPTER_KEYWORD_REGEX.matches(title) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(title))
+                            }
+                        }
+                    
+                    if (matchesKeyword) continue // Never blacklist chapter keywords!
+                    
+                    // Only blacklist if it spans > 35% of book AND has at least 5 occurrences
+                    if (span > (safeTotalPages * 0.35f) && occurrenceCount >= 5) {
                         globalWatermarkBlacklist.add(nLine)
                     }
                 }
