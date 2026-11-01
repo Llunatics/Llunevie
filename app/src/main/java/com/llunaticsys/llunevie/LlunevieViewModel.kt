@@ -531,6 +531,18 @@ class LlunevieViewModel(
         }
     }
 
+    fun setPdfThemeTintEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsRepo.setPdfThemeTintEnabled(enabled)
+        }
+    }
+
+    fun setPdfProtectIllustrations(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsRepo.setPdfProtectIllustrations(enabled)
+        }
+    }
+
     fun updateTypography(
         fontFamily: String? = null,
         fontSizeSp: Int? = null,

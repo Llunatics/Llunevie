@@ -111,6 +111,8 @@ fun SettingsScreen(
     onSetAnimatePageTurn: (Boolean) -> Unit,
     onSetPageAnimStyle: (PageAnimStyle) -> Unit,
     onSetVolumeKeysTurn: (Boolean) -> Unit,
+    onSetPdfThemeTintEnabled: (Boolean) -> Unit = {},
+    onSetPdfProtectIllustrations: (Boolean) -> Unit = {},
     onToggleAutoImportFolder: (Boolean) -> Unit = {},
     onSelectAutoImportFolder: (path: String, uri: String?) -> Unit = { _, _ -> },
     onRescanFolder: () -> Unit = {},
@@ -500,6 +502,67 @@ fun SettingsScreen(
                     ModernSwitch(
                         checked = prefs.volumeKeysTurn,
                         onCheckedChange = onSetVolumeKeysTurn
+                    )
+                }
+                HorizontalDivider(color = palette.borderSoft)
+
+                // PDF Theme Tint Enabled
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = if (strings.isId) "Adaptasi Tema pada Kertas PDF" else "Apply Theme to PDF Pages",
+                            color = palette.textMain,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (strings.isId) "Sesuaikan warna halaman teks PDF dengan tema Paper, Sepia, atau Gelap" else "Tint or invert PDF text pages to match Paper, Sepia, or Dark theme",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    ModernSwitch(
+                        checked = prefs.pdfThemeTintEnabled,
+                        onCheckedChange = { onSetPdfThemeTintEnabled(it) }
+                    )
+                }
+                HorizontalDivider(color = palette.borderSoft)
+
+                // PDF Protect Illustrations
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(if (prefs.pdfThemeTintEnabled) 1f else 0.45f)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = if (strings.isId) "Jaga Warna Asli Ilustrasi & Sampul" else "Preserve Original Illustration Colors",
+                            color = palette.textMain,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (strings.isId) "Jangan inversi halaman sampul dan gambar ilustrasi saat mode gelap/sepia aktif" else "Keep original colors on cover and artwork pages in dark/sepia mode",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    ModernSwitch(
+                        checked = prefs.pdfProtectIllustrations,
+                        onCheckedChange = { onSetPdfProtectIllustrations(it) }
                     )
                 }
             }

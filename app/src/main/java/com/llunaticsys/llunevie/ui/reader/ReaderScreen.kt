@@ -122,6 +122,8 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -145,6 +147,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.calculateZoom
@@ -207,6 +210,7 @@ import com.llunaticsys.llunevie.ui.components.FlyleafThinSlider
 import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
+import com.llunaticsys.llunevie.ui.components.ModernSwitch
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import coil.compose.AsyncImage
@@ -349,6 +353,8 @@ fun ReaderScreen(
 
     val curZeroFromMetrics = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
     var displayPageIndex by remember(book.id) { mutableIntStateOf(curZeroFromMetrics) }
+    var readerZoom by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableFloatStateOf(1f) }
+    var readerPan by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableStateOf(Offset.Zero) }
     var isFlippingInProgress by remember { mutableStateOf(false) }
 
     LaunchedEffect(curZeroFromMetrics) {
@@ -364,6 +370,16 @@ fun ReaderScreen(
     val isSpread = prefs.readingFlowMode == ReadingFlowMode.SPREAD
     val isPdfBook = (book.format.equals("PDF", ignoreCase = true) || currentPageRaw.startsWith("[PDF_PAGE:")) &&
         !book.localFilePath.isNullOrBlank()
+
+    // Compute PDF theme filter
+    val isSystemDark = isSystemInDarkTheme()
+    val effectiveTheme = prefs.effectiveTheme(isSystemDark)
+    val pdfThemeColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled) {
+        PdfNativeRenderer.buildPdfThemeColorFilter(effectiveTheme, prefs.amoledBlack)
+    } else null
+    val androidPdfThemeColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled) {
+        PdfNativeRenderer.buildAndroidPdfThemeColorFilter(effectiveTheme, prefs.amoledBlack)
+    } else null
 
     val context = LocalContext.current
     val view = LocalView.current
@@ -570,6 +586,17 @@ fun ReaderScreen(
                                     val rightTriple = getPageAtGlobalZero(rightZero)
                                     val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
                                     val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
+
+                                    val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            book.id, leftZero, curLeftPdfBmp, uiState.activeBookIllustrations
+                                        ))
+                                    val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        rightZero < metrics.totalBookPages &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            book.id, rightZero, curRightPdfBmp, uiState.activeBookIllustrations
+                                        ))
+
                                     renderTwoPageSpreadSnapshot(
                                         textMeasurer = textMeasurer,
                                         widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
@@ -583,10 +610,12 @@ fun ReaderScreen(
                                         rightText = rightTriple?.third.orEmpty(),
                                         leftPdfBitmap = curLeftPdfBmp,
                                         rightPdfBitmap = curRightPdfBmp,
-                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                        bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
                                         palette = palette,
-                                        prefs = prefs
+                                        prefs = prefs,
+                                        leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                        rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
                                     )
                                 } else if (isPdfBook) {
                                     curLeftPdfBmp?.asImageBitmap()
@@ -641,6 +670,17 @@ fun ReaderScreen(
                                         val rightTripleSpread = getPageAtGlobalZero(rightZero)
                                         val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
                                         val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
+
+                                        val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                book.id, leftZero, nextLeftPdfBmp, uiState.activeBookIllustrations
+                                            ))
+                                        val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                            rightZero < metrics.totalBookPages &&
+                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                book.id, rightZero, nextRightPdfBmp, uiState.activeBookIllustrations
+                                            ))
+
                                         renderTwoPageSpreadSnapshot(
                                             textMeasurer = textMeasurer,
                                             widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
@@ -654,10 +694,12 @@ fun ReaderScreen(
                                             rightText = rightTripleSpread?.third.orEmpty(),
                                             leftPdfBitmap = nextLeftPdfBmp,
                                             rightPdfBitmap = nextRightPdfBmp,
-                                            bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                            bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
                                             pageTextStyle = spreadTextStyle,
                                             palette = palette,
-                                            prefs = prefs
+                                            prefs = prefs,
+                                            leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                            rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
                                         )
                                     }
                                 } else if (nextTriple == null) null
@@ -718,6 +760,17 @@ fun ReaderScreen(
                                         val rightTripleSpread = getPageAtGlobalZero(rightZero)
                                         val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
                                         val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
+
+                                        val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                book.id, leftZero, prevLeftPdfBmp, uiState.activeBookIllustrations
+                                            ))
+                                        val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                            rightZero < metrics.totalBookPages &&
+                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                book.id, rightZero, prevRightPdfBmp, uiState.activeBookIllustrations
+                                            ))
+
                                         renderTwoPageSpreadSnapshot(
                                             textMeasurer = textMeasurer,
                                             widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
@@ -731,10 +784,12 @@ fun ReaderScreen(
                                             rightText = rightTripleSpread?.third.orEmpty(),
                                             leftPdfBitmap = prevLeftPdfBmp,
                                             rightPdfBitmap = prevRightPdfBmp,
-                                            bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                            bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
                                             pageTextStyle = spreadTextStyle,
                                             palette = palette,
-                                            prefs = prefs
+                                            prefs = prefs,
+                                            leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                            rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
                                         )
                                     }
                                 } else if (prevTriple == null) null
@@ -782,8 +837,6 @@ fun ReaderScreen(
                             var liveDragProgress by remember { mutableFloatStateOf(0f) }
                             var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
 
-                            var readerZoom by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableFloatStateOf(1f) }
-                            var readerPan by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableStateOf(Offset.Zero) }
 
                             val flipbookGestureModifier = Modifier.pointerInput(
                                 curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
@@ -1018,6 +1071,31 @@ fun ReaderScreen(
                                 ) {
                                     val activeBmp = activeCurrBmp ?: curBitmap
                                 if (activeBmp != null) {
+                                    // Compute per-page filters for PDF theme tinting
+                                    val curPageIdx = curZero
+                                    val nextPageIdx = if (isSpread) spreadStart + 2 else curZero + 1
+                                    val prevPageIdx = if (isSpread) spreadStart - 2 else curZero - 1
+
+                                    val shouldTintCur = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            book.id, curPageIdx, curLeftPdfBmp, uiState.activeBookIllustrations
+                                        ))
+                                    val shouldTintNext = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        nextPageIdx < metrics.totalBookPages &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            book.id, nextPageIdx, nextLeftPdfBmp, uiState.activeBookIllustrations
+                                        ))
+                                    val shouldTintPrev = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        prevPageIdx >= 0 &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            book.id, prevPageIdx, prevLeftPdfBmp, uiState.activeBookIllustrations
+                                        ))
+
+                                    val curPageColorFilter = if (shouldTintCur) pdfThemeColorFilter else null
+                                    val nextPageColorFilter = if (shouldTintNext) pdfThemeColorFilter else null
+                                    val prevPageColorFilter = if (shouldTintPrev) pdfThemeColorFilter else null
+                                    val pdfTintedPaperColor = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE) palette.bgCard else null
+
                                     CylindricalFlipbookCanvas(
                                         currentPageBitmap = activeBmp,
                                         nextPageBitmap = activeNextBmp ?: nextBitmap,
@@ -1026,6 +1104,10 @@ fun ReaderScreen(
                                         backPaperColor = if (isPdfBook) Color(0xFFF2EFE9) else palette.flipBackPaper,
                                         isPdfBook = isPdfBook,
                                         isTwoPageSpread = isSpread,
+                                        curPageColorFilter = curPageColorFilter,
+                                        nextPageColorFilter = nextPageColorFilter,
+                                        prevPageColorFilter = prevPageColorFilter,
+                                        pdfTintedPaperColor = pdfTintedPaperColor,
                                         externalTriggerDir = externalFlipTrigger,
                                         onExternalTriggerConsumed = { externalFlipTrigger = 0 },
                                         manualProgress = if (isFlippingInProgress) liveDragProgress else null,
@@ -1143,28 +1225,6 @@ fun ReaderScreen(
                                 }
                             }
                         }
-
-                        // Floating Zoom Indicator & Reset Pill
-                        if (readerZoom > 1.01f) {
-                            Surface(
-                                onClick = { readerZoom = 1f; readerPan = Offset.Zero },
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .padding(top = 96.dp)
-                                    .zIndex(30f),
-                                shape = RoundedCornerShape(20.dp),
-                                color = palette.bgCard.copy(alpha = 0.92f),
-                                tonalElevation = 4.dp,
-                                shadowElevation = 8.dp
-                            ) {
-                                Text(
-                                    text = "${(readerZoom * 100).roundToInt()}% · Reset",
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = palette.textMain
-                                )
-                            }
-                        }
                 } else {
                     @Composable
                     fun RenderSpreadPageForNonFlipbook(leftZero: Int, rightZero: Int) {
@@ -1261,12 +1321,18 @@ fun ReaderScreen(
                                     RenderSpreadPageForNonFlipbook(leftZero, rightZero)
                                 } else if (isPdfBook) {
                                     if (viewModel != null) {
+                                        val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                book.id, pageZero, curLeftPdfBmp, uiState.activeBookIllustrations
+                                            ))
                                         PdfPageItemContent(
                                             bookId = book.id,
                                             filePath = book.localFilePath!!,
                                             pageIndex = pageZero,
                                             viewModel = viewModel,
-                                            modifier = Modifier.fillMaxSize()
+                                            modifier = Modifier.fillMaxSize(),
+                                            colorFilter = if (shouldTintPdfPage) pdfThemeColorFilter else null,
+                                            surfaceColor = if (shouldTintPdfPage) palette.bgCard else Color.White
                                         )
                                     } else {
                                         val pdfRatio = if (curLeftPdfBmp != null && curLeftPdfBmp!!.height > 0) {
@@ -1508,11 +1574,17 @@ fun ReaderScreen(
                                     count = totalPdfPages,
                                     key = { pageIdx -> "pdf_vertical_page_$pageIdx" }
                                 ) { pageIdx ->
+                                    val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            book.id, pageIdx, null, uiState.activeBookIllustrations
+                                        ))
                                     PdfVerticalPageItem(
                                         pdfFilePath = pdfPath,
                                         pageIndex = pageIdx,
                                         targetWidthPx = stageW,
-                                        isWebtoon = isWebtoon
+                                        isWebtoon = isWebtoon,
+                                        colorFilter = if (shouldTintPdfPage) pdfThemeColorFilter else null,
+                                        surfaceColor = if (shouldTintPdfPage) palette.bgCard else Color.White
                                     )
                                 }
                             }
@@ -1628,28 +1700,85 @@ fun ReaderScreen(
                     }
                 }
 
-                // Compact single-line Title Pill (`#readerTitlePill`) - only in 1-Page mode (never covers top center in 2-Page mode!)
-                if (!isSpread) {
+                // Compact single-line Title Pill (`#readerTitlePill`) - morphs into Zoom Reset Pill when zoomed
+                val isZoomed = readerZoom > 1.01f
+                if (!isSpread || isZoomed) {
+                    val pillBg by animateColorAsState(
+                        targetValue = if (isZoomed) palette.accentDark else palette.bgSurface,
+                        animationSpec = tween(180),
+                        label = "titleZoomPillBg"
+                    )
+                    val pillBorder by animateColorAsState(
+                        targetValue = if (isZoomed) palette.accentDark else palette.borderSoft,
+                        animationSpec = tween(180),
+                        label = "titleZoomPillBorder"
+                    )
                     Surface(
-                        onClick = { onToggleTocDrawer(true) },
+                        onClick = {
+                            if (isZoomed) {
+                                scope.launch {
+                                    val startZ = readerZoom
+                                    val startP = readerPan
+                                    Animatable(0f).animateTo(
+                                        targetValue = 1f,
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                    ) {
+                                        val f = 1f - value
+                                        readerZoom = 1f + (startZ - 1f) * f
+                                        readerPan = Offset(startP.x * f, startP.y * f)
+                                    }
+                                    readerZoom = 1f
+                                    readerPan = Offset.Zero
+                                }
+                            } else {
+                                onToggleTocDrawer(true)
+                            }
+                        },
                         shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
+                        color = pillBg,
+                        border = BorderStroke(1.dp, pillBorder),
+                        shadowElevation = if (isZoomed) 6.dp else 0.dp,
                         modifier = Modifier
                             .height(30.dp)
-                            .widthIn(max = 200.dp)
+                            .widthIn(min = 88.dp, max = 210.dp)
+                            .animateContentSize(animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f))
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = book.title,
-                                color = palette.textMain,
-                                fontSize = 11.5.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 14.dp)
-                            )
+                        AnimatedContent(
+                            targetState = isZoomed,
+                            transitionSpec = {
+                                (fadeIn(tween(180)) + slideInVertically(tween(180)) { h -> if (targetState) h / 2 else -h / 2 } + scaleIn(initialScale = 0.92f, animationSpec = tween(180)))
+                                    .togetherWith(fadeOut(tween(130)) + slideOutVertically(tween(130)) { h -> if (targetState) -h / 2 else h / 2 } + scaleOut(targetScale = 0.92f, animationSpec = tween(130)))
+                            },
+                            label = "titleToZoomPillTransition"
+                        ) { zoomed ->
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(horizontal = 14.dp)
+                            ) {
+                                if (zoomed) {
+                                    val pct = (readerZoom * 100f).roundToInt()
+                                    Text(
+                                        text = "$pct% · Reset",
+                                        color = palette.bgApp,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                } else {
+                                    Text(
+                                        text = book.title,
+                                        color = palette.textMain,
+                                        fontSize = 11.5.sp,
+                                        fontFamily = FontFamily.Serif,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -3101,6 +3230,76 @@ fun ReaderScreen(
                                         }
                                     }
 
+                                     // PDF Theme Settings (only for PDF books)
+                                     if (isPdfBook) {
+                                         Spacer(modifier = Modifier.height(16.dp))
+
+                                         // Apply Theme to PDF Pages toggle
+                                         Row(
+                                             modifier = Modifier
+                                                 .fillMaxWidth()
+                                                 .clickable { viewModel?.setPdfThemeTintEnabled(!prefs.pdfThemeTintEnabled) }
+                                                 .padding(vertical = 12.dp),
+                                             horizontalArrangement = Arrangement.SpaceBetween,
+                                             verticalAlignment = Alignment.CenterVertically
+                                         ) {
+                                             Column(modifier = Modifier.weight(1f)) {
+                                                 Text(
+                                                     text = if (strings.isId) "Adaptasi Tema pada Kertas PDF" else "Apply Theme to PDF Pages",
+                                                     color = palette.textMain,
+                                                     fontSize = 13.sp,
+                                                     fontWeight = FontWeight.Medium
+                                                 )
+                                                 Spacer(modifier = Modifier.height(2.dp))
+                                                 Text(
+                                                     text = if (strings.isId) "Sesuaikan warna halaman teks PDF dengan tema Paper, Sepia, atau Gelap" else "Tint or invert PDF text pages to match Paper, Sepia, or Dark theme",
+                                                     color = palette.textMuted,
+                                                     fontSize = 10.sp,
+                                                     lineHeight = 13.sp
+                                                 )
+                                             }
+                                             Spacer(modifier = Modifier.width(12.dp))
+                                             ModernSwitch(
+                                                 checked = prefs.pdfThemeTintEnabled,
+                                                 onCheckedChange = { viewModel?.setPdfThemeTintEnabled(it) }
+                                             )
+                                         }
+
+                                         // Preserve Illustration Colors toggle
+                                         Row(
+                                             modifier = Modifier
+                                                 .fillMaxWidth()
+                                                 .clickable(enabled = prefs.pdfThemeTintEnabled) {
+                                                     viewModel?.setPdfProtectIllustrations(!prefs.pdfProtectIllustrations)
+                                                 }
+                                                 .padding(vertical = 12.dp)
+                                                 .alpha(if (prefs.pdfThemeTintEnabled) 1f else 0.5f),
+                                             horizontalArrangement = Arrangement.SpaceBetween,
+                                             verticalAlignment = Alignment.CenterVertically
+                                         ) {
+                                             Column(modifier = Modifier.weight(1f)) {
+                                                 Text(
+                                                     text = if (strings.isId) "Jaga Warna Asli Ilustrasi & Sampul" else "Preserve Original Illustration Colors",
+                                                     color = palette.textMain,
+                                                     fontSize = 13.sp,
+                                                     fontWeight = FontWeight.Medium
+                                                 )
+                                                 Spacer(modifier = Modifier.height(2.dp))
+                                                 Text(
+                                                     text = if (strings.isId) "Jangan inversi halaman sampul dan gambar ilustrasi saat mode gelap/sepia aktif" else "Keep original colors on cover and artwork pages in dark/sepia mode",
+                                                     color = palette.textMuted,
+                                                     fontSize = 10.sp,
+                                                     lineHeight = 13.sp
+                                                 )
+                                             }
+                                             Spacer(modifier = Modifier.width(12.dp))
+                                             ModernSwitch(
+                                                 checked = prefs.pdfProtectIllustrations,
+                                                 onCheckedChange = { if (prefs.pdfThemeTintEnabled) viewModel?.setPdfProtectIllustrations(it) }
+                                             )
+                                         }
+                                     }
+
                                      // If not PDF, show 2x2 Comfort Sliders Grid & Margins/Indents
                                      if (!isPdfBook) {
                                          Row(
@@ -4491,7 +4690,9 @@ private fun PdfVerticalPageItem(
     pdfFilePath: String,
     pageIndex: Int,
     targetWidthPx: Int,
-    isWebtoon: Boolean
+    isWebtoon: Boolean,
+    colorFilter: ColorFilter? = null,
+    surfaceColor: Color = Color.White
 ) {
     val widthBucket = ((targetWidthPx.coerceIn(360, 1280) / 120) * 120).coerceAtLeast(360)
     val pageBmp by produceState<Bitmap?>(
@@ -4511,7 +4712,7 @@ private fun PdfVerticalPageItem(
 
     Surface(
         shape = if (isWebtoon) RoundedCornerShape(0.dp) else RoundedCornerShape(6.dp),
-        color = Color.White,
+        color = surfaceColor,
         shadowElevation = if (isWebtoon) 0.dp else 4.dp,
         modifier = Modifier
             .fillMaxWidth()
@@ -4522,13 +4723,14 @@ private fun PdfVerticalPageItem(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = "PDF Page ${pageIndex + 1}",
                 contentScale = ContentScale.FillWidth,
+                colorFilter = colorFilter,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.White),
+                    .background(surfaceColor),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -5377,7 +5579,9 @@ fun PdfPageItemContent(
     filePath: String,
     pageIndex: Int,
     viewModel: LlunevieViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    colorFilter: ColorFilter? = null,
+    surfaceColor: Color = Color.White
 ) {
     val palette = LocalLluneviePalette.current
     // Initialize synchronously from LRU cache so cached pages render on Frame 0 with ZERO null blink!
@@ -5400,7 +5604,7 @@ fun PdfPageItemContent(
             val ratio = if (bmp.height > 0) (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f) else 0.707f
             Surface(
                 shape = RoundedCornerShape(4.dp),
-                color = Color.White,
+                color = surfaceColor,
                 shadowElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -5411,6 +5615,7 @@ fun PdfPageItemContent(
                     bitmap = bmp.asImageBitmap(),
                     contentDescription = "Page ${pageIndex + 1}",
                     contentScale = ContentScale.Fit,
+                    colorFilter = colorFilter,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -5718,7 +5923,9 @@ private fun renderTwoPageSpreadSnapshot(
     bgColor: Color,
     pageTextStyle: TextStyle,
     palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette,
-    prefs: UserPreferencesState? = null
+    prefs: UserPreferencesState? = null,
+    leftColorFilter: android.graphics.ColorMatrixColorFilter? = null,
+    rightColorFilter: android.graphics.ColorMatrixColorFilter? = null
 ): ImageBitmap {
     val bitmap = ImageBitmap(widthPx.coerceAtLeast(100), heightPx.coerceAtLeast(100))
     val canvas = androidx.compose.ui.graphics.Canvas(bitmap)
@@ -5849,11 +6056,27 @@ private fun renderTwoPageSpreadSnapshot(
             val scale = minOf(halfW / leftPdfBitmap.width.toFloat(), size.height / leftPdfBitmap.height.toFloat())
             val dstW = leftPdfBitmap.width * scale
             val dstH = leftPdfBitmap.height * scale
-            drawImage(
-                image = leftPdfBitmap.asImageBitmap(),
-                dstOffset = IntOffset(((halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
-                dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-            )
+            if (leftColorFilter != null) {
+                // Use Android Canvas for filter support
+                val androidCanvas = drawContext.canvas.nativeCanvas
+                val paint = android.graphics.Paint().apply {
+                    colorFilter = leftColorFilter
+                }
+                val srcRect = android.graphics.Rect(0, 0, leftPdfBitmap.width, leftPdfBitmap.height)
+                val dstRect = android.graphics.RectF(
+                    ((halfW - dstW) / 2),
+                    ((size.height - dstH) / 2),
+                    ((halfW - dstW) / 2) + dstW,
+                    ((size.height - dstH) / 2) + dstH
+                )
+                androidCanvas.drawBitmap(leftPdfBitmap, srcRect, dstRect, paint)
+            } else {
+                drawImage(
+                    image = leftPdfBitmap.asImageBitmap(),
+                    dstOffset = IntOffset(((halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
+                    dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
+                )
+            }
         } else if (leftText.isNotBlank()) {
             val baseFontSize = pageTextStyle.fontSize.value
             val baseLineHeight = pageTextStyle.lineHeight.value
@@ -5896,11 +6119,27 @@ private fun renderTwoPageSpreadSnapshot(
             val scale = minOf(halfW / rightPdfBitmap.width.toFloat(), size.height / rightPdfBitmap.height.toFloat())
             val dstW = rightPdfBitmap.width * scale
             val dstH = rightPdfBitmap.height * scale
-            drawImage(
-                image = rightPdfBitmap.asImageBitmap(),
-                dstOffset = IntOffset((halfW + (halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
-                dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-            )
+            if (rightColorFilter != null) {
+                // Use Android Canvas for filter support
+                val androidCanvas = drawContext.canvas.nativeCanvas
+                val paint = android.graphics.Paint().apply {
+                    colorFilter = rightColorFilter
+                }
+                val srcRect = android.graphics.Rect(0, 0, rightPdfBitmap.width, rightPdfBitmap.height)
+                val dstRect = android.graphics.RectF(
+                    (halfW + (halfW - dstW) / 2),
+                    ((size.height - dstH) / 2),
+                    (halfW + (halfW - dstW) / 2) + dstW,
+                    ((size.height - dstH) / 2) + dstH
+                )
+                androidCanvas.drawBitmap(rightPdfBitmap, srcRect, dstRect, paint)
+            } else {
+                drawImage(
+                    image = rightPdfBitmap.asImageBitmap(),
+                    dstOffset = IntOffset((halfW + (halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
+                    dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
+                )
+            }
         } else if (rightText.isNotBlank()) {
             val baseFontSize = pageTextStyle.fontSize.value
             val baseLineHeight = pageTextStyle.lineHeight.value

@@ -437,6 +437,8 @@ private fun LlunevieMainContainer(
                     onSetAnimatePageTurn = { viewModel.setAnimatePageTurn(it) },
                     onSetPageAnimStyle = { viewModel.setPageAnimStyle(it) },
                     onSetVolumeKeysTurn = { viewModel.setVolumeKeysTurn(it) },
+                    onSetPdfThemeTintEnabled = { viewModel.setPdfThemeTintEnabled(it) },
+                    onSetPdfProtectIllustrations = { viewModel.setPdfProtectIllustrations(it) },
                     onToggleAutoImportFolder = { checked ->
                         if (checked && !viewModel.hasAllFilesAccess()) {
                             onRequestAllFilesAccess()

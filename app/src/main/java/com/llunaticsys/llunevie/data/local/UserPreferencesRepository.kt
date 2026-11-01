@@ -54,7 +54,9 @@ data class UserPreferencesState(
     val autoImportFolderEnabled: Boolean = false,
     val autoImportFolderPath: String = "/sdcard/Llunevie/Books",
     val autoImportFolderUri: String? = null,
-    val importedFileSignatures: Set<String> = emptySet()
+    val importedFileSignatures: Set<String> = emptySet(),
+    val pdfThemeTintEnabled: Boolean = true,
+    val pdfProtectIllustrations: Boolean = true
 ) {
     val lineHeightMult: Float get() = lineHeightMultiplier
     val flowMode: ReadingFlowMode get() = readingFlowMode
@@ -127,6 +129,8 @@ class UserPreferencesRepository(private val context: Context) {
         val AUTO_IMPORT_PATH = stringPreferencesKey("auto_import_folder_path")
         val AUTO_IMPORT_URI = stringPreferencesKey("auto_import_folder_uri")
         val IMPORTED_FILE_SIGNATURES = stringSetPreferencesKey("imported_file_signatures")
+        val PDF_THEME_TINT_ENABLED = booleanPreferencesKey("pdf_theme_tint_enabled")
+        val PDF_PROTECT_ILLUSTRATIONS = booleanPreferencesKey("pdf_protect_illustrations")
     }
 
     val preferencesFlow: Flow<UserPreferencesState> = context.llunevieDataStore.data.map { prefs ->
@@ -179,7 +183,9 @@ class UserPreferencesRepository(private val context: Context) {
             autoImportFolderEnabled = prefs[Keys.AUTO_IMPORT_ENABLED] ?: false,
             autoImportFolderPath = prefs[Keys.AUTO_IMPORT_PATH] ?: "/sdcard/Llunevie/Books",
             autoImportFolderUri = prefs[Keys.AUTO_IMPORT_URI],
-            importedFileSignatures = prefs[Keys.IMPORTED_FILE_SIGNATURES] ?: emptySet()
+            importedFileSignatures = prefs[Keys.IMPORTED_FILE_SIGNATURES] ?: emptySet(),
+            pdfThemeTintEnabled = prefs[Keys.PDF_THEME_TINT_ENABLED] ?: true,
+            pdfProtectIllustrations = prefs[Keys.PDF_PROTECT_ILLUSTRATIONS] ?: true
         )
     }
 
@@ -332,5 +338,13 @@ class UserPreferencesRepository(private val context: Context) {
             val current = prefs[Keys.IMPORTED_FILE_SIGNATURES] ?: emptySet()
             prefs[Keys.IMPORTED_FILE_SIGNATURES] = current + signatures
         }
+    }
+
+    suspend fun setPdfThemeTintEnabled(enabled: Boolean) {
+        context.llunevieDataStore.edit { it[Keys.PDF_THEME_TINT_ENABLED] = enabled }
+    }
+
+    suspend fun setPdfProtectIllustrations(enabled: Boolean) {
+        context.llunevieDataStore.edit { it[Keys.PDF_PROTECT_ILLUSTRATIONS] = enabled }
     }
 }

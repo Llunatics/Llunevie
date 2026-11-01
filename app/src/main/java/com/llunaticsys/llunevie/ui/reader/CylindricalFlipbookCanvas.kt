@@ -603,7 +603,8 @@ fun computePageRect(
 private fun DrawScope.drawPageBitmapFitted(
     bitmap: ImageBitmap,
     isPdfBook: Boolean,
-    isTwoPageSpread: Boolean
+    isTwoPageSpread: Boolean,
+    colorFilter: ColorFilter? = null
 ) {
     val canvasW = size.width.roundToInt().coerceAtLeast(1)
     val canvasH = size.height.roundToInt().coerceAtLeast(1)
@@ -625,14 +626,16 @@ private fun DrawScope.drawPageBitmapFitted(
             image = bitmap,
             dstOffset = IntOffset(offsetX, offsetY),
             dstSize = IntSize(dstW, dstH),
-            filterQuality = FilterQuality.Medium
+            filterQuality = FilterQuality.Medium,
+            colorFilter = colorFilter
         )
     } else {
         drawImage(
             image = bitmap,
             dstOffset = IntOffset.Zero,
             dstSize = IntSize(canvasW, canvasH),
-            filterQuality = FilterQuality.Medium
+            filterQuality = FilterQuality.Medium,
+            colorFilter = colorFilter
         )
     }
 }
@@ -654,6 +657,10 @@ fun CylindricalFlipbookCanvas(
     backPaperColor: Color,
     isPdfBook: Boolean = false,
     isTwoPageSpread: Boolean = false,
+    curPageColorFilter: ColorFilter? = null,
+    nextPageColorFilter: ColorFilter? = null,
+    prevPageColorFilter: ColorFilter? = null,
+    pdfTintedPaperColor: Color? = null,
     externalTriggerDir: Int = 0,
     onExternalTriggerConsumed: () -> Unit = {},
     manualProgress: Float? = null,
@@ -680,15 +687,19 @@ fun CylindricalFlipbookCanvas(
     var displayedPrevBmp by remember { mutableStateOf(prevPageBitmap) }
     var isWaitingForParentPageSync by remember { mutableStateOf(false) }
 
+    // Internal color filter state synchronized with bitmaps
+    var displayedCurrFilter by remember { mutableStateOf(curPageColorFilter) }
+    var displayedNextFilter by remember { mutableStateOf(nextPageColorFilter) }
+    var displayedPrevFilter by remember { mutableStateOf(prevPageColorFilter) }
+
     val isFlipActive = (manualProgress != null && manualProgress > 0.001f) || isDragging || progressAnim.value > 0.001f || isWaitingForParentPageSync
     LaunchedEffect(isFlipActive) {
         onFlipStateChanged(isFlipActive)
     }
 
-    // For PDF books, the paper surface is always crisp white (#FFFFFF) and the curling paper back is warm white (#F2EFE9),
-    // never black paper. Only EPUB/TXT adapts paper color to the theme!
-    val pagePaperColor = if (isPdfBook) Color.White else themeBgColor
-    val effectiveBackPaperColor = if (isPdfBook) Color(0xFFF2EFE9) else backPaperColor
+    // For PDF books with theme tinting, use the tinted paper color; otherwise use white or theme color
+    val pagePaperColor = if (isPdfBook && pdfTintedPaperColor != null) pdfTintedPaperColor else if (isPdfBook) Color.White else themeBgColor
+    val effectiveBackPaperColor = if (isPdfBook && pdfTintedPaperColor != null) pdfTintedPaperColor else if (isPdfBook) Color(0xFFF2EFE9) else backPaperColor
 
     val paperBleedFilter = remember {
         val cm = ColorMatrix().apply { setToSaturation(0.35f) }
@@ -708,6 +719,17 @@ fun CylindricalFlipbookCanvas(
             displayedCurrentBmp = currentPageBitmap
             isWaitingForParentPageSync = false
         }
+    }
+
+    // Sync color filters alongside bitmaps
+    LaunchedEffect(curPageColorFilter) {
+        displayedCurrFilter = curPageColorFilter
+    }
+    LaunchedEffect(nextPageColorFilter) {
+        if (nextPageColorFilter != null) displayedNextFilter = nextPageColorFilter
+    }
+    LaunchedEffect(prevPageColorFilter) {
+        if (prevPageColorFilter != null) displayedPrevFilter = prevPageColorFilter
     }
 
     LaunchedEffect(manualProgress) {
@@ -889,7 +911,7 @@ fun CylindricalFlipbookCanvas(
                     topLeft = Offset(pageRect.left, pageRect.top),
                     size = Size(pageRect.width, pageRect.height)
                 )
-                drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread)
+                drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread, displayedCurrFilter)
                 if (isTwoPageSpread) {
                     val spineX = (pageRect.left + pageRect.right) / 2f
                     drawRect(

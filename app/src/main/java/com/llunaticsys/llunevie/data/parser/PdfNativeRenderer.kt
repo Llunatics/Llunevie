@@ -1636,4 +1636,135 @@ object PdfNativeRenderer {
 
         onUpdated(finalChapters, detectedIllusts)
     }
+
+    // Cached illustration detection results to avoid re-scanning pages
+    private val pdfIllustPageCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    fun isPdfPageProtectedIllustration(
+        bookId: String,
+        pageIndex: Int,
+        bitmap: Bitmap?,
+        knownIllustrations: List<BookIllustration>
+    ): Boolean {
+        // Page 0 is always the front cover
+        if (pageIndex == 0) return true
+
+        // Check if this page is explicitly marked as an illustration
+        if (knownIllustrations.any { it.pageIndexInBook == pageIndex }) return true
+
+        // Check cache
+        val key = "$bookId:$pageIndex"
+        pdfIllustPageCache[key]?.let { return it }
+
+        // If no bitmap available, cannot determine
+        if (bitmap == null || bitmap.isRecycled) return false
+
+        // Detect if this is a true illustration page
+        val detected = isTrueIllustrationPageBitmap(bitmap)
+        pdfIllustPageCache[key] = detected
+        return detected
+    }
+
+    fun buildPdfThemeColorFilter(
+        effectiveTheme: com.llunaticsys.llunevie.model.AppThemeMode,
+        amoledBlack: Boolean
+    ): androidx.compose.ui.graphics.ColorFilter? {
+        // WHITE theme uses original PDF colors (no filter)
+        if (effectiveTheme == com.llunaticsys.llunevie.model.AppThemeMode.WHITE) {
+            return null
+        }
+
+        // Define target paper (bg) and ink (fg) colors for each theme
+        val themeColors = when (effectiveTheme) {
+            com.llunaticsys.llunevie.model.AppThemeMode.PAPER -> {
+                // Paper theme: #F5F2EA background, #23201A text
+                arrayOf(245f, 242f, 234f, 35f, 32f, 26f)
+            }
+            com.llunaticsys.llunevie.model.AppThemeMode.SEPIA -> {
+                // Sepia theme: #EFE6D5 background, #2C2217 text
+                arrayOf(239f, 230f, 213f, 44f, 34f, 23f)
+            }
+            com.llunaticsys.llunevie.model.AppThemeMode.BLACK -> {
+                if (amoledBlack) {
+                    // AMOLED Black: #000000 background, #E8E4DB text
+                    arrayOf(0f, 0f, 0f, 232f, 228f, 219f)
+                } else {
+                    // Regular Black: #141413 background, #EDEAE2 text
+                    arrayOf(20f, 20f, 19f, 237f, 234f, 226f)
+                }
+            }
+            else -> return null // WHITE already handled above
+        }
+        val bgR = themeColors[0]
+        val bgG = themeColors[1]
+        val bgB = themeColors[2]
+        val fgR = themeColors[3]
+        val fgG = themeColors[4]
+        val fgB = themeColors[5]
+
+        // Build ColorMatrix that maps:
+        // - input black (0, 0, 0) -> foreground color (text)
+        // - input white (255, 255, 255) -> background color (paper)
+        val sR = (bgR - fgR) / 255f
+        val sG = (bgG - fgG) / 255f
+        val sB = (bgB - fgB) / 255f
+
+        val matrix = androidx.compose.ui.graphics.ColorMatrix(
+            floatArrayOf(
+                sR, 0f, 0f, 0f, fgR,
+                0f, sG, 0f, 0f, fgG,
+                0f, 0f, sB, 0f, fgB,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+
+        return androidx.compose.ui.graphics.ColorFilter.colorMatrix(matrix)
+    }
+
+    fun buildAndroidPdfThemeColorFilter(
+        effectiveTheme: com.llunaticsys.llunevie.model.AppThemeMode,
+        amoledBlack: Boolean
+    ): android.graphics.ColorMatrixColorFilter? {
+        if (effectiveTheme == com.llunaticsys.llunevie.model.AppThemeMode.WHITE) {
+            return null
+        }
+
+        val themeColors = when (effectiveTheme) {
+            com.llunaticsys.llunevie.model.AppThemeMode.PAPER -> {
+                arrayOf(245f, 242f, 234f, 35f, 32f, 26f)
+            }
+            com.llunaticsys.llunevie.model.AppThemeMode.SEPIA -> {
+                arrayOf(239f, 230f, 213f, 44f, 34f, 23f)
+            }
+            com.llunaticsys.llunevie.model.AppThemeMode.BLACK -> {
+                if (amoledBlack) {
+                    arrayOf(0f, 0f, 0f, 232f, 228f, 219f)
+                } else {
+                    arrayOf(20f, 20f, 19f, 237f, 234f, 226f)
+                }
+            }
+            else -> return null
+        }
+        val bgR = themeColors[0]
+        val bgG = themeColors[1]
+        val bgB = themeColors[2]
+        val fgR = themeColors[3]
+        val fgG = themeColors[4]
+        val fgB = themeColors[5]
+
+        val sR = (bgR - fgR) / 255f
+        val sG = (bgG - fgG) / 255f
+        val sB = (bgB - fgB) / 255f
+
+        val matrix = android.graphics.ColorMatrix(
+            floatArrayOf(
+                sR, 0f, 0f, 0f, fgR,
+                0f, sG, 0f, 0f, fgG,
+                0f, 0f, sB, 0f, fgB,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+
+        return android.graphics.ColorMatrixColorFilter(matrix)
+    }
 }
