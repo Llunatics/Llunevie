@@ -256,6 +256,26 @@ fun getReaderFontFamily(context: Context? = null, name: String, fontWeight: Int 
     }
 }
 
+// In-memory snapshot bitmap cache for instant 0ms page turns
+private val epubSnapshotCache = android.util.LruCache<String, ImageBitmap>(12)
+
+private fun buildSnapshotCacheKey(
+    bookId: String,
+    pageZero: Int,
+    isSpread: Boolean,
+    widthPx: Int,
+    heightPx: Int,
+    bgArgb: Int,
+    textArgb: Int,
+    prefs: UserPreferencesState,
+    highlightsHash: Int
+): String {
+    return "$bookId:$pageZero:$isSpread:${widthPx}x${heightPx}:$bgArgb:$textArgb:" +
+           "${prefs.fontSizeSp}:${prefs.lineHeightMultiplier}:${prefs.fontFamily}:" +
+           "${prefs.fontWeight}:${prefs.paraSpacingEm}:${prefs.wordSpacingPx}:" +
+           "${prefs.pageMargin}:${prefs.paraIndent}:${prefs.letterSpacingEm}:${prefs.textAlign}:$highlightsHash"
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ReaderScreen(
@@ -1001,14 +1021,7 @@ fun ReaderScreen(
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
                                         } else if (isPdfBook) {
-                                            val pdfRatio = if (curLeftPdfBmp != null && curLeftPdfBmp!!.height > 0) {
-                                                curLeftPdfBmp!!.width.toFloat() / curLeftPdfBmp!!.height.toFloat()
-                                            } else {
-                                                PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
-                                            }
-                                            Modifier
-                                                .fillMaxHeight()
-                                                .aspectRatio(pdfRatio)
+                                            Modifier.fillMaxSize()
                                         } else {
                                             Modifier.fillMaxSize()
                                         }
@@ -1179,8 +1192,8 @@ fun ReaderScreen(
                                                     color = Color.White,
                                                     shadowElevation = 8.dp,
                                                     modifier = Modifier
-                                                        .fillMaxHeight()
-                                                        .aspectRatio(pdfRatio)
+                                                        .fillMaxWidth()
+                                                        .aspectRatio(pdfRatio, matchHeightConstraintsFirst = false)
                                                 ) {
                                                     Image(
                                                         bitmap = curLeftPdfBmp!!.asImageBitmap(),
@@ -5289,8 +5302,8 @@ fun PdfPageItemContent(
                 color = Color.White,
                 shadowElevation = 8.dp,
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .aspectRatio(ratio)
+                    .fillMaxWidth()
+                    .aspectRatio(ratio, matchHeightConstraintsFirst = false)
                     .padding(vertical = 4.dp)
             ) {
                 Image(
@@ -5302,6 +5315,96 @@ fun PdfPageItemContent(
             }
         }
     }
+}
+
+private fun computeOnePageFitScale(
+    textMeasurer: TextMeasurer,
+    widthPx: Int,
+    heightPx: Int,
+    density: Density,
+    chapterTitle: String,
+    pageText: String,
+    baseTextStyle: TextStyle,
+    padX: Float,
+    padTop: Float,
+    padBottom: Float,
+    showChapterHeader: Boolean,
+    isCover: Boolean,
+    highlights: List<HighlightNoteEntity>,
+    chapterIndex: Int,
+    pageIndex: Int,
+    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette,
+    prefs: UserPreferencesState
+): Float {
+    val rawParagraphs = pageText.split("\n\n").map { it.trim() }.filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
+    val isCoverActual = isCover || 
+        ((chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) && rawParagraphs.any { it.startsWith("[ILLUST:") }) ||
+        (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
+    
+    // Covers and illustration-only pages don't need scaling
+    if (isCoverActual) return 1f
+    
+    val availableH = (heightPx - padTop - padBottom - with(density) { 8.dp.toPx() }).coerceAtLeast(140f)
+    val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
+    var scale = 1f
+    
+    // Measure chapter header height
+    var headerH = 0f
+    if (showChapterHeader && chapterTitle.isNotBlank()) {
+        val titleLayout = textMeasurer.measure(
+            text = AnnotatedString(chapterTitle),
+            style = TextStyle(
+                color = palette.textMain,
+                fontSize = ((prefs.fontSizeSp) + 6).sp,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
+            ),
+            constraints = Constraints(maxWidth = contentW)
+        )
+        headerH = titleLayout.size.height + with(density) { 16.dp.toPx() }
+    }
+    
+    val textParagraphs = rawParagraphs.filter { !it.startsWith("[ILLUST:") }
+    val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
+        "justify" -> TextAlign.Justify
+        "center" -> TextAlign.Center
+        else -> TextAlign.Start
+    }
+    
+    // Measure body text and scale down if needed
+    var attempts = 0
+    while (scale > 0.52f && attempts < 15) {
+        val annotatedString = buildEpubPageAnnotatedString(
+            textParagraphs = textParagraphs,
+            prefs = prefs,
+            fontScale = scale,
+            resolvedTextAlign = resolvedTextAlign,
+            bookHighlights = highlights,
+            currentChapterIndex = chapterIndex,
+            currentPageInChapter = pageIndex,
+            displayPageIndex = -1,
+            palette = palette
+        )
+        
+        val scaledStyle = baseTextStyle.copy(
+            fontSize = (prefs.fontSizeSp * scale).sp,
+            lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier * scale).sp
+        )
+        
+        val layout = textMeasurer.measure(
+            text = annotatedString,
+            style = scaledStyle,
+            constraints = Constraints(maxWidth = contentW)
+        )
+        
+        val totalH = headerH + layout.size.height
+        if (totalH <= availableH) break
+        scale *= 0.94f
+        attempts++
+    }
+    
+    return scale.coerceAtLeast(0.52f)
 }
 
 private fun renderEpubPageSnapshot(
@@ -5393,10 +5496,31 @@ private fun renderEpubPageSnapshot(
             else -> TextAlign.Start
         }
 
+        // Compute fit scale to prevent text cropping
+        val fitScale = computeOnePageFitScale(
+            textMeasurer = textMeasurer,
+            widthPx = widthPx,
+            heightPx = heightPx,
+            density = density,
+            chapterTitle = chapterTitle,
+            pageText = pageText,
+            baseTextStyle = pageTextStyle,
+            padX = padX,
+            padTop = padTop,
+            padBottom = padBottom,
+            showChapterHeader = showChapterHeader,
+            isCover = isCover,
+            highlights = highlights,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            palette = palette,
+            prefs = effectivePrefs
+        )
+
         val annotatedString = buildEpubPageAnnotatedString(
             textParagraphs = textParagraphs,
             prefs = effectivePrefs,
-            fontScale = 1f,
+            fontScale = fitScale,
             resolvedTextAlign = resolvedTextAlign,
             bookHighlights = highlights,
             currentChapterIndex = chapterIndex,
@@ -5405,9 +5529,14 @@ private fun renderEpubPageSnapshot(
             palette = palette
         )
 
+        val scaledStyle = pageTextStyle.copy(
+            fontSize = (effectivePrefs.fontSizeSp * fitScale).sp,
+            lineHeight = (effectivePrefs.fontSizeSp * effectivePrefs.lineHeightMultiplier * fitScale).sp
+        )
+
         val layout = textMeasurer.measure(
             text = annotatedString,
-            style = pageTextStyle,
+            style = scaledStyle,
             constraints = Constraints(maxWidth = contentW)
         )
 

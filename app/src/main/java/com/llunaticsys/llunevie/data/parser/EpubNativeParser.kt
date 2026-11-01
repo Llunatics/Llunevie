@@ -465,12 +465,38 @@ object EpubNativeParser {
                             }
                             pagesArr.put(para)
                         } else {
-                            currentChunk.add(para)
-                            currentChars += para.length
-                            if (currentChars >= 820 || currentChunk.size >= 5) {
+                            // Check BEFORE adding to prevent oversized chunks
+                            if (currentChunk.isNotEmpty() && (currentChars + para.length > 580 || currentChunk.size >= 4)) {
                                 pagesArr.put(currentChunk.joinToString("\n\n"))
                                 currentChunk.clear()
                                 currentChars = 0
+                            }
+                            // Split single oversized paragraphs at sentence boundaries
+                            if (para.length > 620) {
+                                val sentences = para.split(Regex("""(?<=[.!?""'])\s+"""))
+                                var subChunk = StringBuilder()
+                                for (sent in sentences) {
+                                    if (subChunk.isNotEmpty() && subChunk.length + sent.length > 580) {
+                                        if (currentChunk.isNotEmpty()) {
+                                            currentChunk.add(subChunk.toString())
+                                            pagesArr.put(currentChunk.joinToString("\n\n"))
+                                            currentChunk.clear()
+                                            currentChars = 0
+                                        } else {
+                                            pagesArr.put(subChunk.toString())
+                                        }
+                                        subChunk = StringBuilder()
+                                    }
+                                    if (subChunk.isNotEmpty()) subChunk.append(" ")
+                                    subChunk.append(sent)
+                                }
+                                if (subChunk.isNotEmpty()) {
+                                    currentChunk.add(subChunk.toString())
+                                    currentChars += subChunk.length
+                                }
+                            } else {
+                                currentChunk.add(para)
+                                currentChars += para.length
                             }
                         }
                     }

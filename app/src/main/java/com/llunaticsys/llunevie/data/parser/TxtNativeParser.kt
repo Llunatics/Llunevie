@@ -72,12 +72,38 @@ object TxtNativeParser {
         val chunk = mutableListOf<String>()
         var charCount = 0
         for (para in paragraphs) {
-            chunk.add(para)
-            charCount += para.length
-            if (charCount >= 820 || chunk.size >= 5) {
+            // Check BEFORE adding to prevent oversized chunks
+            if (chunk.isNotEmpty() && (charCount + para.length > 580 || chunk.size >= 4)) {
                 allPages.add(chunk.joinToString("\n\n"))
                 chunk.clear()
                 charCount = 0
+            }
+            // Split single oversized paragraphs at sentence boundaries
+            if (para.length > 620) {
+                val sentences = para.split(Regex("""(?<=[.!?""'])\s+"""))
+                var subChunk = StringBuilder()
+                for (sent in sentences) {
+                    if (subChunk.isNotEmpty() && subChunk.length + sent.length > 580) {
+                        if (chunk.isNotEmpty()) {
+                            chunk.add(subChunk.toString())
+                            allPages.add(chunk.joinToString("\n\n"))
+                            chunk.clear()
+                            charCount = 0
+                        } else {
+                            allPages.add(subChunk.toString())
+                        }
+                        subChunk = StringBuilder()
+                    }
+                    if (subChunk.isNotEmpty()) subChunk.append(" ")
+                    subChunk.append(sent)
+                }
+                if (subChunk.isNotEmpty()) {
+                    chunk.add(subChunk.toString())
+                    charCount += subChunk.length
+                }
+            } else {
+                chunk.add(para)
+                charCount += para.length
             }
         }
         if (chunk.isNotEmpty()) {

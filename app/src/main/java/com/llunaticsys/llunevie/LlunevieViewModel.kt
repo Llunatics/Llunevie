@@ -768,6 +768,64 @@ class LlunevieViewModel(
     // -------------------------------------------------------------------------
     // READER ENGINE: OPEN BOOK, CUMULATIVE PAGINATION, CHAPTERS, HIGHLIGHTS
     // -------------------------------------------------------------------------
+    
+    private fun reflowOversizedTextPages(pages: List<String>, maxChars: Int = 580): List<String> {
+        val reflowed = mutableListOf<String>()
+        for (pageText in pages) {
+            // Keep illustration pages, PDF page markers, and normal-sized pages as-is
+            if (pageText.length <= 620 || pageText.contains("[ILLUST:") || pageText.contains("[PDF_PAGE:")) {
+                reflowed.add(pageText)
+                continue
+            }
+            // Split oversized page into balanced sub-pages
+            val paragraphs = pageText.split(Regex("""\n\n+"""))
+            val subPages = mutableListOf<String>()
+            val currentChunk = mutableListOf<String>()
+            var currentChars = 0
+            
+            for (para in paragraphs) {
+                // Check before adding to prevent overflow
+                if (currentChunk.isNotEmpty() && currentChars + para.length > maxChars) {
+                    subPages.add(currentChunk.joinToString("\n\n"))
+                    currentChunk.clear()
+                    currentChars = 0
+                }
+                // Split single oversized paragraphs at sentence boundaries
+                if (para.length > 620) {
+                    val sentences = para.split(Regex("""(?<=[.!?""'])\s+"""))
+                    var subChunk = StringBuilder()
+                    for (sent in sentences) {
+                        if (subChunk.isNotEmpty() && subChunk.length + sent.length > maxChars) {
+                            if (currentChunk.isNotEmpty()) {
+                                currentChunk.add(subChunk.toString())
+                                subPages.add(currentChunk.joinToString("\n\n"))
+                                currentChunk.clear()
+                                currentChars = 0
+                            } else {
+                                subPages.add(subChunk.toString())
+                            }
+                            subChunk = StringBuilder()
+                        }
+                        if (subChunk.isNotEmpty()) subChunk.append(" ")
+                        subChunk.append(sent)
+                    }
+                    if (subChunk.isNotEmpty()) {
+                        currentChunk.add(subChunk.toString())
+                        currentChars += subChunk.length
+                    }
+                } else {
+                    currentChunk.add(para)
+                    currentChars += para.length
+                }
+            }
+            if (currentChunk.isNotEmpty()) {
+                subPages.add(currentChunk.joinToString("\n\n"))
+            }
+            reflowed.addAll(subPages)
+        }
+        return reflowed
+    }
+    
     fun openBookInReader(bookId: String) {
         viewModelScope.launch {
             val rawBook = dao.getBookById(bookId) ?: return@launch
@@ -784,9 +842,12 @@ class LlunevieViewModel(
 
             if (chEntities.isNotEmpty()) {
                 var globalTracker = 0
+                val isPdf = book.format.equals("PDF", true)
                 for (ce in chEntities) {
                     val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                    val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }.ifEmpty { listOf(book.synopsis) }
+                    val rawPagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }.ifEmpty { listOf(book.synopsis) }
+                    // Apply reflow to fix oversized pages in existing EPUB/TXT books
+                    val pagesList = if (!isPdf) reflowOversizedTextPages(rawPagesList) else rawPagesList
                     val cleanChTitle = sanitizeBookOrChapterText(ce.title)
                     parsedChapters.add(BookChapter(index = ce.chapterIndex, title = cleanChTitle, pages = pagesList))
 
