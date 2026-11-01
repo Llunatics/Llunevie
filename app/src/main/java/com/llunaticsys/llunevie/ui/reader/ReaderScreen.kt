@@ -127,6 +127,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -146,6 +147,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -779,6 +782,9 @@ fun ReaderScreen(
                             var liveDragProgress by remember { mutableFloatStateOf(0f) }
                             var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
 
+                            var readerZoom by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableFloatStateOf(1f) }
+                            var readerPan by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableStateOf(Offset.Zero) }
+
                             val flipbookGestureModifier = Modifier.pointerInput(
                                 curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
                                 showPageScrubber, showInlinePageSlider, uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
@@ -807,11 +813,66 @@ fun ReaderScreen(
                                     var dragLocked = false
                                     var totalDx = 0f
                                     var totalDy = 0f
+                                    var isMultiTouchPinch = false
                                     val velocityTracker = VelocityTracker()
                                     velocityTracker.addPosition(down.uptimeMillis, down.position)
 
                                     while (true) {
                                         val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val pressedChanges = event.changes.filter { it.pressed }
+
+                                        // 1. MULTI-TOUCH PINCH-TO-ZOOM (2+ fingers down at any point)
+                                        if (pressedChanges.size >= 2 || isMultiTouchPinch) {
+                                            if (!isMultiTouchPinch) {
+                                                isMultiTouchPinch = true
+                                                // Immediately cancel any incipient 1-finger page flip!
+                                                dragLocked = false
+                                                liveDragProgress = 0f
+                                                isFlippingInProgress = false
+                                                lockedCurrBmp = null
+                                                lockedNextBmp = null
+                                                lockedPrevBmp = null
+                                            }
+                                            if (pressedChanges.size >= 2) {
+                                                val zoomChange = event.calculateZoom()
+                                                val panChange = event.calculatePan()
+                                                val newZoom = (readerZoom * zoomChange).coerceIn(1f, 4f)
+                                                val maxPanX = (size.width.toFloat() * (newZoom - 1f)) * 0.5f
+                                                val maxPanY = (size.height.toFloat() * (newZoom - 1f)) * 0.5f
+                                                readerZoom = if (newZoom <= 1.02f) 1f else newZoom
+                                                readerPan = if (readerZoom <= 1f) {
+                                                    Offset.Zero
+                                                } else {
+                                                    Offset(
+                                                        x = (readerPan.x + panChange.x).coerceIn(-maxPanX, maxPanX),
+                                                        y = (readerPan.y + panChange.y).coerceIn(-maxPanY, maxPanY)
+                                                    )
+                                                }
+                                            }
+                                            event.changes.forEach { it.consume() }
+                                            if (pressedChanges.isEmpty()) {
+                                                break
+                                            }
+                                            continue
+                                        }
+
+                                        // 2. SINGLE-FINGER PAN WHEN CURRENTLY ZOOMED IN (readerZoom > 1.01f)
+                                        if (readerZoom > 1.01f) {
+                                            val panChange = event.calculatePan()
+                                            val maxPanX = (size.width.toFloat() * (readerZoom - 1f)) * 0.5f
+                                            val maxPanY = (size.height.toFloat() * (readerZoom - 1f)) * 0.5f
+                                            readerPan = Offset(
+                                                x = (readerPan.x + panChange.x).coerceIn(-maxPanX, maxPanX),
+                                                y = (readerPan.y + panChange.y).coerceIn(-maxPanY, maxPanY)
+                                            )
+                                            event.changes.forEach { it.consume() }
+                                            if (pressedChanges.isEmpty()) {
+                                                break
+                                            }
+                                            continue
+                                        }
+
+                                        // 3. EXISTING SINGLE-FINGER PAGE FLIP LOGIC (only when !isMultiTouchPinch && readerZoom <= 1.01f)
                                         val change = event.changes.firstOrNull() ?: break
                                         if (change.changedToUp()) {
                                             if (dragLocked && isFlippingInProgress) {
@@ -944,13 +1005,24 @@ fun ReaderScreen(
                                     .then(flipbookGestureModifier),
                                 contentAlignment = Alignment.Center
                             ) {
-                                val activeBmp = activeCurrBmp ?: curBitmap
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clipToBounds()
+                                        .graphicsLayer {
+                                            scaleX = readerZoom
+                                            scaleY = readerZoom
+                                            translationX = readerPan.x
+                                            translationY = readerPan.y
+                                        }
+                                ) {
+                                    val activeBmp = activeCurrBmp ?: curBitmap
                                 if (activeBmp != null) {
                                     CylindricalFlipbookCanvas(
                                         currentPageBitmap = activeBmp,
                                         nextPageBitmap = activeNextBmp ?: nextBitmap,
                                         prevPageBitmap = activePrevBmp ?: prevBitmap,
-                                        themeBgColor = if (isPdfBook) Color.White else if (isSpread) palette.bgCard else palette.bgApp,
+                                        themeBgColor = if (isSpread) palette.bgCard else palette.bgApp,
                                         backPaperColor = if (isPdfBook) Color(0xFFF2EFE9) else palette.flipBackPaper,
                                         isPdfBook = isPdfBook,
                                         isTwoPageSpread = isSpread,
@@ -1070,9 +1142,32 @@ fun ReaderScreen(
                                     )
                                 }
                             }
-                        } else {
-                            @Composable
-                            fun RenderSpreadPageForNonFlipbook(leftZero: Int, rightZero: Int) {
+                        }
+
+                        // Floating Zoom Indicator & Reset Pill
+                        if (readerZoom > 1.01f) {
+                            Surface(
+                                onClick = { readerZoom = 1f; readerPan = Offset.Zero },
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = 96.dp)
+                                    .zIndex(30f),
+                                shape = RoundedCornerShape(20.dp),
+                                color = palette.bgCard.copy(alpha = 0.92f),
+                                tonalElevation = 4.dp,
+                                shadowElevation = 8.dp
+                            ) {
+                                Text(
+                                    text = "${(readerZoom * 100).roundToInt()}% · Reset",
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = palette.textMain
+                                )
+                            }
+                        }
+                } else {
+                    @Composable
+                    fun RenderSpreadPageForNonFlipbook(leftZero: Int, rightZero: Int) {
                                 val leftTriple = getPageAtGlobalZero(leftZero)
                                 val rightTriple = getPageAtGlobalZero(rightZero)
                                 val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
@@ -5013,6 +5108,12 @@ private fun InteractiveTextPageContent(
                                     while (true) {
                                         val event = awaitPointerEvent(PointerEventPass.Initial)
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                                        // Abort on 2+ finger touch to allow parent pinch-to-zoom
+                                        if (event.changes.count { it.pressed } >= 2) {
+                                            abortedToPageTurn = true
+                                            break
+                                        }
 
                                         if (!change.pressed) {
                                             if (isLongPressTriggered) {

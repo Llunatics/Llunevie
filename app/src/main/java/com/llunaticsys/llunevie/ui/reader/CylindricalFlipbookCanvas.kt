@@ -662,6 +662,7 @@ fun CylindricalFlipbookCanvas(
     onPageTurnCommitted: (direction: Int) -> Unit,
     onCenterTap: () -> Unit = {},
     onFlipStateChanged: (Boolean) -> Unit = {},
+    enableInternalGestures: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -686,7 +687,7 @@ fun CylindricalFlipbookCanvas(
 
     // For PDF books, the paper surface is always crisp white (#FFFFFF) and the curling paper back is warm white (#F2EFE9),
     // never black paper. Only EPUB/TXT adapts paper color to the theme!
-    val effectivePageBgColor = if (isPdfBook) Color.White else themeBgColor
+    val pagePaperColor = if (isPdfBook) Color.White else themeBgColor
     val effectiveBackPaperColor = if (isPdfBook) Color(0xFFF2EFE9) else backPaperColor
 
     val paperBleedFilter = remember {
@@ -764,102 +765,114 @@ fun CylindricalFlipbookCanvas(
     Canvas(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    if (progressAnim.isRunning || isWaitingForParentPageSync) return@detectTapGestures
-                    val w = size.width.toFloat().coerceAtLeast(1f)
-                    val relX = offset.x / w
-                    val nextB = displayedNextBmp ?: nextPageBitmap
-                    val prevB = displayedPrevBmp ?: prevPageBitmap
-                    if (relX >= 0.76f && nextB != null) {
-                        turnDir = 1
-                        cornerYNorm = 0.78f
-                        scope.launch {
-                            progressAnim.snapTo(0.01f)
-                            animateCommitTurn(1, nextB, 380)
-                        }
-                    } else if (relX <= 0.24f && prevB != null) {
-                        turnDir = -1
-                        cornerYNorm = 0.78f
-                        scope.launch {
-                            progressAnim.snapTo(0.01f)
-                            animateCommitTurn(-1, prevB, 380)
-                        }
-                    } else {
-                        onCenterTap()
-                    }
-                }
-            }
-            .pointerInput(Unit) {
-                val velocityTracker = VelocityTracker()
-                var dragStartX = 0f
-                detectDragGestures(
-                    onDragStart = { startOffset ->
-                        if (progressAnim.isRunning) {
-                            scope.launch {
-                                progressAnim.snapTo(0f)
-                            }
-                        }
-                        isWaitingForParentPageSync = false
-                        velocityTracker.resetTracking()
-                        dragStartX = startOffset.x
-                        cornerYNorm = (startOffset.y / size.height.toFloat().coerceAtLeast(1f)).coerceIn(0.05f, 0.95f)
-                        isDragging = false
-                    },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        velocityTracker.addPosition(change.uptimeMillis, change.position)
-                        val w = size.width.toFloat().coerceAtLeast(1f)
-                        val h = size.height.toFloat().coerceAtLeast(1f)
-                        val totalDx = change.position.x - dragStartX
-
-                        if (!isDragging) {
-                            if (abs(totalDx) < 6f) return@detectDragGestures
-                            val candidateDir = if (totalDx < 0f) 1 else -1
+            .then(
+                if (enableInternalGestures) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            if (progressAnim.isRunning || isWaitingForParentPageSync) return@detectTapGestures
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            val relX = offset.x / w
                             val nextB = displayedNextBmp ?: nextPageBitmap
                             val prevB = displayedPrevBmp ?: prevPageBitmap
-                            if (candidateDir > 0 && nextB == null) return@detectDragGestures
-                            if (candidateDir < 0 && prevB == null) return@detectDragGestures
-                            turnDir = candidateDir
-                            isDragging = true
-                        }
-
-                        val signedDelta = if (turnDir > 0) (dragStartX - change.position.x) else (change.position.x - dragStartX)
-                        val liveP = (signedDelta / (w * 0.82f)).coerceIn(0.01f, 0.985f)
-                        val liveY = (change.position.y / h).coerceIn(0.05f, 0.95f)
-                        cornerYNorm = cornerYNorm * 0.3f + liveY * 0.7f
-                        scope.launch { progressAnim.snapTo(liveP) }
-                    },
-                    onDragEnd = {
-                        if (!isDragging) return@detectDragGestures
-                        isDragging = false
-                        val velX = velocityTracker.calculateVelocity().x
-                        val speedInDir = if (turnDir > 0) -velX else velX
-                        val curP = progressAnim.value
-                        val shouldCommit = curP >= 0.30f || (curP >= 0.05f && speedInDir > 380f)
-                        val destBmp = if (turnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
-                        val flingDuration = if (speedInDir > 900f) 220 else if (speedInDir > 500f) 300 else 380
-
-                        scope.launch {
-                            if (shouldCommit && destBmp != null) {
-                                animateCommitTurn(turnDir, destBmp, flingDuration)
+                            if (relX >= 0.76f && nextB != null) {
+                                turnDir = 1
+                                cornerYNorm = 0.78f
+                                scope.launch {
+                                    progressAnim.snapTo(0.01f)
+                                    animateCommitTurn(1, nextB, 380)
+                                }
+                            } else if (relX <= 0.24f && prevB != null) {
+                                turnDir = -1
+                                cornerYNorm = 0.78f
+                                scope.launch {
+                                    progressAnim.snapTo(0.01f)
+                                    animateCommitTurn(-1, prevB, 380)
+                                }
                             } else {
-                                progressAnim.animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessMedium
-                                    )
-                                )
+                                onCenterTap()
                             }
                         }
-                    },
-                    onDragCancel = {
-                        isDragging = false
-                        scope.launch { progressAnim.animateTo(0f) }
                     }
-                )
-            }
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (enableInternalGestures) {
+                    Modifier.pointerInput(Unit) {
+                        val velocityTracker = VelocityTracker()
+                        var dragStartX = 0f
+                        detectDragGestures(
+                            onDragStart = { startOffset ->
+                                if (progressAnim.isRunning) {
+                                    scope.launch {
+                                        progressAnim.snapTo(0f)
+                                    }
+                                }
+                                isWaitingForParentPageSync = false
+                                velocityTracker.resetTracking()
+                                dragStartX = startOffset.x
+                                cornerYNorm = (startOffset.y / size.height.toFloat().coerceAtLeast(1f)).coerceIn(0.05f, 0.95f)
+                                isDragging = false
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                velocityTracker.addPosition(change.uptimeMillis, change.position)
+                                val w = size.width.toFloat().coerceAtLeast(1f)
+                                val h = size.height.toFloat().coerceAtLeast(1f)
+                                val totalDx = change.position.x - dragStartX
+
+                                if (!isDragging) {
+                                    if (abs(totalDx) < 6f) return@detectDragGestures
+                                    val candidateDir = if (totalDx < 0f) 1 else -1
+                                    val nextB = displayedNextBmp ?: nextPageBitmap
+                                    val prevB = displayedPrevBmp ?: prevPageBitmap
+                                    if (candidateDir > 0 && nextB == null) return@detectDragGestures
+                                    if (candidateDir < 0 && prevB == null) return@detectDragGestures
+                                    turnDir = candidateDir
+                                    isDragging = true
+                                }
+
+                                val signedDelta = if (turnDir > 0) (dragStartX - change.position.x) else (change.position.x - dragStartX)
+                                val liveP = (signedDelta / (w * 0.82f)).coerceIn(0.01f, 0.985f)
+                                val liveY = (change.position.y / h).coerceIn(0.05f, 0.95f)
+                                cornerYNorm = cornerYNorm * 0.3f + liveY * 0.7f
+                                scope.launch { progressAnim.snapTo(liveP) }
+                            },
+                            onDragEnd = {
+                                if (!isDragging) return@detectDragGestures
+                                isDragging = false
+                                val velX = velocityTracker.calculateVelocity().x
+                                val speedInDir = if (turnDir > 0) -velX else velX
+                                val curP = progressAnim.value
+                                val shouldCommit = curP >= 0.30f || (curP >= 0.05f && speedInDir > 380f)
+                                val destBmp = if (turnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
+                                val flingDuration = if (speedInDir > 900f) 220 else if (speedInDir > 500f) 300 else 380
+
+                                scope.launch {
+                                    if (shouldCommit && destBmp != null) {
+                                        animateCommitTurn(turnDir, destBmp, flingDuration)
+                                    } else {
+                                        progressAnim.animateTo(
+                                            targetValue = 0f,
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMedium
+                                            )
+                                        )
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                isDragging = false
+                                scope.launch { progressAnim.animateTo(0f) }
+                            }
+                        )
+                    }
+                } else {
+                    Modifier
+                }
+            )
     ) {
         val w = size.width
         val h = size.height
@@ -869,8 +882,13 @@ fun CylindricalFlipbookCanvas(
         val pageRect = computePageRect(curBmp, isPdfBook, isTwoPageSpread, w, h)
 
         if (p <= 0.002f) {
-            drawRect(color = effectivePageBgColor, size = size)
+            drawRect(color = themeBgColor, size = size)
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
+                drawRect(
+                    color = pagePaperColor,
+                    topLeft = Offset(pageRect.left, pageRect.top),
+                    size = Size(pageRect.width, pageRect.height)
+                )
                 drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread)
                 if (isTwoPageSpread) {
                     val spineX = (pageRect.left + pageRect.right) / 2f
@@ -893,7 +911,7 @@ fun CylindricalFlipbookCanvas(
             return@Canvas
         }
 
-        drawRect(color = effectivePageBgColor, size = size)
+        drawRect(color = themeBgColor, size = size)
 
         val destBitmap = if (effectiveTurnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
         val bell = sin(p * PI.toFloat())
@@ -1182,7 +1200,7 @@ fun CylindricalFlipbookCanvas(
                         close()
                     }
                     clipPath(nextPoly) {
-                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
                             drawPageBitmapFitted(destBitmap, isPdfBook, false)
                         }
@@ -1206,7 +1224,7 @@ fun CylindricalFlipbookCanvas(
 
                     clipPath(currPoly) {
                         // Draw flat underlying current page up to crease line F_top -> F_bot
-                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         drawPageBitmapFitted(curBmp, isPdfBook, false)
 
                         // Drop shadow strictly along left leading edge leadTop -> leadBot of backPoly onto currPoly
@@ -1312,7 +1330,7 @@ fun CylindricalFlipbookCanvas(
                         close()
                     }
                     clipPath(prevPoly) {
-                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
                             drawPageBitmapFitted(destBitmap, isPdfBook, false)
                         }
@@ -1336,7 +1354,7 @@ fun CylindricalFlipbookCanvas(
 
                     clipPath(currPoly) {
                         // Draw flat underlying current page up to crease line F_top -> F_bot
-                        drawRect(color = effectivePageBgColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         drawPageBitmapFitted(curBmp, isPdfBook, false)
 
                         // Drop shadow strictly along right leading edge leadTop -> leadBot of backPoly onto currPoly
