@@ -499,35 +499,30 @@ fun LibraryScreen(
                                                }
 
                                                val spineContext = LocalContext.current
+                                               val effectiveSpineColor = remember(book.spineColorHex) {
+                                                   if (book.spineColorHex != 0L) Color(book.spineColorHex) else Color(0xFF2B3A4A)
+                                               }
+                                               
+                                               // Only extract spine color if not already set
                                                LaunchedEffect(book.id, book.coverImagePath) {
                                                    val coverPath = book.coverImagePath
-                                                   if (!coverPath.isNullOrBlank()) {
+                                                   if (book.spineColorHex == 0L && !coverPath.isNullOrBlank() && !coverPath.startsWith("http", ignoreCase = true)) {
                                                        withContext(Dispatchers.IO) {
                                                            runCatching {
-                                                               val bmp = if (coverPath.startsWith("http://") || coverPath.startsWith("https://")) {
-                                                                   val loader = coil.ImageLoader(spineContext)
-                                                                   val req = coil.request.ImageRequest.Builder(spineContext)
-                                                                       .data(coverPath)
-                                                                       .allowHardware(false)
-                                                                       .build()
-                                                                   val result = (loader.execute(req) as? coil.request.SuccessResult)?.drawable
-                                                                   (result as? android.graphics.drawable.BitmapDrawable)?.bitmap
-                                                               } else {
-                                                                   BitmapFactory.decodeFile(coverPath)
-                                                               }
+                                                               val opts = BitmapFactory.Options().apply { inSampleSize = 8 }
+                                                               val bmp = BitmapFactory.decodeFile(coverPath, opts)
                                                                if (bmp != null) {
                                                                    val extracted = SpineColorExtractor.extractDominantSpineHex(bmp)
+                                                                   bmp.recycle()
                                                                    spineColorCache[book.id] = Color(extracted)
-                                                                   if (book.spineColorHex != extracted) {
-                                                                       onUpdateSpineColor(book.id, extracted)
-                                                                   }
+                                                                   onUpdateSpineColor(book.id, extracted)
                                                                }
                                                            }
                                                        }
                                                    }
                                                }
 
-                                               val effectiveSpineColor = spineColorCache[book.id] ?: (if (book.spineColorHex != 0L) Color(book.spineColorHex) else palette.textPrimary)
+                                               val displaySpineColor = spineColorCache[book.id] ?: effectiveSpineColor
 
                                                Box(
                                                    modifier = Modifier
@@ -540,9 +535,9 @@ fun LibraryScreen(
                                                            val left = coords.positionInParent().x
                                                            rowSpineBoundsMap[globalIdx] = Pair(left, left + coords.size.width)
                                                        }
-                                                      .shadow(if (isHovered || isSelected) 14.dp else 6.dp, spineShape)
-                                                      .clip(spineShape)
-                                                      .background(effectiveSpineColor)
+                                                     .shadow(if (isHovered || isSelected) 14.dp else 6.dp, spineShape)
+                                                     .clip(spineShape)
+                                                     .background(displaySpineColor)
                                                      .background(
                                                          Brush.horizontalGradient(
                                                              colors = listOf(

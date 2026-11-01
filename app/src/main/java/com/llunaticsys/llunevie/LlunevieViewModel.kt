@@ -122,7 +122,8 @@ data class LlunevieUiState(
     val manualBookPrefillIsbn: String? = null,
     val pdfIndexingState: Map<String, Int?> = emptyMap(),
     val importingBooksProgress: Map<String, Int> = emptyMap(),
-    val toastMessage: String? = null
+    val toastMessage: String? = null,
+    val isInitialDataReady: Boolean = false
 ) {
     val showCenterSearchLoader: Boolean
         get() = isCatalogSearching && catalogSearchResults.isEmpty()
@@ -148,7 +149,7 @@ class LlunevieViewModel(
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = UserPreferencesState()
+        initialValue = prefsRepo.getInitialBootState()
     )
 
     val books: StateFlow<List<BookEntity>> = dao.observeAllBooks().stateIn(
@@ -270,6 +271,66 @@ class LlunevieViewModel(
             preferences.first()
             if (preferences.value.autoImportFolderEnabled) {
                 scanAutoImportFolder()
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                // Delete all redundant .epub and .txt files inside File(appContext.filesDir, "books")
+                val booksDir = File(appContext.filesDir, "books")
+                if (booksDir.exists()) {
+                    booksDir.listFiles()?.forEach { f ->
+                        val ext = f.extension.lowercase()
+                        if (ext == "epub" || ext == "txt") {
+                            f.delete()
+                        }
+                    }
+                }
+
+                // Delete any subfolder in covers or file in books whose book ID is not in activeBookIds
+                val activeBookIds = dao.getAllBooks().map { it.id }.toSet()
+                val coversDir = File(appContext.filesDir, "covers")
+                if (coversDir.exists()) {
+                    coversDir.listFiles()?.forEach { folder ->
+                        if (folder.isDirectory && folder.name !in activeBookIds) {
+                            folder.deleteRecursively()
+                        }
+                    }
+                }
+                if (booksDir.exists()) {
+                    booksDir.listFiles()?.forEach { file ->
+                        val baseName = file.nameWithoutExtension
+                        if (baseName !in activeBookIds) {
+                            file.delete()
+                        }
+                    }
+                }
+
+                // Delete leftover PDFBox* or tmp_* files inside appContext.cacheDir
+                appContext.cacheDir.listFiles()?.forEach { f ->
+                    val name = f.name
+                    if (name.startsWith("PDFBox", ignoreCase = true) || name.startsWith("tmp_", ignoreCase = true)) {
+                        if (f.isDirectory) f.deleteRecursively() else f.delete()
+                    }
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                // Pre-warm LocalCoverBitmapCache on cold start to eliminate 1-3 frame monogram flash
+                prefsRepo.preferencesFlow.first()
+                val allBooks = dao.getAllBooks()
+                val onTheGoBooks = allBooks.filter { !it.completedAllPages }.sortedByDescending { it.createdAtMillis }.take(6)
+                val recentBooks = allBooks.sortedByDescending { it.createdAtMillis }.take(9)
+                val visibleBooks = (onTheGoBooks + recentBooks).distinctBy { it.id }
+                visibleBooks.forEach { book ->
+                    val path = book.coverImagePath
+                    if (!path.isNullOrBlank() && !path.startsWith("http", ignoreCase = true)) {
+                        com.llunaticsys.llunevie.ui.components.LocalCoverBitmapCache.loadOrDecode(path, 540)
+                    }
+                }
+                _uiState.update { it.copy(isInitialDataReady = true) }
+            }.onFailure {
+                _uiState.update { it.copy(isInitialDataReady = true) }
             }
         }
     }
@@ -671,10 +732,26 @@ class LlunevieViewModel(
         _uiState.update { it.copy(showDeleteConfirmDialog = show) }
     }
 
+    private fun deleteInternalBookFiles(bookId: String, localFilePath: String?) {
+        runCatching {
+            File(appContext.filesDir, "covers/$bookId").deleteRecursively()
+            File(appContext.filesDir, "books/$bookId.epub").delete()
+            File(appContext.filesDir, "books/$bookId.pdf").delete()
+            File(appContext.filesDir, "books/$bookId.txt").delete()
+            if (localFilePath != null && localFilePath.startsWith(appContext.filesDir.absolutePath)) {
+                File(localFilePath).delete()
+            }
+        }
+    }
+
     fun confirmDeleteSelectedBooks() {
         val ids = _uiState.value.libSelectedIds.toList()
         if (ids.isEmpty()) return
         viewModelScope.launch {
+            val booksToDelete = books.value.filter { it.id in ids }
+            booksToDelete.forEach { b ->
+                deleteInternalBookFiles(b.id, b.localFilePath)
+            }
             dao.deleteBooksByIds(ids)
             _uiState.update {
                 it.copy(
@@ -779,9 +856,16 @@ class LlunevieViewModel(
                         }
                     }
 
-                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false, or if tocIndexVersion < 3 to upgrade chapter and illustration detection).
-                    // On all subsequent opens (tocIndexed == true && tocIndexVersion >= 3), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
-                    if ((!book.tocIndexed || book.tocIndexVersion < 3) && _pdfIndexingState.value[bookId] == null) {
+                    // Detect fallback "Section 1..N" chapters
+                    val hasOnlyFallbackSections = parsedChapters.isNotEmpty() && parsedChapters.all { ch ->
+                        ch.title.startsWith("Section ", ignoreCase = true) ||
+                        ch.title.startsWith("Bagian ", ignoreCase = true) ||
+                        ch.title.equals(book.title, ignoreCase = true)
+                    }
+                    
+                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false, or if tocIndexVersion < 5 to upgrade chapter and illustration detection).
+                    // On all subsequent opens (tocIndexed == true && tocIndexVersion >= 5), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
+                    if ((!book.tocIndexed || book.tocIndexVersion < 5 || hasOnlyFallbackSections) && _pdfIndexingState.value[bookId] == null) {
                         indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                     }
                 }
@@ -828,6 +912,11 @@ class LlunevieViewModel(
                 }.getOrDefault(book.pagesCount)
 
                 val existingChapters = dao.getChaptersForBook(book.id)
+                val hasOnlyFallbackSections = existingChapters.isNotEmpty() && existingChapters.all { ce ->
+                    ce.title.startsWith("Section ", ignoreCase = true) ||
+                    ce.title.startsWith("Bagian ", ignoreCase = true) ||
+                    ce.title.equals(book.title, ignoreCase = true)
+                }
                 val isEn = preferences.value.lang == "en"
                 _pdfIndexingState.update { it + (book.id to 5) }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 5)) }
@@ -839,7 +928,7 @@ class LlunevieViewModel(
                     totalPages = actualPageCount,
                     defaultTitle = book.title,
                     isEn = isEn,
-                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= 3 && existingChapters.isNotEmpty()) existingChapters else null,
+                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= 5 && !hasOnlyFallbackSections && existingChapters.isNotEmpty()) existingChapters else null,
                     onProgress = { pct ->
                         _pdfIndexingState.update { it + (book.id to pct) }
                         _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
@@ -849,7 +938,7 @@ class LlunevieViewModel(
                     val updatedBook = currentBook.copy(
                         pagesCount = actualPageCount,
                         tocIndexed = true,
-                        tocIndexVersion = 3
+                        tocIndexVersion = 5
                     )
                     dao.saveBookWithChapters(updatedBook, updatedChapters)
                     if (_uiState.value.activeBookId == book.id) {
@@ -863,10 +952,7 @@ class LlunevieViewModel(
                 }
             } catch (t: Throwable) {
                 android.util.Log.e("LlunevieViewModel", "PDF indexing error for ${book.id}", t)
-                runCatching {
-                    val currentBook = dao.getBookById(book.id) ?: book
-                    dao.updateBook(currentBook.copy(tocIndexed = true, tocIndexVersion = 3))
-                }
+                // Do NOT set tocIndexed = true on failure so it can retry cleanly on next open
             } finally {
                 _pdfIndexingState.update { it - book.id }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState - book.id) }
@@ -1317,8 +1403,14 @@ class LlunevieViewModel(
                         showToast(if (isId) "Format berkas tidak didukung (.$ext)" else "Unsupported file format (.$ext)")
                     }
                 }
-            } catch (e: Exception) {
-                showToast(if (isId) "Gagal mengimpor: ${e.localizedMessage ?: "Kesalahan berkas"}" else "Import failed: ${e.localizedMessage ?: "File error"}")
+            } catch (t: Throwable) {
+                if (t is OutOfMemoryError) {
+                    System.gc()
+                }
+                trackedBookId?.let { badId ->
+                    runCatching { dao.deleteBooksByIds(listOf(badId)) }
+                }
+                showToast(if (isId) "Gagal mengimpor: ${t.localizedMessage ?: "Kesalahan berkas"}" else "Import failed: ${t.localizedMessage ?: "File error"}")
             } finally {
                 trackedBookId?.let { setBookImportProgress(it, null) }
             }
@@ -1326,15 +1418,43 @@ class LlunevieViewModel(
     }
 
     private val isFolderScanning = AtomicBoolean(false)
+    private val pendingRescanForce = AtomicBoolean(false)
+
+    private fun collectDocumentFilesRecursively(
+        dir: DocumentFile,
+        currentDepth: Int = 0,
+        maxDepth: Int = 6,
+        out: MutableList<DocumentFile>
+    ) {
+        if (currentDepth > maxDepth || !dir.isDirectory) return
+        val children = runCatching { dir.listFiles() }.getOrNull() ?: return
+        for (child in children) {
+            val name = child.name.orEmpty()
+            if (name.startsWith(".")) continue
+            if (child.isDirectory) {
+                collectDocumentFilesRecursively(child, currentDepth + 1, maxDepth, out)
+            } else if (child.isFile) {
+                val ext = name.substringAfterLast('.', "").lowercase()
+                if (ext in setOf("epub", "pdf", "txt")) {
+                    out.add(child)
+                }
+            }
+        }
+    }
 
     fun scanAutoImportFolder(force: Boolean = false) {
         val prefs = preferences.value
         if (!prefs.autoImportFolderEnabled && !force) return
-        if (!isFolderScanning.compareAndSet(false, true)) return
+        if (!isFolderScanning.compareAndSet(false, true)) {
+            if (force) {
+                pendingRescanForce.set(true)
+            }
+            return
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val currentPrefs = preferences.value
+                val currentPrefs = prefsRepo.preferencesFlow.first()
                 val isEn = currentPrefs.lang == "en"
                 val existingBooks = dao.getAllBooks()
                 val alreadyImported = currentPrefs.importedFileSignatures.toMutableSet()
@@ -1344,7 +1464,8 @@ class LlunevieViewModel(
                     val fileName: String,
                     val fileSize: Long,
                     val uri: Uri,
-                    val ext: String
+                    val ext: String,
+                    val sig: String
                 )
                 val pendingFiles = mutableListOf<PendingBookFile>()
 
@@ -1364,19 +1485,22 @@ class LlunevieViewModel(
 
                     for (dir in dirsToScan) {
                         if (!dir.exists() || !dir.isDirectory) continue
-                        val files = runCatching { dir.listFiles() }.getOrNull() ?: continue
+                        val files = runCatching {
+                            dir.walkTopDown().maxDepth(6).onEnter { !it.name.startsWith(".") }.filter { it.isFile }.toList()
+                        }.getOrNull() ?: continue
                         for (file in files) {
-                            if (!file.isFile) continue
                             val name = file.name
+                            if (name.startsWith(".")) continue
                             val ext = file.extension.lowercase()
                             if (ext !in setOf("epub", "pdf", "txt")) continue
                             val size = file.length()
-                            val sig = "$name:$size"
-                            if (sig in alreadyImported) continue
+                            val sig = "${file.absolutePath}:$size"
+                            val legacySig = "$name:$size"
+                            if (sig in alreadyImported || legacySig in alreadyImported) continue
 
                             val matchesRoom = existingBooks.any { b ->
-                                (b.localFilePath != null && File(b.localFilePath).name.equals(name, ignoreCase = true)) ||
-                                    b.title.equals(normalizeBookTitle(name), ignoreCase = true)
+                                b.localFilePath == file.absolutePath ||
+                                    (b.localFilePath != null && runCatching { File(b.localFilePath).name.equals(name, ignoreCase = true) && File(b.localFilePath).length() == size }.getOrDefault(false))
                             }
                             if (matchesRoom) {
                                 alreadyImported.add(sig)
@@ -1384,8 +1508,8 @@ class LlunevieViewModel(
                                 continue
                             }
 
-                            if (pendingFiles.none { it.fileName == name && it.fileSize == size }) {
-                                pendingFiles.add(PendingBookFile(name, size, Uri.fromFile(file), ext))
+                            if (pendingFiles.none { it.sig == sig }) {
+                                pendingFiles.add(PendingBookFile(name, size, Uri.fromFile(file), ext, sig))
                             }
                         }
                     }
@@ -1396,18 +1520,22 @@ class LlunevieViewModel(
                         val treeUri = Uri.parse(currentPrefs.autoImportFolderUri)
                         val docDir = DocumentFile.fromTreeUri(appContext, treeUri)
                         if (docDir != null && docDir.isDirectory) {
-                            for (docFile in docDir.listFiles()) {
-                                if (!docFile.isFile) continue
+                            val collectedDocFiles = mutableListOf<DocumentFile>()
+                            collectDocumentFilesRecursively(docDir, 0, 6, collectedDocFiles)
+                            for (docFile in collectedDocFiles) {
                                 val name = docFile.name.orEmpty()
+                                if (name.startsWith(".")) continue
                                 val ext = name.substringAfterLast('.', "").lowercase()
                                 if (ext !in setOf("epub", "pdf", "txt")) continue
                                 val size = docFile.length()
-                                val sig = "$name:$size"
-                                if (sig in alreadyImported) continue
+                                val uriStr = docFile.uri.toString()
+                                val sig = "$uriStr:$size"
+                                val legacySig = "$name:$size"
+                                if (sig in alreadyImported || legacySig in alreadyImported) continue
 
                                 val matchesRoom = existingBooks.any { b ->
-                                    (b.localFilePath != null && File(b.localFilePath).name.equals(name, ignoreCase = true)) ||
-                                        b.title.equals(normalizeBookTitle(name), ignoreCase = true)
+                                    b.localFilePath == uriStr ||
+                                        (b.localFilePath != null && runCatching { File(b.localFilePath).name.equals(name, ignoreCase = true) && File(b.localFilePath).length() == size }.getOrDefault(false))
                                 }
                                 if (matchesRoom) {
                                     alreadyImported.add(sig)
@@ -1415,8 +1543,8 @@ class LlunevieViewModel(
                                     continue
                                 }
 
-                                if (pendingFiles.none { it.fileName == name && it.fileSize == size }) {
-                                    pendingFiles.add(PendingBookFile(name, size, docFile.uri, ext))
+                                if (pendingFiles.none { it.sig == sig }) {
+                                    pendingFiles.add(PendingBookFile(name, size, docFile.uri, ext, sig))
                                 }
                             }
                         }
@@ -1424,8 +1552,10 @@ class LlunevieViewModel(
                 }
 
                 var successCount = 0
-                for (item in pendingFiles) {
-                    val sig = "${item.fileName}:${item.fileSize}"
+                for ((index, item) in pendingFiles.withIndex()) {
+                    val batchProgress = if (pendingFiles.size > 1) {
+                        ((index * 100) / pendingFiles.size).coerceIn(1, 99)
+                    } else null
                     var trackedBookId: String? = null
                     try {
                         when (item.ext) {
@@ -1439,16 +1569,20 @@ class LlunevieViewModel(
                                     onInitialBookCreated = { partialBook ->
                                         trackedBookId = partialBook.id
                                         dao.upsertBook(partialBook)
+                                        if (batchProgress != null) {
+                                            setBookImportProgress(partialBook.id, batchProgress)
+                                        }
                                     },
                                     onProgressUpdate = { bId, pct ->
                                         trackedBookId = bId
-                                        setBookImportProgress(bId, pct)
+                                        val displayPct = batchProgress ?: pct
+                                        setBookImportProgress(bId, displayPct)
                                     }
                                 )
                                 dao.saveBookWithChapters(bundle.book, bundle.chapters)
                                 indexPdfChaptersAndIllustrations(bundle.book)
-                                newlyImportedSignatures.add(sig)
-                                alreadyImported.add(sig)
+                                newlyImportedSignatures.add(item.sig)
+                                alreadyImported.add(item.sig)
                                 successCount++
                             }
                             "epub" -> {
@@ -1461,15 +1595,19 @@ class LlunevieViewModel(
                                     onInitialBookCreated = { partialBook ->
                                         trackedBookId = partialBook.id
                                         dao.upsertBook(partialBook)
+                                        if (batchProgress != null) {
+                                            setBookImportProgress(partialBook.id, batchProgress)
+                                        }
                                     },
                                     onProgressUpdate = { bId, pct ->
                                         trackedBookId = bId
-                                        setBookImportProgress(bId, pct)
+                                        val displayPct = batchProgress ?: pct
+                                        setBookImportProgress(bId, displayPct)
                                     }
                                 )
                                 dao.saveBookWithChapters(bundle.book, bundle.chapters)
-                                newlyImportedSignatures.add(sig)
-                                alreadyImported.add(sig)
+                                newlyImportedSignatures.add(item.sig)
+                                alreadyImported.add(item.sig)
                                 successCount++
                             }
                             "txt" -> {
@@ -1481,20 +1619,33 @@ class LlunevieViewModel(
                                     onInitialBookCreated = { partialBook ->
                                         trackedBookId = partialBook.id
                                         dao.upsertBook(partialBook)
+                                        if (batchProgress != null) {
+                                            setBookImportProgress(partialBook.id, batchProgress)
+                                        }
                                     },
                                     onProgressUpdate = { bId, pct ->
                                         trackedBookId = bId
-                                        setBookImportProgress(bId, pct)
+                                        val displayPct = batchProgress ?: pct
+                                        setBookImportProgress(bId, displayPct)
                                     }
                                 )
                                 dao.saveBookWithChapters(bundle.book, bundle.chapters)
-                                newlyImportedSignatures.add(sig)
-                                alreadyImported.add(sig)
+                                newlyImportedSignatures.add(item.sig)
+                                alreadyImported.add(item.sig)
                                 successCount++
                             }
                         }
-                    } catch (e: Exception) {
-                        // Keep going with remaining files
+
+                        if (successCount % 10 == 0 && newlyImportedSignatures.isNotEmpty()) {
+                            prefsRepo.addImportedSignatures(newlyImportedSignatures)
+                        }
+                    } catch (t: Throwable) {
+                        if (t is OutOfMemoryError) {
+                            System.gc()
+                        }
+                        trackedBookId?.let { badId ->
+                            runCatching { dao.deleteBooksByIds(listOf(badId)) }
+                        }
                     } finally {
                         trackedBookId?.let { setBookImportProgress(it, null) }
                     }
@@ -1512,6 +1663,9 @@ class LlunevieViewModel(
                 }
             } finally {
                 isFolderScanning.set(false)
+                if (pendingRescanForce.getAndSet(false)) {
+                    scanAutoImportFolder(force = true)
+                }
             }
         }
     }
@@ -1831,11 +1985,7 @@ class LlunevieViewModel(
 
     fun updateBookSpineColor(bookId: String, extractedHex: Long) {
         viewModelScope.launch {
-            val all = dao.getAllBooks()
-            val book = all.find { it.id == bookId }
-            if (book != null && book.spineColorHex != extractedHex) {
-                dao.updateBook(book.copy(spineColorHex = extractedHex))
-            }
+            dao.updateBookSpineColorById(bookId, extractedHex)
         }
     }
 

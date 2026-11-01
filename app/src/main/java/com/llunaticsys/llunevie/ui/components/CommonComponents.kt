@@ -93,12 +93,54 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.TextUnit
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
+import android.util.LruCache
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import com.llunaticsys.llunevie.MainNavTab
 import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import coil.compose.AsyncImage
 import java.io.File
+
+/**
+ * Lightweight in-memory LRU cache for local cover bitmaps (ImageBitmap).
+ * Pre-warmed on cold start to eliminate the 1–3 frame monogram flash before Coil decodes covers.
+ */
+object LocalCoverBitmapCache {
+    private val cache = object : LruCache<String, ImageBitmap>(64) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int = 1
+    }
+
+    fun get(path: String): ImageBitmap? = cache.get(path)
+
+    fun put(path: String, bitmap: ImageBitmap) {
+        cache.put(path, bitmap)
+    }
+
+    fun loadOrDecode(path: String, maxDimPx: Int = 540): ImageBitmap? {
+        cache.get(path)?.let { return it }
+        val file = File(path)
+        if (!file.exists() || file.length() == 0L) return null
+        return try {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, opts)
+            val rawW = opts.outWidth.coerceAtLeast(1)
+            val rawH = opts.outHeight.coerceAtLeast(1)
+            val sampleSize = maxOf(1, maxOf(rawW, rawH) / maxDimPx)
+            val decOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val bmp = BitmapFactory.decodeFile(path, decOpts) ?: return null
+            val imageBitmap = bmp.asImageBitmap()
+            cache.put(path, imageBitmap)
+            imageBitmap
+        } catch (_: Throwable) {
+            null
+        }
+    }
+}
 
 /**
  * 1:1 Vector Renderer for the official Llunevie Monogram SVG (`llunevie-icon.svg`)
@@ -511,6 +553,14 @@ fun BookCoverCard(
             .ifBlank { "L" }
     }
 
+    val path = book.coverImagePath
+    val cachedBitmap = remember(path) {
+        if (!path.isNullOrBlank() && !path.startsWith("http", ignoreCase = true)) {
+            LocalCoverBitmapCache.get(path)
+        } else null
+    }
+    var loadFailed by remember(path) { mutableStateOf(false) }
+
     Column(modifier = modifier) {
         Box(
             modifier = Modifier
@@ -521,75 +571,94 @@ fun BookCoverCard(
                 .background(bgColor)
                 .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
         ) {
-            if (showTitleInsideFallback) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(10.dp)
-                        .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-                    Text(
-                        text = book.title,
-                        color = textColor,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-                }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = book.category.uppercase(),
-                        color = textColor.copy(alpha = 0.7f),
-                        fontSize = 7.5.sp,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1
-                    )
-                    Box(
+            val shouldShowFallback = path.isNullOrBlank() || loadFailed
+            if (shouldShowFallback) {
+                if (showTitleInsideFallback) {
+                    Column(
                         modifier = Modifier
-                            .size(34.dp)
-                            .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
-                        contentAlignment = Alignment.Center
+                            .fillMaxSize()
+                            .padding(10.dp)
+                            .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+                        Text(
+                            text = book.title,
+                            color = textColor,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = initials,
-                            color = textColor,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.SemiBold
+                            text = book.category.uppercase(),
+                            color = textColor.copy(alpha = 0.7f),
+                            fontSize = 7.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = initials,
+                                color = textColor,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = book.year,
+                            color = textColor.copy(alpha = 0.7f),
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
-                    Text(
-                        text = book.year,
-                        color = textColor.copy(alpha = 0.7f),
-                        fontSize = 8.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
                 }
             }
 
-            val path = book.coverImagePath
-            if (!path.isNullOrBlank()) {
+            if (cachedBitmap != null) {
+                Image(
+                    bitmap = cachedBitmap,
+                    contentDescription = book.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (!path.isNullOrBlank()) {
                 val model: Any = if (path.startsWith("http", ignoreCase = true)) path else File(path)
                 AsyncImage(
                     model = model,
                     contentDescription = book.title,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    onSuccess = { state ->
+                        (state.result.drawable as? BitmapDrawable)?.bitmap?.asImageBitmap()?.let { bitmap ->
+                            if (!path.startsWith("http", ignoreCase = true)) {
+                                LocalCoverBitmapCache.put(path, bitmap)
+                            }
+                        }
+                    },
+                    onError = {
+                        loadFailed = true
+                    }
                 )
             }
         }
@@ -935,7 +1004,7 @@ fun sanitizeBookOrChapterText(raw: String): String {
 
 fun normalizeBookTitle(fileName: String): String {
     val sanitized = sanitizeBookOrChapterText(fileName)
-    var s = sanitized.substringBeforeLast(".")
+    var s = sanitized.replace(Regex("""\.(epub|pdf|txt|json|mobi|azw3|cbz|cbr|fb2|djvu)$""", RegexOption.IGNORE_CASE), "")
     // Decode common HTML entities and URL encoding first
     s = sanitizeBookOrChapterText(s)
         .replace("&quot;", "\"")

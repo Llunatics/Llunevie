@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.map
 private val Context.llunevieDataStore: DataStore<Preferences> by preferencesDataStore(name = "llunevie_settings_v02")
 
 data class UserPreferencesState(
+    val isLoaded: Boolean = false,
     val lang: String = "id",
     val appTheme: AppThemeMode = AppThemeMode.PAPER,
     val followDeviceTheme: Boolean = false,
@@ -70,6 +71,28 @@ data class UserPreferencesState(
 
 class UserPreferencesRepository(private val context: Context) {
 
+    private val bootCache = context.getSharedPreferences("llunevie_boot_cache", Context.MODE_PRIVATE)
+
+    fun getInitialBootState(): UserPreferencesState {
+        if (!bootCache.contains("has_completed_onboarding")) {
+            return UserPreferencesState(isLoaded = false)
+        }
+        val hasCompleted = bootCache.getBoolean("has_completed_onboarding", false)
+        val themeKey = bootCache.getString("app_theme", null)
+        val theme = AppThemeMode.fromKey(themeKey)
+        val followDevice = bootCache.getBoolean("follow_device_theme", false)
+        val amoled = bootCache.getBoolean("amoled_black", false)
+        val lang = bootCache.getString("lang", "id") ?: "id"
+        return UserPreferencesState(
+            isLoaded = true,
+            hasCompletedOnboarding = hasCompleted,
+            appTheme = theme,
+            followDeviceTheme = followDevice,
+            amoledBlack = if (theme == AppThemeMode.BLACK) amoled else false,
+            lang = lang
+        )
+    }
+
     private object Keys {
         val LANG = stringPreferencesKey("lang")
         val APP_THEME = stringPreferencesKey("app_theme")
@@ -109,12 +132,26 @@ class UserPreferencesRepository(private val context: Context) {
     val preferencesFlow: Flow<UserPreferencesState> = context.llunevieDataStore.data.map { prefs ->
         val theme = AppThemeMode.fromKey(prefs[Keys.APP_THEME])
         val rawAmoled = prefs[Keys.AMOLED_BLACK] ?: false
+        val completed = prefs[Keys.HAS_COMPLETED_ONBOARDING] ?: false
+        val followDevice = prefs[Keys.FOLLOW_DEVICE_THEME] ?: false
+        val effectiveAmoled = if (theme == AppThemeMode.BLACK) rawAmoled else false
+        val lang = prefs[Keys.LANG] ?: "id"
+
+        bootCache.edit()
+            .putBoolean("has_completed_onboarding", completed)
+            .putString("app_theme", theme.key)
+            .putBoolean("follow_device_theme", followDevice)
+            .putBoolean("amoled_black", effectiveAmoled)
+            .putString("lang", lang)
+            .apply()
+
         UserPreferencesState(
-            lang = prefs[Keys.LANG] ?: "id",
+            isLoaded = true,
+            lang = lang,
             appTheme = theme,
-            followDeviceTheme = prefs[Keys.FOLLOW_DEVICE_THEME] ?: false,
+            followDeviceTheme = followDevice,
             glassDesign = false,
-            amoledBlack = if (theme == AppThemeMode.BLACK) rawAmoled else false,
+            amoledBlack = effectiveAmoled,
             userName = prefs[Keys.USER_NAME] ?: "",
             userPhotoPath = prefs[Keys.USER_PHOTO],
             readingFlowMode = ReadingFlowMode.fromKey(prefs[Keys.READING_FLOW]),
@@ -138,7 +175,7 @@ class UserPreferencesRepository(private val context: Context) {
             libSort = LibrarySortOption.fromKey(prefs[Keys.LIB_SORT]),
             libGridCols = prefs[Keys.LIB_GRID_COLS] ?: 0,
             homeRecentMode = prefs[Keys.HOME_RECENT_MODE] ?: "grid",
-            hasCompletedOnboarding = prefs[Keys.HAS_COMPLETED_ONBOARDING] ?: false,
+            hasCompletedOnboarding = completed,
             autoImportFolderEnabled = prefs[Keys.AUTO_IMPORT_ENABLED] ?: false,
             autoImportFolderPath = prefs[Keys.AUTO_IMPORT_PATH] ?: "/sdcard/Llunevie/Books",
             autoImportFolderUri = prefs[Keys.AUTO_IMPORT_URI],
@@ -147,6 +184,13 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setTheme(theme: AppThemeMode) {
+        bootCache.edit()
+            .putString("app_theme", theme.key)
+            .putBoolean("follow_device_theme", false)
+            .apply()
+        if (theme != AppThemeMode.BLACK) {
+            bootCache.edit().putBoolean("amoled_black", false).apply()
+        }
         context.llunevieDataStore.edit { prefs ->
             prefs[Keys.APP_THEME] = theme.key
             prefs[Keys.FOLLOW_DEVICE_THEME] = false
@@ -157,6 +201,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setFollowDeviceTheme(enabled: Boolean) {
+        bootCache.edit().putBoolean("follow_device_theme", enabled).apply()
         context.llunevieDataStore.edit { prefs ->
             prefs[Keys.FOLLOW_DEVICE_THEME] = enabled
         }
@@ -169,6 +214,10 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setAmoledBlack(enabled: Boolean) {
+        bootCache.edit().putBoolean("amoled_black", enabled).apply()
+        if (enabled) {
+            bootCache.edit().putString("app_theme", AppThemeMode.BLACK.key).apply()
+        }
         context.llunevieDataStore.edit { prefs ->
             prefs[Keys.AMOLED_BLACK] = enabled
             if (enabled) {
@@ -178,7 +227,9 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setLanguage(lang: String) {
-        context.llunevieDataStore.edit { it[Keys.LANG] = if (lang == "en") "en" else "id" }
+        val safeLang = if (lang == "en") "en" else "id"
+        bootCache.edit().putString("lang", safeLang).apply()
+        context.llunevieDataStore.edit { it[Keys.LANG] = safeLang }
     }
 
     suspend fun setUserName(name: String) {
@@ -257,6 +308,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setHasCompletedOnboarding(completed: Boolean) {
+        bootCache.edit().putBoolean("has_completed_onboarding", completed).apply()
         context.llunevieDataStore.edit { it[Keys.HAS_COMPLETED_ONBOARDING] = completed }
     }
 
