@@ -39,8 +39,14 @@ data class BookEntity(
     val weightGrams: Float = 300f,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val tocIndexed: Boolean = false,
-    val tocIndexVersion: Int = 0
+    val tocIndexVersion: Int = 0,
+    val genres: String = ""
 ) {
+    fun genreList(): List<String> = genres.split(",")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinctBy { it.lowercase() }
+
     val readingProgress: Float
         get() = (progress / 100f).coerceIn(0f, 1f)
 

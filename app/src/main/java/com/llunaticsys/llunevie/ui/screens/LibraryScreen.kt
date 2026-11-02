@@ -81,8 +81,10 @@ import android.graphics.BitmapFactory
 import com.llunaticsys.llunevie.data.parser.SpineColorExtractor
 import com.llunaticsys.llunevie.LlunevieUiState
 import com.llunaticsys.llunevie.data.local.BookEntity
+import com.llunaticsys.llunevie.data.local.DEFAULT_CURATED_GENRES
 import com.llunaticsys.llunevie.data.local.ShelfEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
+import androidx.compose.ui.text.PlatformTextStyle
 import com.llunaticsys.llunevie.model.LibrarySortOption
 import com.llunaticsys.llunevie.model.LibraryViewMode
 import com.llunaticsys.llunevie.ui.components.BookCoverCard
@@ -113,6 +115,10 @@ fun LibraryScreen(
     onSetFilter: (String) -> Unit,
     onSetStatus: (String) -> Unit = {},
     onSetShelf: (String) -> Unit,
+    onSetGenre: (String) -> Unit = {},
+    onAddCustomGenre: (String) -> Unit = {},
+    onDeleteCustomGenre: (String) -> Unit = {},
+    onBatchAssignShelfAndGenres: (bookIds: List<String>, targetShelf: String?, addGenres: List<String>) -> Unit = { _, _, _ -> },
     onSetGridCols: (Int) -> Unit,
     onResetFilters: () -> Unit,
     onToggleFilterSheet: (Boolean) -> Unit,
@@ -132,8 +138,12 @@ fun LibraryScreen(
 ) {
     val palette = LocalLluneviePalette.current
 
+    val allAvailableGenres = remember(prefs.customGenres, books) {
+        (DEFAULT_CURATED_GENRES + prefs.customGenres + books.flatMap { it.genreList() }).distinctBy { it.lowercase() }
+    }
+
     // Filter & sort books (matching `getFilteredLibraryBooks` in `llunevie_prototype.html`)
-    val filteredBooks = remember(books, prefs.libShelf, prefs.libFilter, prefs.libStatus, prefs.libSort, uiState.libSearchQuery) {
+    val filteredBooks = remember(books, prefs.libShelf, prefs.libFilter, prefs.libGenre, prefs.libStatus, prefs.libSort, uiState.libSearchQuery) {
         val q = uiState.libSearchQuery.trim().lowercase()
         val list = books.filter { b ->
             val matchShelf = if (prefs.libShelf.equals("all", ignoreCase = true) || prefs.libShelf.isBlank()) {
@@ -142,6 +152,8 @@ fun LibraryScreen(
                 shelfMatchesFilter(b.shelf, prefs.libShelf)
             }
             val matchCat = prefs.libFilter == "all" || b.category.equals(prefs.libFilter, ignoreCase = true)
+            val matchGenre = prefs.libGenre.equals("all", ignoreCase = true) || prefs.libGenre.isBlank() ||
+                b.genreList().any { it.equals(prefs.libGenre, ignoreCase = true) }
             val matchStatus = when (prefs.libStatus.lowercase()) {
                 "unread" -> b.progress == 0 && !b.completedAllPages
                 "reading" -> b.progress in 1..99 && !b.completedAllPages
@@ -151,8 +163,9 @@ fun LibraryScreen(
             val matchQ = q.isEmpty() ||
                 b.title.lowercase().contains(q) ||
                 b.author.lowercase().contains(q) ||
-                b.shelf.lowercase().contains(q)
-            matchShelf && matchCat && matchStatus && matchQ
+                b.shelf.lowercase().contains(q) ||
+                b.genres.lowercase().contains(q)
+            matchShelf && matchCat && matchGenre && matchStatus && matchQ
         }
         when (prefs.libSort) {
             LibrarySortOption.TITLE -> list.sortedBy { it.title.lowercase() }
@@ -162,11 +175,14 @@ fun LibraryScreen(
         }
     }
 
-    val hasActiveFilterDot = prefs.libFilter != "all" || prefs.libStatus != "all" || prefs.libSort != LibrarySortOption.RECENT || (prefs.libShelf != "all" && prefs.libShelf.isNotBlank())
+    val hasActiveFilterDot = prefs.libFilter != "all" || prefs.libStatus != "all" || prefs.libSort != LibrarySortOption.RECENT || (prefs.libShelf != "all" && prefs.libShelf.isNotBlank()) || (prefs.libGenre != "all" && prefs.libGenre.isNotBlank())
+
+    var showBatchOrganizeDialog by remember { mutableStateOf(false) }
 
     val isAnyModalOpenInLibrary = uiState.showLibFilterSheet ||
         uiState.editingBook != null ||
-        uiState.showDeleteConfirmDialog
+        uiState.showDeleteConfirmDialog ||
+        showBatchOrganizeDialog
 
     val backgroundBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOpenInLibrary) {
         Modifier.blur(10.dp)
@@ -511,18 +527,18 @@ fun LibraryScreen(
                                                            runCatching {
                                                                val opts = BitmapFactory.Options().apply { inSampleSize = 8 }
                                                                val bmp = BitmapFactory.decodeFile(coverPath, opts)
-                                                               if (bmp != null) {
-                                                                   val extracted = SpineColorExtractor.extractDominantSpineHex(bmp)
-                                                                   bmp.recycle()
-                                                                   spineColorCache[book.id] = Color(extracted)
-                                                                   onUpdateSpineColor(book.id, extracted)
-                                                               }
-                                                           }
-                                                       }
-                                                   }
-                                               }
+                                                                if (bmp != null) {
+                                                                    val extracted = SpineColorExtractor.extractDominantSpineHex(bmp)
+                                                                    bmp.recycle()
+                                                                    spineColorCache[book.id] = Color(extracted)
+                                                                    onUpdateSpineColor(book.id, extracted)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
 
-                                               val displaySpineColor = spineColorCache[book.id] ?: effectiveSpineColor
+                                                val displaySpineColor = spineColorCache[book.id] ?: effectiveSpineColor
 
                                                Box(
                                                    modifier = Modifier
@@ -808,8 +824,12 @@ fun LibraryScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Spacer(modifier = Modifier.height(4.dp))
+                                            val metaText = remember(book.year, book.pagesCount, book.shelf, book.genres, strings.pagesUnit) {
+                                                val base = "${book.year} · ${book.pagesCount} ${strings.pagesUnit} · ${strings.localizeShelfName(book.shelf)}"
+                                                if (book.genres.isNotBlank()) "$base · ${book.genreList().take(3).joinToString(", ")}" else base
+                                            }
                                             Text(
-                                                text = "${book.year} · ${book.pagesCount} ${strings.pagesUnit} · ${strings.localizeShelfName(book.shelf)}",
+                                                text = metaText,
                                                 color = palette.textMuted,
                                                 fontSize = 10.5.sp,
                                                 fontFamily = FontFamily.Monospace,
@@ -933,6 +953,20 @@ fun LibraryScreen(
                             }
                         }
                         Surface(
+                            onClick = { showBatchOrganizeDialog = true },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft)
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Rak / Genre" else "Shelf / Genre",
+                                color = palette.textMain,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                        Surface(
                             onClick = { onSelectAll(filteredBooks.map { it.id }) },
                             shape = CircleShape,
                             color = palette.bgSurface,
@@ -972,6 +1006,8 @@ fun LibraryScreen(
             var showManageShelves by remember { mutableStateOf(false) }
             var newShelfText by remember { mutableStateOf("") }
             var shelfPendingDelete by remember { mutableStateOf<String?>(null) }
+            var showManageGenres by remember { mutableStateOf(false) }
+            var newGenreText by remember { mutableStateOf("") }
 
             Box(
                 modifier = Modifier
@@ -1372,6 +1408,179 @@ fun LibraryScreen(
                             )
                         }
 
+                        // GENRE / TAG Section + Inline Expandable "Kelola Genre"
+                        Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(26.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "GENRE / TAG",
+                                    color = palette.textMuted,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 1.2.sp
+                                )
+                                Surface(
+                                    onClick = { showManageGenres = !showManageGenres },
+                                    shape = CircleShape,
+                                    color = if (showManageGenres) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (showManageGenres) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = if (strings.isId) "Kelola Genre" else "Manage Genres",
+                                        color = if (showManageGenres) palette.bgApp else palette.textMain,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val isAllGenreSelected = prefs.libGenre.equals("all", ignoreCase = true) || prefs.libGenre.isBlank()
+                                item(key = "genre_all") {
+                                    Surface(
+                                        onClick = { onSetGenre("all") },
+                                        shape = CircleShape,
+                                        color = if (isAllGenreSelected) palette.accentDark else palette.bgSurface,
+                                        border = BorderStroke(1.dp, if (isAllGenreSelected) palette.accentDark else palette.borderSoft),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 14.dp)) {
+                                            Text(
+                                                text = if (strings.isId) "Semua" else "All",
+                                                color = if (isAllGenreSelected) palette.bgApp else palette.textMuted,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (isAllGenreSelected) FontWeight.SemiBold else FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+
+                                items(allAvailableGenres, key = { it }) { genre ->
+                                    val selected = !isAllGenreSelected && prefs.libGenre.equals(genre, ignoreCase = true)
+                                    Surface(
+                                        onClick = {
+                                            if (selected) onSetGenre("all") else onSetGenre(genre)
+                                        },
+                                        shape = CircleShape,
+                                        color = if (selected) palette.accentDark else palette.bgSurface,
+                                        border = BorderStroke(1.dp, if (selected) palette.accentDark else palette.borderSoft),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 14.dp)) {
+                                            Text(
+                                                text = genre,
+                                                color = if (selected) palette.bgApp else palette.textMuted,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (showManageGenres) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                HorizontalDivider(color = palette.borderSoft)
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = palette.bgSurface,
+                                        border = BorderStroke(1.dp, palette.borderSoft),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(38.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 16.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            LlunevieCenteredTextField(
+                                                value = newGenreText,
+                                                onValueChange = { newGenreText = it },
+                                                placeholder = if (strings.isId) "Nama genre baru (mis. Romcom)..." else "New genre tag (e.g. Romcom)...",
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = {
+                                            if (newGenreText.isNotBlank()) {
+                                                onAddCustomGenre(newGenreText.trim())
+                                                newGenreText = ""
+                                            }
+                                        },
+                                        shape = CircleShape,
+                                        color = palette.accentDark
+                                    ) {
+                                        Text(
+                                            text = if (strings.isId) "Tambah" else "Add",
+                                            color = palette.bgApp,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                                        )
+                                    }
+                                }
+
+                                if (prefs.customGenres.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Column(
+                                        modifier = Modifier.heightIn(max = 200.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        prefs.customGenres.sorted().forEach { customGenre ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(palette.bgSurface.copy(alpha = 0.5f))
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = customGenre,
+                                                    color = palette.textMain,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Surface(
+                                                    onClick = { onDeleteCustomGenre(customGenre) },
+                                                    shape = CircleShape,
+                                                    color = Color(0xFFEF4444).copy(alpha = 0.12f)
+                                                ) {
+                                                    Text(
+                                                        text = if (strings.isId) "Hapus" else "Delete",
+                                                        color = Color(0xFFEF4444),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // 4. URUTKAN BERDASARKAN Segmented Control (4 options)
                         Column {
                             Text(
@@ -1457,6 +1666,8 @@ fun LibraryScreen(
         var isbnStr by remember(editing) { mutableStateOf(editing.isbn) }
         var coverUrlStr by remember(editing) { mutableStateOf(editing.coverImagePath.orEmpty()) }
         var synopsis by remember(editing) { mutableStateOf(editing.synopsis) }
+        var selectedGenres by remember(editing) { mutableStateOf(editing.genreList().toSet()) }
+        var inlineNewGenre by remember { mutableStateOf("") }
 
         val parsedDim = remember(editing) {
             val raw = editing.dimensionsText
@@ -1585,6 +1796,112 @@ fun LibraryScreen(
                         }
                     }
 
+                    // GENRE / TAG
+                    Column {
+                        Text(
+                            text = if (strings.isId) "GENRE / TAG" else "GENRE / TAGS",
+                            color = palette.textMuted,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val editAvailableGenres = (allAvailableGenres + selectedGenres).distinctBy { it.lowercase() }
+                            editAvailableGenres.forEach { g ->
+                                val isSel = selectedGenres.any { it.equals(g, ignoreCase = true) }
+                                Surface(
+                                    onClick = {
+                                        selectedGenres = if (isSel) {
+                                            selectedGenres.filterNot { it.equals(g, ignoreCase = true) }.toSet()
+                                        } else {
+                                            selectedGenres + g
+                                        }
+                                    },
+                                    shape = CircleShape,
+                                    color = if (isSel) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (isSel) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = g,
+                                        color = if (isSel) palette.bgApp else palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    BasicTextField(
+                                        value = inlineNewGenre,
+                                        onValueChange = { inlineNewGenre = it },
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = palette.textMain,
+                                            fontSize = 12.sp,
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                        ),
+                                        cursorBrush = SolidColor(palette.textMain),
+                                        decorationBox = { innerTextField ->
+                                            if (inlineNewGenre.isEmpty()) {
+                                                Text(
+                                                    text = if (strings.isId) "+ Tambah genre baru..." else "+ Add new genre...",
+                                                    color = palette.textMuted,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                            innerTextField()
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                            Surface(
+                                onClick = {
+                                    val trimmed = inlineNewGenre.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        onAddCustomGenre(trimmed)
+                                        selectedGenres = selectedGenres + trimmed
+                                        inlineNewGenre = ""
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft)
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Tambah" else "Add",
+                                    color = palette.textMain,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         PrototypeFormInput(
                             label = if (strings.isId) "TAHUN" else "YEAR",
@@ -1709,7 +2026,8 @@ fun LibraryScreen(
                                         heightCm = parsedHeight,
                                         widthCm = parsedWidth,
                                         lengthCm = parsedHeight,
-                                        weightGrams = parsedWeight
+                                        weightGrams = parsedWeight,
+                                        genres = selectedGenres.joinToString(", ")
                                     )
                                 )
                             },
@@ -1830,6 +2148,264 @@ fun LibraryScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 7. BATCH ORGANIZE SHELF & GENRES DIALOG
+    if (showBatchOrganizeDialog && uiState.libSelectedIds.isNotEmpty()) {
+        var chosenShelf by remember { mutableStateOf<String?>(null) }
+        var chosenGenres by remember { mutableStateOf(setOf<String>()) }
+        var batchNewGenreText by remember { mutableStateOf("") }
+
+        Dialog(onDismissRequest = { showBatchOrganizeDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (strings.isId) "Atur Rak & Genre" else "Organize Shelf & Genres",
+                                color = palette.textMain,
+                                fontSize = 18.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (strings.isId) "Terapkan ke ${uiState.libSelectedIds.size} buku terpilih" else "Apply to ${uiState.libSelectedIds.size} selected books",
+                                color = palette.textMuted,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Surface(
+                            onClick = { showBatchOrganizeDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = palette.borderSoft)
+
+                    // Section 1: Target Shelf
+                    Column {
+                        Text(
+                            text = strings.shelfLabel,
+                            color = palette.textMuted,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.2.sp,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item {
+                                val isKeep = chosenShelf == null
+                                Surface(
+                                    onClick = { chosenShelf = null },
+                                    shape = CircleShape,
+                                    color = if (isKeep) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (isKeep) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = if (strings.isId) "Pertahankan Rak" else "Keep Current Shelf",
+                                        color = if (isKeep) palette.bgApp else palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isKeep) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                            items(shelves, key = { it.name }) { shelfItem ->
+                                val isSel = chosenShelf == shelfItem.name
+                                Surface(
+                                    onClick = { chosenShelf = shelfItem.name },
+                                    shape = CircleShape,
+                                    color = if (isSel) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (isSel) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = strings.localizeShelfName(shelfItem.name),
+                                        color = if (isSel) palette.bgApp else palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Section 2: Genres
+                    Column {
+                        Text(
+                            text = if (strings.isId) "TAG GENRE (PILIH UNTUK DITAMBAHKAN)" else "GENRE TAGS (SELECT TO APPLY)",
+                            color = palette.textMuted,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.2.sp,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val availableForBatch = (allAvailableGenres + chosenGenres).distinctBy { it.lowercase() }
+                            availableForBatch.forEach { g ->
+                                val isSel = chosenGenres.any { it.equals(g, ignoreCase = true) }
+                                Surface(
+                                    onClick = {
+                                        chosenGenres = if (isSel) {
+                                            chosenGenres.filterNot { it.equals(g, ignoreCase = true) }.toSet()
+                                        } else {
+                                            chosenGenres + g
+                                        }
+                                    },
+                                    shape = CircleShape,
+                                    color = if (isSel) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (isSel) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = g,
+                                        color = if (isSel) palette.bgApp else palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    BasicTextField(
+                                        value = batchNewGenreText,
+                                        onValueChange = { batchNewGenreText = it },
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = palette.textMain,
+                                            fontSize = 12.sp,
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                        ),
+                                        cursorBrush = SolidColor(palette.textMain),
+                                        decorationBox = { innerTextField ->
+                                            if (batchNewGenreText.isEmpty()) {
+                                                Text(
+                                                    text = if (strings.isId) "+ Tambah genre baru..." else "+ Add new genre...",
+                                                    color = palette.textMuted,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                            innerTextField()
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                            Surface(
+                                onClick = {
+                                    val trimmed = batchNewGenreText.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        onAddCustomGenre(trimmed)
+                                        chosenGenres = chosenGenres + trimmed
+                                        batchNewGenreText = ""
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft)
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Tambah" else "Add",
+                                    color = palette.textMain,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            onClick = { showBatchOrganizeDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = strings.cancelBtn,
+                                color = palette.textMain,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 11.dp)
+                            )
+                        }
+                        Surface(
+                            onClick = {
+                                onBatchAssignShelfAndGenres(
+                                    uiState.libSelectedIds.toList(),
+                                    chosenShelf,
+                                    chosenGenres.toList()
+                                )
+                                showBatchOrganizeDialog = false
+                            },
+                            shape = CircleShape,
+                            color = palette.accentDark,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Terapkan" else "Apply",
+                                color = palette.bgApp,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 11.dp)
+                            )
                         }
                     }
                 }

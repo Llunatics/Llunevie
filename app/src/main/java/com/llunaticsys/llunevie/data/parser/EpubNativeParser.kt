@@ -142,6 +142,7 @@ object EpubNativeParser {
         var bookPublisher = "EPUB Edition"
         var bookIsbn = "—"
         var bookSynopsis = ""
+        var bookGenres = ""
         var coverFilePath: String? = null
 
         val extractedImagesByZipPath = mutableMapOf<String, String>()
@@ -280,6 +281,15 @@ object EpubNativeParser {
                     if (txt.replace(Regex("[^0-9Xx]"), "").length in 10..13) {
                         bookIsbn = txt
                     }
+                }
+
+                val extractedGenres = opfDoc.select("dc|subject, subject")
+                    .map { sanitizeBookOrChapterText(it.text().trim()) }
+                    .filter { it.length in 2..32 && !it.equals("Light Novel", true) && !it.equals("Novel", true) }
+                    .take(4)
+                    .joinToString(", ")
+                if (extractedGenres.isNotBlank()) {
+                    bookGenres = extractedGenres
                 }
 
                 val metaCoverId = opfDoc.selectFirst("meta[name=cover]")?.attr("content")?.trim()
@@ -608,7 +618,8 @@ object EpubNativeParser {
             coverImagePath = coverFilePath,
             spineColorHex = spineHex,
             spineTextColorHex = spineTextHex,
-            synopsis = bookSynopsis.ifBlank { bookTitle }
+            synopsis = bookSynopsis.ifBlank { bookTitle },
+            genres = bookGenres
         )
         onInitialBookCreated(bookEntity)
         onProgressUpdate(bookId, 100)

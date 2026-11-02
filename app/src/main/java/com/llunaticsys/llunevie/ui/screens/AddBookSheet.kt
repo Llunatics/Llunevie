@@ -15,6 +15,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -63,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.llunaticsys.llunevie.LlunevieUiState
+import com.llunaticsys.llunevie.data.local.DEFAULT_CURATED_GENRES
 import com.llunaticsys.llunevie.data.local.ShelfEntity
 import com.llunaticsys.llunevie.model.CatalogBookCandidate
 import com.llunaticsys.llunevie.ui.components.CustomThemeDropdown
@@ -82,6 +85,7 @@ import java.util.Calendar
  * - Manual entry uses clean `lg-surface` rounded-2xl inputs and an inline `Advance` chevron toggle.
  * - Bottom button (`Impor EPUB / PDF Lokal`) features a 1:1 dashed pill border (`#shelveItYourselfBtn`).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AddBookSheet(
     uiState: LlunevieUiState,
@@ -251,6 +255,8 @@ fun AddBookSheet(
                         var widthCm by remember { mutableStateOf("") }
                         var weightKg by remember { mutableStateOf("") }
                         var synopsis by remember { mutableStateOf("") }
+                        var selectedGenres by remember { mutableStateOf(setOf<String>()) }
+                        var inlineNewGenre by remember { mutableStateOf("") }
 
                         Column(
                             modifier = Modifier
@@ -318,6 +324,107 @@ fun AddBookSheet(
                                         cornerRadius = 16.dp,
                                         modifier = Modifier.fillMaxWidth()
                                     )
+                                }
+                            }
+
+                            // GENRE / TAG
+                            Column {
+                                Text(
+                                    text = if (strings.isId) "GENRE / TAG" else "GENRE / TAGS",
+                                    color = palette.textMuted,
+                                    fontSize = 9.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    val allManualGenres = (DEFAULT_CURATED_GENRES + selectedGenres).distinctBy { it.lowercase() }
+                                    allManualGenres.forEach { g ->
+                                        val isSel = selectedGenres.any { it.equals(g, ignoreCase = true) }
+                                        Surface(
+                                            onClick = {
+                                                selectedGenres = if (isSel) {
+                                                    selectedGenres.filterNot { it.equals(g, ignoreCase = true) }.toSet()
+                                                } else {
+                                                    selectedGenres + g
+                                                }
+                                            },
+                                            shape = CircleShape,
+                                            color = if (isSel) palette.accentDark else palette.bgSurface,
+                                            border = BorderStroke(1.dp, if (isSel) palette.accentDark else palette.borderSoft)
+                                        ) {
+                                            Text(
+                                                text = g,
+                                                color = if (isSel) palette.bgApp else palette.textMain,
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = palette.bgSurface,
+                                        border = BorderStroke(1.dp, palette.borderSoft),
+                                        modifier = Modifier.weight(1f).height(36.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            BasicTextField(
+                                                value = inlineNewGenre,
+                                                onValueChange = { inlineNewGenre = it },
+                                                singleLine = true,
+                                                textStyle = TextStyle(
+                                                    color = palette.textMain,
+                                                    fontSize = 12.sp,
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                                ),
+                                                cursorBrush = SolidColor(palette.textMain),
+                                                decorationBox = { innerTextField ->
+                                                    if (inlineNewGenre.isEmpty()) {
+                                                        Text(
+                                                            text = if (strings.isId) "+ Tambah genre kustom..." else "+ Add custom genre...",
+                                                            color = palette.textMuted,
+                                                            fontSize = 12.sp
+                                                        )
+                                                    }
+                                                    innerTextField()
+                                                },
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = {
+                                            val trimmed = inlineNewGenre.trim()
+                                            if (trimmed.isNotEmpty()) {
+                                                selectedGenres = selectedGenres + trimmed
+                                                inlineNewGenre = ""
+                                            }
+                                        },
+                                        shape = CircleShape,
+                                        color = palette.bgSurface,
+                                        border = BorderStroke(1.dp, palette.borderSoft)
+                                    ) {
+                                        Text(
+                                            text = if (strings.isId) "Tambah" else "Add",
+                                            color = palette.textMain,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                        )
+                                    }
                                 }
                             }
 
@@ -424,6 +531,7 @@ fun AddBookSheet(
                                         val dimInfo = if (lengthCm.isNotBlank() || widthCm.isNotBlank() || weightKg.isNotBlank()) {
                                             "\n\nDimensi: ${lengthCm.ifBlank { "-" }} × ${widthCm.ifBlank { "-" }} cm · Berat: ${weightKg.ifBlank { "-" }} kg."
                                         } else ""
+                                        val genreTag = if (selectedGenres.isNotEmpty()) "\n\n[Genres: ${selectedGenres.joinToString(", ")}]" else ""
                                         val parsedHeight = lengthCm.replace(',', '.').toFloatOrNull() ?: 20f
                                         val parsedWidth = widthCm.replace(',', '.').toFloatOrNull() ?: 14f
                                         val parsedWeight = weightKg.replace(',', '.').toFloatOrNull()?.let { it * 1000f } ?: 300f
@@ -441,7 +549,7 @@ fun AddBookSheet(
                                             category = category,
                                             coverUrl = coverUrl.ifBlank { null },
                                             coverBgHex = 0xFF2B3A4AL,
-                                            synopsis = (synopsis + dimInfo).trim(),
+                                            synopsis = (synopsis + dimInfo + genreTag).trim(),
                                             heightCm = parsedHeight,
                                             widthCm = parsedWidth,
                                             lengthCm = parsedHeight,

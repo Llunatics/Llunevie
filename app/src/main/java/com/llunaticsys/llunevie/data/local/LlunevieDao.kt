@@ -100,4 +100,10 @@ interface LlunevieDao {
     
     @Query("UPDATE books SET spineColorHex = :hex WHERE id = :bookId")
     suspend fun updateBookSpineColorById(bookId: String, hex: Long)
+
+    @Query("UPDATE books SET shelf = :shelf WHERE id IN (:bookIds)")
+    suspend fun updateBooksShelfByIds(bookIds: List<String>, shelf: String)
+
+    @Query("UPDATE books SET genres = :genres WHERE id = :bookId")
+    suspend fun updateBookGenresById(bookId: String, genres: String)
 }

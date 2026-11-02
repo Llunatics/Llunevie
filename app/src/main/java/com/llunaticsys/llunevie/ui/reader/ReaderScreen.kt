@@ -92,6 +92,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.BookmarkBorder
 import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -192,6 +193,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import com.llunaticsys.llunevie.data.local.DEFAULT_CURATED_GENRES
+import com.llunaticsys.llunevie.data.local.ShelfEntity
 import com.llunaticsys.llunevie.GlobalPageMetrics
 import com.llunaticsys.llunevie.LlunevieUiState
 import com.llunaticsys.llunevie.data.local.BookEntity
@@ -342,6 +346,13 @@ fun ReaderScreen(
     var inlineNoteText by remember { mutableStateOf("") }
     var showPageScrubber by remember { mutableStateOf(false) }
     var showInlinePageSlider by remember { mutableStateOf(false) }
+    var showReaderCollectionSheet by remember { mutableStateOf(false) }
+
+    val currentShelves = viewModel?.shelves?.collectAsState()?.value.orEmpty()
+    val allBooks = viewModel?.books?.collectAsState()?.value.orEmpty()
+    val allAvailableGenres = remember(prefs.customGenres, allBooks, book.genres) {
+        (DEFAULT_CURATED_GENRES + prefs.customGenres + allBooks.flatMap { it.genreList() } + book.genreList()).distinctBy { it.lowercase() }
+    }
     var scrubberPageValue by remember { mutableFloatStateOf(metrics.currentGlobalPage.toFloat()) }
     var inBookSearchQuery by remember { mutableStateOf<String?>(null) }
     var lastTurnDirection by remember { mutableIntStateOf(1) }
@@ -3739,6 +3750,44 @@ fun ReaderScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            onClick = { showReaderCollectionSheet = true },
+                                            shape = CircleShape,
+                                            color = palette.bgSurface,
+                                            border = BorderStroke(1.dp, palette.borderSoft)
+                                        ) {
+                                            Text(
+                                                text = "🔖 ${strings.localizeShelfName(book.shelf)}",
+                                                color = palette.textMain,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                        Surface(
+                                            onClick = { showReaderCollectionSheet = true },
+                                            shape = CircleShape,
+                                            color = palette.bgSurface,
+                                            border = BorderStroke(1.dp, palette.borderSoft)
+                                        ) {
+                                            Text(
+                                                text = if (book.genres.isNotBlank()) book.genreList().take(2).joinToString(", ") else (if (strings.isId) "+ Tag Genre" else "+ Add Genre"),
+                                                color = palette.textMuted,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
                                 }
                                 Surface(
                                     onClick = { onToggleTocDrawer(false) },
@@ -4714,6 +4763,327 @@ fun ReaderScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // In-Reader Quick Collection (Shelf) & Genre Switcher Dialog
+    if (showReaderCollectionSheet) {
+        var chosenShelf by remember(book.shelf) { mutableStateOf(book.shelf) }
+        var chosenGenres by remember(book.genres) { mutableStateOf(book.genreList().toSet()) }
+        var inlineNewShelf by remember { mutableStateOf("") }
+        var inlineNewGenre by remember { mutableStateOf("") }
+
+        val allShelves = remember(currentShelves, book.shelf) {
+            val fromDb = currentShelves.map { it.name }
+            val defaults = listOf("eReader", "Koleksi Fisik")
+            (defaults + fromDb + book.shelf).filter { it.isNotBlank() }.distinct()
+        }
+        val editAvailableGenres = remember(allAvailableGenres, chosenGenres) {
+            (allAvailableGenres + chosenGenres).distinctBy { it.lowercase() }
+        }
+
+        Dialog(onDismissRequest = { showReaderCollectionSheet = false }) {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (strings.isId) "Koleksi & Genre Buku" else "Book Collection & Genres",
+                                color = palette.textMain,
+                                fontSize = 18.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = book.title,
+                                color = palette.textMuted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            onClick = { showReaderCollectionSheet = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = palette.borderSoft)
+
+                    // Section 1: Rak Koleksi (Shelf)
+                    Column {
+                        Text(
+                            text = if (strings.isId) "RAK KOLEKSI" else "COLLECTION SHELF",
+                            color = palette.textMuted,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.2.sp,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            allShelves.forEach { shelfName ->
+                                val isSel = chosenShelf.equals(shelfName, ignoreCase = true)
+                                Surface(
+                                    onClick = { chosenShelf = shelfName },
+                                    shape = CircleShape,
+                                    color = if (isSel) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (isSel) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = strings.localizeShelfName(shelfName),
+                                        color = if (isSel) palette.bgApp else palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    BasicTextField(
+                                        value = inlineNewShelf,
+                                        onValueChange = { inlineNewShelf = it },
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = palette.textMain,
+                                            fontSize = 12.sp,
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                        ),
+                                        cursorBrush = SolidColor(palette.textMain),
+                                        decorationBox = { innerTextField ->
+                                            if (inlineNewShelf.isEmpty()) {
+                                                Text(
+                                                    text = if (strings.isId) "+ Buat rak baru..." else "+ Create new shelf...",
+                                                    color = palette.textMuted,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                            innerTextField()
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                            Surface(
+                                onClick = {
+                                    val trimmed = inlineNewShelf.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        viewModel?.addCustomShelf(trimmed)
+                                        chosenShelf = trimmed
+                                        inlineNewShelf = ""
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft)
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Tambah" else "Add",
+                                    color = palette.textMain,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Section 2: Tag Genre
+                    Column {
+                        Text(
+                            text = if (strings.isId) "TAG GENRE" else "GENRE TAGS",
+                            color = palette.textMuted,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.2.sp,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            editAvailableGenres.forEach { g ->
+                                val isSel = chosenGenres.any { it.equals(g, ignoreCase = true) }
+                                Surface(
+                                    onClick = {
+                                        chosenGenres = if (isSel) {
+                                            chosenGenres.filterNot { it.equals(g, ignoreCase = true) }.toSet()
+                                        } else {
+                                            chosenGenres + g
+                                        }
+                                    },
+                                    shape = CircleShape,
+                                    color = if (isSel) palette.accentDark else palette.bgSurface,
+                                    border = BorderStroke(1.dp, if (isSel) palette.accentDark else palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = g,
+                                        color = if (isSel) palette.bgApp else palette.textMain,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    BasicTextField(
+                                        value = inlineNewGenre,
+                                        onValueChange = { inlineNewGenre = it },
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = palette.textMain,
+                                            fontSize = 12.sp,
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                        ),
+                                        cursorBrush = SolidColor(palette.textMain),
+                                        decorationBox = { innerTextField ->
+                                            if (inlineNewGenre.isEmpty()) {
+                                                Text(
+                                                    text = if (strings.isId) "+ Tambah genre baru..." else "+ Add new genre...",
+                                                    color = palette.textMuted,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                            innerTextField()
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                            Surface(
+                                onClick = {
+                                    val trimmed = inlineNewGenre.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        viewModel?.addCustomGenre(trimmed)
+                                        chosenGenres = chosenGenres + trimmed
+                                        inlineNewGenre = ""
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft)
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Tambah" else "Add",
+                                    color = palette.textMain,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            onClick = { showReaderCollectionSheet = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = strings.cancelBtn,
+                                color = palette.textMain,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 11.dp)
+                            )
+                        }
+                        Surface(
+                            onClick = {
+                                viewModel?.updateBookShelfAndGenres(
+                                    book.id,
+                                    chosenShelf.ifBlank { book.shelf },
+                                    chosenGenres.toList()
+                                )
+                                showReaderCollectionSheet = false
+                            },
+                            shape = CircleShape,
+                            color = palette.accentDark,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Simpan" else "Save",
+                                color = palette.bgApp,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 11.dp)
+                            )
                         }
                     }
                 }

@@ -20,6 +20,11 @@ import kotlinx.coroutines.flow.map
 
 private val Context.llunevieDataStore: DataStore<Preferences> by preferencesDataStore(name = "llunevie_settings_v02")
 
+val DEFAULT_CURATED_GENRES = listOf(
+    "Romcom", "Fantasy", "Mystery", "Action", "Isekai",
+    "Slice of Life", "Sci-Fi", "Drama", "Horror", "Psychological"
+)
+
 data class UserPreferencesState(
     val isLoaded: Boolean = false,
     val lang: String = "id",
@@ -47,6 +52,8 @@ data class UserPreferencesState(
     val libShelf: String = "all",
     val libFilter: String = "all",
     val libStatus: String = "all",
+    val libGenre: String = "all",
+    val customGenres: Set<String> = emptySet(),
     val libSort: LibrarySortOption = LibrarySortOption.RECENT,
     val libGridCols: Int = 0,
     val homeRecentMode: String = "grid",
@@ -121,6 +128,8 @@ class UserPreferencesRepository(private val context: Context) {
         val LIB_SHELF = stringPreferencesKey("lib_shelf")
         val LIB_FILTER = stringPreferencesKey("lib_filter")
         val LIB_STATUS = stringPreferencesKey("lib_status")
+        val LIB_GENRE = stringPreferencesKey("lib_genre")
+        val CUSTOM_GENRES = stringSetPreferencesKey("custom_genres")
         val LIB_SORT = stringPreferencesKey("lib_sort")
         val LIB_GRID_COLS = intPreferencesKey("lib_grid_cols")
         val HOME_RECENT_MODE = stringPreferencesKey("home_recent_mode")
@@ -176,6 +185,8 @@ class UserPreferencesRepository(private val context: Context) {
             libShelf = prefs[Keys.LIB_SHELF] ?: "all",
             libFilter = prefs[Keys.LIB_FILTER] ?: "all",
             libStatus = prefs[Keys.LIB_STATUS] ?: "all",
+            libGenre = prefs[Keys.LIB_GENRE] ?: "all",
+            customGenres = prefs[Keys.CUSTOM_GENRES] ?: emptySet(),
             libSort = LibrarySortOption.fromKey(prefs[Keys.LIB_SORT]),
             libGridCols = prefs[Keys.LIB_GRID_COLS] ?: 0,
             homeRecentMode = prefs[Keys.HOME_RECENT_MODE] ?: "grid",
@@ -300,7 +311,8 @@ class UserPreferencesRepository(private val context: Context) {
         status: String? = null,
         sort: LibrarySortOption? = null,
         gridCols: Int? = null,
-        homeRecentMode: String? = null
+        homeRecentMode: String? = null,
+        genre: String? = null
     ) {
         context.llunevieDataStore.edit { prefs ->
             viewMode?.let { prefs[Keys.LIB_VIEW_MODE] = it.key }
@@ -310,6 +322,28 @@ class UserPreferencesRepository(private val context: Context) {
             sort?.let { prefs[Keys.LIB_SORT] = it.key }
             gridCols?.let { prefs[Keys.LIB_GRID_COLS] = it }
             homeRecentMode?.let { prefs[Keys.HOME_RECENT_MODE] = it }
+            genre?.let { prefs[Keys.LIB_GENRE] = it }
+        }
+    }
+
+    suspend fun setLibraryGenre(genre: String) {
+        context.llunevieDataStore.edit { it[Keys.LIB_GENRE] = genre.trim() }
+    }
+
+    suspend fun addCustomGenre(genre: String) {
+        val trimmed = genre.trim()
+        if (trimmed.isBlank()) return
+        context.llunevieDataStore.edit { prefs ->
+            val current = prefs[Keys.CUSTOM_GENRES] ?: emptySet()
+            prefs[Keys.CUSTOM_GENRES] = current + trimmed
+        }
+    }
+
+    suspend fun removeCustomGenre(genre: String) {
+        val trimmed = genre.trim()
+        context.llunevieDataStore.edit { prefs ->
+            val current = prefs[Keys.CUSTOM_GENRES] ?: emptySet()
+            prefs[Keys.CUSTOM_GENRES] = current.filterNot { it.equals(trimmed, ignoreCase = true) }.toSet()
         }
     }
 

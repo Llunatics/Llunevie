@@ -649,9 +649,82 @@ class LlunevieViewModel(
                 filter = "all",
                 status = "all",
                 sort = LibrarySortOption.RECENT,
-                gridCols = 0
+                gridCols = 0,
+                genre = "all"
             )
             _uiState.update { it.copy(showLibFilterSheet = false) }
+        }
+    }
+
+    fun setLibraryGenre(genre: String) {
+        viewModelScope.launch {
+            prefsRepo.setLibraryGenre(genre)
+        }
+    }
+
+    fun addCustomGenre(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            prefsRepo.addCustomGenre(trimmed)
+            val isId = preferences.value.lang != "en"
+            showToast(if (isId) "Genre \"$trimmed\" ditambahkan" else "Genre \"$trimmed\" added")
+        }
+    }
+
+    fun deleteCustomGenre(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            prefsRepo.removeCustomGenre(trimmed)
+            if (preferences.value.libGenre.equals(trimmed, ignoreCase = true)) {
+                prefsRepo.setLibraryGenre("all")
+            }
+            val allBooks = dao.getAllBooks()
+            for (b in allBooks) {
+                val currentGenres = b.genreList()
+                if (currentGenres.any { it.equals(trimmed, ignoreCase = true) }) {
+                    val updatedGenres = currentGenres.filterNot { it.equals(trimmed, ignoreCase = true) }.joinToString(", ")
+                    dao.updateBookGenresById(b.id, updatedGenres)
+                }
+            }
+            val isId = preferences.value.lang != "en"
+            showToast(if (isId) "Genre dihapus" else "Genre deleted")
+        }
+    }
+
+    fun updateBookShelfAndGenres(bookId: String, newShelf: String, newGenres: List<String>) {
+        viewModelScope.launch {
+            val book = dao.getBookById(bookId) ?: return@launch
+            val cleanedGenres = newGenres.map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.joinToString(", ")
+            val updated = book.copy(
+                shelf = canonicalShelfKey(newShelf.trim()),
+                genres = cleanedGenres
+            )
+            dao.updateBook(updated)
+            val isId = preferences.value.lang != "en"
+            showToast(if (isId) "Koleksi & genre diperbarui" else "Collection & genres updated")
+        }
+    }
+
+    fun batchAssignShelfAndGenres(bookIds: List<String>, targetShelf: String?, addGenres: List<String>) {
+        if (bookIds.isEmpty()) return
+        viewModelScope.launch {
+            if (!targetShelf.isNullOrBlank()) {
+                val canonical = canonicalShelfKey(targetShelf)
+                dao.updateBooksShelfByIds(bookIds, canonical)
+            }
+            if (addGenres.isNotEmpty()) {
+                val cleanedAdd = addGenres.map { it.trim() }.filter { it.isNotEmpty() }
+                for (id in bookIds) {
+                    val b = dao.getBookById(id) ?: continue
+                    val merged = (b.genreList() + cleanedAdd).distinctBy { it.lowercase() }.joinToString(", ")
+                    dao.updateBookGenresById(id, merged)
+                }
+            }
+            exitSelectionMode()
+            val isId = preferences.value.lang != "en"
+            showToast(if (isId) "${bookIds.size} buku diperbarui" else "${bookIds.size} books updated")
         }
     }
 
@@ -2227,6 +2300,10 @@ class LlunevieViewModel(
                 spineTextColor = paletteList[pIdx].second
             }
 
+            val genreMatch = Regex("""\[Genres:\s*(.*?)\]""").find(candidate.synopsis)
+            val extractedCandidateGenres = genreMatch?.groupValues?.get(1)?.trim().orEmpty()
+            val cleanCandidateSynopsis = if (genreMatch != null) candidate.synopsis.replace(Regex("""\s*\[Genres:\s*.*?\]"""), "").trim() else candidate.synopsis
+
             val entity = BookEntity(
                 id = id,
                 title = candidate.title,
@@ -2252,11 +2329,12 @@ class LlunevieViewModel(
                 coverImagePath = candidate.coverUrl,
                 spineColorHex = spineColor,
                 spineTextColorHex = spineTextColor,
-                synopsis = candidate.synopsis,
+                synopsis = cleanCandidateSynopsis,
                 heightCm = candidate.heightCm,
                 widthCm = candidate.widthCm,
                 lengthCm = candidate.lengthCm,
-                weightGrams = candidate.weightGrams
+                weightGrams = candidate.weightGrams,
+                genres = extractedCandidateGenres
             )
             val chapters = buildStructuredChaptersFromSynopsis(entity).map {
                 BookChapterEntity(
@@ -2308,6 +2386,7 @@ class LlunevieViewModel(
                 put("coverImagePath", b.coverImagePath ?: "")
                 put("spineColorHex", b.spineColorHex)
                 put("synopsis", b.synopsis)
+                put("genres", b.genres)
             })
         }
         root.put("books", booksArr)
@@ -2346,7 +2425,8 @@ class LlunevieViewModel(
                     coverImagePath = b.optString("coverImagePath").ifBlank { b.optString("coverUrl").ifBlank { null } },
                     spineColorHex = b.optLong("spineColorHex", 0xFF2B3A4AL),
                     spineTextColorHex = 0xFFFAF6EBL,
-                    synopsis = b.optString("synopsis", "")
+                    synopsis = b.optString("synopsis", ""),
+                    genres = b.optString("genres", "")
                 )
                 val chapters = buildStructuredChaptersFromSynopsis(entity).map {
                     BookChapterEntity(
