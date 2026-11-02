@@ -248,17 +248,11 @@ object EpubNativeParser {
                 opfDoc.selectFirst("dc|title, title")?.text()?.trim()?.takeIf { it.isNotBlank() }?.let { rawTitle ->
                     val cleanOpf = sanitizeBookOrChapterText(rawTitle)
                     val normFallback = normalizeBookTitle(fallbackFileName)
-                    val volRegex = Regex("""(?i)\b(?:vol(?:ume|\.)?|jilid|part|bagian|v|#|book)\s*(\d+(?:\.\d+)?|[IVXLCDM]+)\b""")
+                    val volRegex = Regex("""(?i)\b(?:vol(?:ume)?\.?\s*(\d+(?:\.\d+)?)|jilid\s*(\d+))\b""")
                     val volMatchFallback = volRegex.find(normFallback)
                     val volMatchOpf = volRegex.find(cleanOpf)
-                    val digitRegex = Regex("""\b(\d{1,3})\b""")
-                    val fallbackDigits = digitRegex.findAll(normFallback).map { it.value }.toList()
-                    val opfDigits = digitRegex.findAll(cleanOpf).map { it.value }.toSet()
-                    val missingDigit = fallbackDigits.lastOrNull { it !in opfDigits }
                     bookTitle = if (volMatchFallback != null && volMatchOpf == null) {
                         "$cleanOpf — ${volMatchFallback.value.trim()}"
-                    } else if (missingDigit != null && volMatchOpf == null) {
-                        "$cleanOpf — Vol. $missingDigit"
                     } else {
                         cleanOpf
                     }
