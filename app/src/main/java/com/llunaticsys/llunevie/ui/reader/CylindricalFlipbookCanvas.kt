@@ -42,6 +42,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.asAndroidColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -604,7 +605,7 @@ private fun DrawScope.drawPageBitmapFitted(
     bitmap: ImageBitmap,
     isPdfBook: Boolean,
     isTwoPageSpread: Boolean,
-    colorFilter: ColorFilter? = null
+    colorFilter: ColorFilter?
 ) {
     val canvasW = size.width.roundToInt().coerceAtLeast(1)
     val canvasH = size.height.roundToInt().coerceAtLeast(1)
@@ -697,10 +698,6 @@ fun CylindricalFlipbookCanvas(
         onFlipStateChanged(isFlipActive)
     }
 
-    // For PDF books with theme tinting, use the tinted paper color; otherwise use white or theme color
-    val pagePaperColor = if (isPdfBook && pdfTintedPaperColor != null) pdfTintedPaperColor else if (isPdfBook) Color.White else themeBgColor
-    val effectiveBackPaperColor = if (isPdfBook && pdfTintedPaperColor != null) pdfTintedPaperColor else if (isPdfBook) Color(0xFFF2EFE9) else backPaperColor
-
     val paperBleedFilter = remember {
         val cm = ColorMatrix().apply { setToSaturation(0.35f) }
         ColorFilter.colorMatrix(cm)
@@ -715,8 +712,9 @@ fun CylindricalFlipbookCanvas(
     }
     LaunchedEffect(currentPageBitmap) {
         // Only update displayedCurrentBmp when idle and when currentPageBitmap is NOT the old previous page:
-        if (currentPageBitmap != null && progressAnim.value == 0f && currentPageBitmap !== displayedPrevBmp) {
+        if (progressAnim.value == 0f && currentPageBitmap !== displayedPrevBmp) {
             displayedCurrentBmp = currentPageBitmap
+            displayedCurrFilter = curPageColorFilter
             isWaitingForParentPageSync = false
         }
     }
@@ -735,12 +733,19 @@ fun CylindricalFlipbookCanvas(
     LaunchedEffect(manualProgress) {
         if (manualProgress != null && manualProgress >= 0.999f) {
             val dir = effectiveTurnDir
+            val targetFilter = if (dir > 0) (displayedNextFilter ?: nextPageColorFilter) else (displayedPrevFilter ?: prevPageColorFilter)
             if (dir > 0 && (displayedNextBmp ?: nextPageBitmap) != null) {
                 displayedPrevBmp = displayedCurrentBmp
                 displayedCurrentBmp = (displayedNextBmp ?: nextPageBitmap)!!
+                displayedPrevFilter = displayedCurrFilter
+                displayedCurrFilter = targetFilter
+                displayedNextFilter = null
             } else if (dir < 0 && (displayedPrevBmp ?: prevPageBitmap) != null) {
                 displayedNextBmp = displayedCurrentBmp
                 displayedCurrentBmp = (displayedPrevBmp ?: prevPageBitmap)!!
+                displayedNextFilter = displayedCurrFilter
+                displayedCurrFilter = targetFilter
+                displayedPrevFilter = null
             }
             isWaitingForParentPageSync = true
         }
@@ -756,12 +761,19 @@ fun CylindricalFlipbookCanvas(
         )
         val completedDir = dir
         val targetBmp = if (completedDir > 0) (displayedNextBmp ?: destBmp) else (displayedPrevBmp ?: destBmp)
+        val targetFilter = if (completedDir > 0) (displayedNextFilter ?: nextPageColorFilter) else (displayedPrevFilter ?: prevPageColorFilter)
         if (completedDir > 0 && targetBmp != null) {
             displayedPrevBmp = displayedCurrentBmp
             displayedCurrentBmp = targetBmp
+            displayedPrevFilter = displayedCurrFilter
+            displayedCurrFilter = targetFilter
+            displayedNextFilter = null
         } else if (completedDir < 0 && targetBmp != null) {
             displayedNextBmp = displayedCurrentBmp
             displayedCurrentBmp = targetBmp
+            displayedNextFilter = displayedCurrFilter
+            displayedCurrFilter = targetFilter
+            displayedPrevFilter = null
         }
         isWaitingForParentPageSync = true
         turnDir = 0
@@ -903,11 +915,19 @@ fun CylindricalFlipbookCanvas(
         val p = manualProgress?.coerceIn(0f, 1f) ?: progressAnim.value.coerceIn(0f, 1f)
         val pageRect = computePageRect(curBmp, isPdfBook, isTwoPageSpread, w, h)
 
+        val destBitmap = if (effectiveTurnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
+        val destColorFilter = if (effectiveTurnDir > 0) (displayedNextFilter ?: nextPageColorFilter) else (displayedPrevFilter ?: prevPageColorFilter)
+
+        val curPagePaperColor = if (isPdfBook && displayedCurrFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+        val destPagePaperColor = if (isPdfBook && destColorFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+        val curBackFlapColor = if (isPdfBook && displayedCurrFilter == null) Color(0xFFFAF8F4) else backPaperColor
+        val displayedCurrAndroidColorFilter = displayedCurrFilter?.asAndroidColorFilter()
+
         if (p <= 0.002f) {
             drawRect(color = themeBgColor, size = size)
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
                 drawRect(
-                    color = pagePaperColor,
+                    color = curPagePaperColor,
                     topLeft = Offset(pageRect.left, pageRect.top),
                     size = Size(pageRect.width, pageRect.height)
                 )
@@ -935,7 +955,6 @@ fun CylindricalFlipbookCanvas(
 
         drawRect(color = themeBgColor, size = size)
 
-        val destBitmap = if (effectiveTurnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
         val bell = sin(p * PI.toFloat())
 
         // Strict Page-Frame Clipping: page turn effect is strictly bounded to pageRect
@@ -1020,7 +1039,7 @@ fun CylindricalFlipbookCanvas(
                     if (leafRight > leafLeft) {
                         clipRect(leafLeft, pageRect.top, leafRight, pageRect.bottom) {
                             drawRect(
-                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
+                                color = curBackFlapColor,
                                 topLeft = Offset(leafLeft, pageRect.top),
                                 size = Size(leafRight - leafLeft, pageH),
                                 alpha = 1f
@@ -1140,7 +1159,7 @@ fun CylindricalFlipbookCanvas(
                     if (leafRight > leafLeft) {
                         clipRect(leafLeft, pageRect.top, leafRight, pageRect.bottom) {
                             drawRect(
-                                color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor,
+                                color = curBackFlapColor,
                                 topLeft = Offset(leafLeft, pageRect.top),
                                 size = Size(leafRight - leafLeft, pageH),
                                 alpha = 1f
@@ -1222,9 +1241,9 @@ fun CylindricalFlipbookCanvas(
                         close()
                     }
                     clipPath(nextPoly) {
-                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawRect(color = destPagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
-                            drawPageBitmapFitted(destBitmap, isPdfBook, false)
+                            drawPageBitmapFitted(destBitmap, isPdfBook, false, destColorFilter)
                         }
                     }
 
@@ -1246,8 +1265,8 @@ fun CylindricalFlipbookCanvas(
 
                     clipPath(currPoly) {
                         // Draw flat underlying current page up to crease line F_top -> F_bot
-                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
-                        drawPageBitmapFitted(curBmp, isPdfBook, false)
+                        drawRect(color = curPagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawPageBitmapFitted(curBmp, isPdfBook, false, displayedCurrFilter)
 
                         // Drop shadow strictly along left leading edge leadTop -> leadBot of backPoly onto currPoly
                         val rdx = leadBot.x - leadTop.x
@@ -1286,7 +1305,7 @@ fun CylindricalFlipbookCanvas(
 
                         // Draw folded paper flap (backPoly) clipped to currPoly (intersection)
                         clipPath(backPoly) {
-                            drawPath(backPoly, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
+                            drawPath(backPoly, color = curBackFlapColor, alpha = 1f)
                             drawIntoCanvas { canvas ->
                                 val nc = canvas.nativeCanvas
                                 nc.save()
@@ -1297,6 +1316,9 @@ fun CylindricalFlipbookCanvas(
 
                                 val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
                                     alpha = (0.09f * 255).roundToInt()
+                                    if (displayedCurrAndroidColorFilter != null) {
+                                        colorFilter = displayedCurrAndroidColorFilter
+                                    }
                                 }
                                 val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
                                 nc.drawBitmap(curBmp.asAndroidBitmap(), null, dstRect, paint)
@@ -1352,9 +1374,9 @@ fun CylindricalFlipbookCanvas(
                         close()
                     }
                     clipPath(prevPoly) {
-                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawRect(color = destPagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
                         if (destBitmap != null) {
-                            drawPageBitmapFitted(destBitmap, isPdfBook, false)
+                            drawPageBitmapFitted(destBitmap, isPdfBook, false, destColorFilter)
                         }
                     }
 
@@ -1376,8 +1398,8 @@ fun CylindricalFlipbookCanvas(
 
                     clipPath(currPoly) {
                         // Draw flat underlying current page up to crease line F_top -> F_bot
-                        drawRect(color = pagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
-                        drawPageBitmapFitted(curBmp, isPdfBook, false)
+                        drawRect(color = curPagePaperColor, topLeft = Offset(pageRect.left, pageRect.top), size = Size(pageRect.width, pageRect.height))
+                        drawPageBitmapFitted(curBmp, isPdfBook, false, displayedCurrFilter)
 
                         // Drop shadow strictly along right leading edge leadTop -> leadBot of backPoly onto currPoly
                         val rdx = leadBot.x - leadTop.x
@@ -1416,7 +1438,7 @@ fun CylindricalFlipbookCanvas(
 
                         // Draw folded paper flap (backPoly) clipped to currPoly (intersection)
                         clipPath(backPoly) {
-                            drawPath(backPoly, color = if (isPdfBook) Color(0xFFFAF8F4) else effectiveBackPaperColor, alpha = 1f)
+                            drawPath(backPoly, color = curBackFlapColor, alpha = 1f)
                             drawIntoCanvas { canvas ->
                                 val nc = canvas.nativeCanvas
                                 nc.save()
@@ -1427,6 +1449,9 @@ fun CylindricalFlipbookCanvas(
 
                                 val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
                                     alpha = (0.09f * 255).roundToInt()
+                                    if (displayedCurrAndroidColorFilter != null) {
+                                        colorFilter = displayedCurrAndroidColorFilter
+                                    }
                                 }
                                 val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
                                 nc.drawBitmap(curBmp.asAndroidBitmap(), null, dstRect, paint)
