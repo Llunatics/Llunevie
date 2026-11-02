@@ -720,14 +720,14 @@ fun CylindricalFlipbookCanvas(
     }
 
     // Sync color filters alongside bitmaps
-    LaunchedEffect(curPageColorFilter) {
-        displayedCurrFilter = curPageColorFilter
+    LaunchedEffect(curPageColorFilter, isWaitingForParentPageSync) {
+        if (!isWaitingForParentPageSync && progressAnim.value == 0f) displayedCurrFilter = curPageColorFilter
     }
     LaunchedEffect(nextPageColorFilter) {
-        if (nextPageColorFilter != null) displayedNextFilter = nextPageColorFilter
+        displayedNextFilter = nextPageColorFilter
     }
     LaunchedEffect(prevPageColorFilter) {
-        if (prevPageColorFilter != null) displayedPrevFilter = prevPageColorFilter
+        displayedPrevFilter = prevPageColorFilter
     }
 
     LaunchedEffect(manualProgress) {
@@ -924,14 +924,16 @@ fun CylindricalFlipbookCanvas(
         val displayedCurrAndroidColorFilter = displayedCurrFilter?.asAndroidColorFilter()
 
         if (p <= 0.002f) {
+            val activeIdleFilter = if (isWaitingForParentPageSync) displayedCurrFilter else curPageColorFilter
+            val idlePaperColor = if (isPdfBook && activeIdleFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
             drawRect(color = themeBgColor, size = size)
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
                 drawRect(
-                    color = curPagePaperColor,
+                    color = idlePaperColor,
                     topLeft = Offset(pageRect.left, pageRect.top),
                     size = Size(pageRect.width, pageRect.height)
                 )
-                drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread, displayedCurrFilter)
+                drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread, activeIdleFilter)
                 if (isTwoPageSpread) {
                     val spineX = (pageRect.left + pageRect.right) / 2f
                     drawRect(

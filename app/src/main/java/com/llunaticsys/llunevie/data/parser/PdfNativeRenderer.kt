@@ -1554,7 +1554,7 @@ object PdfNativeRenderer {
                 val eIdx = if (i + 1 < finalBookmarks.size) finalBookmarks[i + 1].startPageZero.coerceIn(sIdx + 1, totalPages) else totalPages
                 val pagesArr = JSONArray()
                 for (p in sIdx until eIdx) {
-                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p || it.caption.contains(" ${p + 1}") }
+                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p }
                     if (matchingIllust != null) {
                         pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
                     } else {
@@ -1601,7 +1601,7 @@ object PdfNativeRenderer {
                 val e = (s + pagesPerChapter).coerceAtMost(totalPages)
                 val pagesArr = JSONArray()
                 for (p in s until e) {
-                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p || it.caption.contains(" ${p + 1}") }
+                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p }
                     if (matchingIllust != null) {
                         pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
                     } else {
@@ -1639,13 +1639,9 @@ object PdfNativeRenderer {
 
     fun isPdfPageProtectedIllustration(
         pageIndex: Int,
-        knownIllustrationPages: Set<Int>,
-        pageRawText: String = ""
+        knownIllustrationPages: Set<Int>
     ): Boolean {
-        if (pageIndex == 0) return true
-        if (pageIndex in knownIllustrationPages) return true
-        if (pageRawText.contains("[ILLUST:")) return true
-        return false
+        return pageIndex == 0 || pageIndex in knownIllustrationPages
     }
 
     fun buildPdfThemeColorFilter(

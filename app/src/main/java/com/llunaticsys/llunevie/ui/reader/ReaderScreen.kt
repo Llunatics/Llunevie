@@ -384,21 +384,24 @@ fun ReaderScreen(
         PdfNativeRenderer.buildAndroidPdfThemeColorFilter(effectiveTheme, prefs.amoledBlack)
     } else null
 
-    val indexedIllustrationPages = remember(uiState.activeBookIllustrations, chapters) {
-        val set = mutableSetOf<Int>()
-        set.add(0) // Front cover is always protected
-        uiState.activeBookIllustrations.forEach { illust ->
-            if (illust.pageIndexInBook >= 0) set.add(illust.pageIndexInBook)
-        }
-        chapters.forEach { ch ->
-            ch.pages.forEach { pgText ->
-                if (pgText.contains("[ILLUST:") && pgText.contains("[PDF_PAGE:")) {
-                    val pNum = pgText.substringAfter("[PDF_PAGE:").substringBefore("]").trim().toIntOrNull()
-                    if (pNum != null) set.add(pNum)
+    val indexedIllustrationPages = remember(uiState.activeBookIllustrations) {
+        buildSet {
+            add(0) // Page 1 (0-based index 0) front cover is always protected
+            for (illust in uiState.activeBookIllustrations) {
+                if (illust.pageIndexInBook >= 0) {
+                    add(illust.pageIndexInBook)
                 }
             }
         }
-        set
+    }
+
+    fun pdfFilterForPage(pageZeroIdx: Int): ColorFilter? {
+        if (pageZeroIdx < 0 || pageZeroIdx >= metrics.totalBookPages) return null
+        if (!isPdfBook || !prefs.pdfThemeTintEnabled || effectiveTheme == AppThemeMode.WHITE) return null
+        if (prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(pageZeroIdx, indexedIllustrationPages)) {
+            return null
+        }
+        return pdfThemeColorFilter
     }
 
     val context = LocalContext.current
@@ -582,7 +585,6 @@ fun ReaderScreen(
                             var lockedCurrFilter by remember { mutableStateOf<ColorFilter?>(null) }
                             var lockedNextFilter by remember { mutableStateOf<ColorFilter?>(null) }
                             var lockedPrevFilter by remember { mutableStateOf<ColorFilter?>(null) }
-                            var committedCurrentFilter by remember { mutableStateOf<ColorFilter?>(null) }
 
                             val curBitmapInitial = if (isPdfBook && !isSpread) {
                                 (curLeftPdfBmp
@@ -851,32 +853,16 @@ fun ReaderScreen(
                             LaunchedEffect(curBitmap) {
                                 if (curBitmap != null) {
                                     committedCurrentBmp = null
-                                    committedCurrentFilter = null
                                 }
                             }
 
-                            val curPdfColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
-                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                    curLeftIdx, indexedIllustrationPages
-                                ))) pdfThemeColorFilter else null
-                            val nextPdfColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
-                                nextLeftIdx < metrics.totalBookPages &&
-                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                    nextLeftIdx, indexedIllustrationPages
-                                ))) pdfThemeColorFilter else null
-                            val prevPdfColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
-                                prevLeftIdx >= 0 &&
-                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                    prevLeftIdx, indexedIllustrationPages
-                                ))) pdfThemeColorFilter else null
+                            val curPdfColorFilter = pdfFilterForPage(curLeftIdx)
+                            val nextPdfColorFilter = pdfFilterForPage(nextLeftIdx)
+                            val prevPdfColorFilter = pdfFilterForPage(prevLeftIdx)
 
                             val activeCurrBmp = committedCurrentBmp ?: (if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap)
                             val activeNextBmp = if (isFlippingInProgress) (lockedNextBmp ?: nextBitmap) else nextBitmap
                             val activePrevBmp = if (isFlippingInProgress) (lockedPrevBmp ?: prevBitmap) else prevBitmap
-
-                            val activeCurrFilter = committedCurrentFilter ?: (if (isFlippingInProgress) (lockedCurrFilter ?: curPdfColorFilter) else curPdfColorFilter)
-                            val activeNextFilter = if (isFlippingInProgress) (lockedNextFilter ?: nextPdfColorFilter) else nextPdfColorFilter
-                            val activePrevFilter = if (isFlippingInProgress) (lockedPrevFilter ?: prevPdfColorFilter) else prevPdfColorFilter
 
                             var flipTurnDir by remember { mutableIntStateOf(1) }
                             var liveDragProgress by remember { mutableFloatStateOf(0f) }
@@ -999,28 +985,18 @@ fun ReaderScreen(
                                                         val nextB = lockedNextBmp ?: nextBitmap
                                                         val prevB = lockedPrevBmp ?: prevBitmap
                                                         val currB = lockedCurrBmp ?: curBitmap
-                                                        val nextF = lockedNextFilter ?: nextPdfColorFilter
-                                                        val prevF = lockedPrevFilter ?: prevPdfColorFilter
-                                                        val currF = lockedCurrFilter ?: curPdfColorFilter
                                                         if (dir > 0 && nextB != null) {
                                                             lockedPrevBmp = currB
                                                             lockedCurrBmp = nextB
                                                             lockedNextBmp = null
                                                             committedCurrentBmp = nextB
-                                                            lockedPrevFilter = currF
-                                                            lockedCurrFilter = nextF
-                                                            lockedNextFilter = null
-                                                            committedCurrentFilter = nextF
                                                         } else if (dir < 0 && prevB != null) {
                                                             lockedNextBmp = currB
                                                             lockedCurrBmp = prevB
                                                             lockedPrevBmp = null
                                                             committedCurrentBmp = prevB
-                                                            lockedNextFilter = currF
-                                                            lockedCurrFilter = prevF
-                                                            lockedPrevFilter = null
-                                                            committedCurrentFilter = prevF
                                                         }
+                                                        lockedCurrFilter = if (dir > 0) lockedNextFilter else lockedPrevFilter
                                                         // Execute synchronously on the Main UI thread in the same frame:
                                                         displayPageIndex = targetPage
                                                         liveDragProgress = 0f
@@ -1155,9 +1131,9 @@ fun ReaderScreen(
                                         backPaperColor = if (isPdfBook && pdfTintedPaperColor == null) Color(0xFFF2EFE9) else palette.flipBackPaper,
                                         isPdfBook = isPdfBook,
                                         isTwoPageSpread = isSpread,
-                                        curPageColorFilter = activeCurrFilter,
-                                        nextPageColorFilter = activeNextFilter,
-                                        prevPageColorFilter = activePrevFilter,
+                                        curPageColorFilter = if (isFlippingInProgress) lockedCurrFilter else curPdfColorFilter,
+                                        nextPageColorFilter = if (isFlippingInProgress) lockedNextFilter else nextPdfColorFilter,
+                                        prevPageColorFilter = if (isFlippingInProgress) lockedPrevFilter else prevPdfColorFilter,
                                         pdfTintedPaperColor = pdfTintedPaperColor,
                                         externalTriggerDir = externalFlipTrigger,
                                         onExternalTriggerConsumed = { externalFlipTrigger = 0 },
@@ -1178,28 +1154,18 @@ fun ReaderScreen(
                                                 val nextB = lockedNextBmp ?: nextBitmap
                                                 val prevB = lockedPrevBmp ?: prevBitmap
                                                 val currB = lockedCurrBmp ?: curBitmap
-                                                val nextF = lockedNextFilter ?: nextPdfColorFilter
-                                                val prevF = lockedPrevFilter ?: prevPdfColorFilter
-                                                val currF = lockedCurrFilter ?: curPdfColorFilter
                                                 if (dir > 0 && nextB != null) {
                                                     lockedPrevBmp = currB
                                                     lockedCurrBmp = nextB
                                                     lockedNextBmp = null
                                                     committedCurrentBmp = nextB
-                                                    lockedPrevFilter = currF
-                                                    lockedCurrFilter = nextF
-                                                    lockedNextFilter = null
-                                                    committedCurrentFilter = nextF
                                                 } else if (dir < 0 && prevB != null) {
                                                     lockedNextBmp = currB
                                                     lockedCurrBmp = prevB
                                                     lockedPrevBmp = null
                                                     committedCurrentBmp = prevB
-                                                    lockedNextFilter = currF
-                                                    lockedCurrFilter = prevF
-                                                    lockedPrevFilter = null
-                                                    committedCurrentFilter = prevF
                                                 }
+                                                lockedCurrFilter = if (dir > 0) lockedNextFilter else lockedPrevFilter
                                                 displayPageIndex = targetPage
                                                 liveDragProgress = 0f
                                                 viewModel?.jumpToGlobalPage(targetPage)
