@@ -928,12 +928,38 @@ class LlunevieViewModel(
             if (chEntities.isNotEmpty()) {
                 var globalTracker = 0
                 val isPdf = book.format.equals("PDF", true)
+                val isEn = preferences.value.lang == "en"
+                val pdfIllustFilePageRegex = Regex("""_illust_p(\d+)\.""", RegexOption.IGNORE_CASE)
+
                 for (ce in chEntities) {
                     val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
                     val rawPagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }.ifEmpty { listOf(book.synopsis) }
                     // Apply reflow to fix oversized pages in existing EPUB/TXT books
-                    val pagesList = if (!isPdf) reflowOversizedTextPages(rawPagesList) else rawPagesList
+                    val basePagesList = if (!isPdf) reflowOversizedTextPages(rawPagesList) else rawPagesList
                     val cleanChTitle = sanitizeBookOrChapterText(ce.title)
+
+                    // For PDF books, clean any polluted [ILLUST:...] tag out of pagesList when fileOneBasedPage - 1 != globalTracker + pIdx
+                    val pagesList = if (isPdf) {
+                        basePagesList.mapIndexed { pIdx, pText ->
+                            if (pText.contains("[ILLUST:")) {
+                                val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
+                                val path = inner.substringBefore("|")
+                                val filePageMatch = pdfIllustFilePageRegex.find(path)
+                                val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                if (fileOneBasedPage == null || fileOneBasedPage - 1 != globalTracker + pIdx) {
+                                    val stripped = pText.replace(Regex("""\[ILLUST:[^]]+\]"""), "").trim()
+                                    if (stripped.isBlank()) "[PDF_PAGE:${globalTracker + pIdx}]" else stripped
+                                } else {
+                                    pText
+                                }
+                            } else {
+                                pText
+                            }
+                        }
+                    } else {
+                        basePagesList
+                    }
+
                     parsedChapters.add(BookChapter(index = ce.chapterIndex, title = cleanChTitle, pages = pagesList))
 
                     val illustArr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
@@ -941,40 +967,75 @@ class LlunevieViewModel(
                         val obj = illustArr.optJSONObject(i) ?: continue
                         val path = obj.optString("uriOrPath")
                         if (path.isNotBlank()) {
+                            val filePageMatch = pdfIllustFilePageRegex.find(path)
+                            val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
                             val savedPageIdx = obj.optInt("pageIndexInBook", -1)
-                            val effectivePageIdx = if (savedPageIdx >= 0) savedPageIdx else {
-                                val found = pagesList.indexOfFirst { it.contains(path) }
-                                if (found >= 0) globalTracker + found else globalTracker
+                            val effectivePageIdx = when {
+                                fileOneBasedPage != null && fileOneBasedPage >= 1 -> fileOneBasedPage - 1
+                                savedPageIdx >= 0 -> savedPageIdx
+                                else -> {
+                                    val found = pagesList.indexOfFirst { it.contains(path) }
+                                    if (found >= 0) globalTracker + found else globalTracker
+                                }
                             }
-                            parsedIllustrations.add(
-                                BookIllustration(
-                                    uriOrPath = path,
-                                    caption = sanitizeBookOrChapterText(obj.optString("caption", cleanChTitle)),
-                                    pageIndexInBook = effectivePageIdx
-                                )
-                            )
-                        }
-                    }
-
-                    // Extract embedded illustrations in page texts if not already recorded
-                    pagesList.forEachIndexed { pIdx, pText ->
-                        if (pText.contains("[ILLUST:")) {
-                            val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
-                            val path = inner.substringBefore("|")
-                            val cap = inner.substringAfter("|", "")
-                            if (path.isNotBlank() && parsedIllustrations.none { it.uriOrPath == path }) {
+                            val rawCaption = obj.optString("caption", cleanChTitle)
+                            val cleanCaption = if (fileOneBasedPage != null && fileOneBasedPage >= 1) {
+                                if (isEn) "Illustration — Page $fileOneBasedPage" else "Ilustrasi — Hal $fileOneBasedPage"
+                            } else {
+                                sanitizeBookOrChapterText(rawCaption)
+                            }
+                            if (parsedIllustrations.none { it.uriOrPath == path || (isPdf && it.pageIndexInBook == effectivePageIdx) }) {
                                 parsedIllustrations.add(
                                     BookIllustration(
                                         uriOrPath = path,
-                                        caption = sanitizeBookOrChapterText(cap.ifBlank { cleanChTitle }),
-                                        pageIndexInBook = globalTracker + pIdx
+                                        caption = cleanCaption,
+                                        pageIndexInBook = effectivePageIdx
                                     )
                                 )
                             }
                         }
                     }
+
+                    // Extract embedded illustrations in page texts if not already recorded
+                    basePagesList.forEachIndexed { pIdx, pText ->
+                        if (pText.contains("[ILLUST:")) {
+                            val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
+                            val path = inner.substringBefore("|")
+                            val cap = inner.substringAfter("|", "")
+                            if (path.isNotBlank()) {
+                                if (isPdf) {
+                                    val filePageMatch = pdfIllustFilePageRegex.find(path)
+                                    val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    if (fileOneBasedPage != null && fileOneBasedPage >= 1) {
+                                        val truePageIdx = fileOneBasedPage - 1
+                                        val cleanCaption = if (isEn) "Illustration — Page $fileOneBasedPage" else "Ilustrasi — Hal $fileOneBasedPage"
+                                        if (parsedIllustrations.none { it.uriOrPath == path || it.pageIndexInBook == truePageIdx }) {
+                                            parsedIllustrations.add(
+                                                BookIllustration(
+                                                    uriOrPath = path,
+                                                    caption = cleanCaption,
+                                                    pageIndexInBook = truePageIdx
+                                                )
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    if (parsedIllustrations.none { it.uriOrPath == path }) {
+                                        parsedIllustrations.add(
+                                            BookIllustration(
+                                                uriOrPath = path,
+                                                caption = sanitizeBookOrChapterText(cap.ifBlank { cleanChTitle }),
+                                                pageIndexInBook = globalTracker + pIdx
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     globalTracker += pagesList.size
                 }
+                parsedIllustrations.sortBy { it.pageIndexInBook }
             }
 
             // Verify real PDF page count: if book is PDF, verify against actual file pageCount and rebuild if needed
@@ -1093,7 +1154,7 @@ class LlunevieViewModel(
                             val pList = (0 until pArr.length()).map { pArr.optString(it) }
                             BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
                         }
-                        _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts) }
+                        _uiState.update { it.copy(activeBookChapters = liveChs, activeBookIllustrations = updatedIllusts.sortedBy { it.pageIndexInBook }) }
                     }
                 }
             } catch (t: Throwable) {

@@ -1396,7 +1396,7 @@ object PdfNativeRenderer {
         onProgress(5)
 
         // Stage 1 & 2: Extract Outline & TOC bookmarks (or preserve existing chapters if already indexed)
-        val finalBookmarks = if (existingChapters != null && existingChapters.isNotEmpty()) {
+        val rawBookmarks = if (existingChapters != null && existingChapters.isNotEmpty()) {
             onProgress(45)
             existingChapters.map { ch ->
                 val pArr = runCatching { JSONArray(ch.pagesJson) }.getOrNull() ?: JSONArray()
@@ -1420,6 +1420,18 @@ object PdfNativeRenderer {
                 onStageProgress = onProgress
             )
         }
+
+        val finalBookmarks = rawBookmarks
+            .filter { it.startPageZero in 0 until totalPages }
+            .distinctBy { it.startPageZero }
+            .sortedBy { it.startPageZero }
+            .let { list ->
+                if (list.isNotEmpty() && list.first().startPageZero > 0) {
+                    listOf(PdfBookmark(sanitizeChapterTitle(defaultTitle), 0)) + list
+                } else {
+                    list
+                }
+            }
 
         onProgress(45)
 
@@ -1544,6 +1556,11 @@ object PdfNativeRenderer {
         }
 
         onProgress(100)
+
+        val uniqueIllusts = detectedIllusts.distinctBy { it.pageIndexInBook }.sortedBy { it.pageIndexInBook }
+        detectedIllusts.clear()
+        detectedIllusts.addAll(uniqueIllusts)
+        detectedIllusts.sortBy { it.pageIndexInBook }
 
         // Build BookChapterEntity list with bookmarks & detected illustrations
         val finalChapters = if (finalBookmarks.isNotEmpty()) {
