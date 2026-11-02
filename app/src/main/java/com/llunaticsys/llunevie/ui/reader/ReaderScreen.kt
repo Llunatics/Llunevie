@@ -384,6 +384,23 @@ fun ReaderScreen(
         PdfNativeRenderer.buildAndroidPdfThemeColorFilter(effectiveTheme, prefs.amoledBlack)
     } else null
 
+    val indexedIllustrationPages = remember(uiState.activeBookIllustrations, chapters) {
+        val set = mutableSetOf<Int>()
+        set.add(0) // Front cover is always protected
+        uiState.activeBookIllustrations.forEach { illust ->
+            if (illust.pageIndexInBook >= 0) set.add(illust.pageIndexInBook)
+        }
+        chapters.forEach { ch ->
+            ch.pages.forEach { pgText ->
+                if (pgText.contains("[ILLUST:") && pgText.contains("[PDF_PAGE:")) {
+                    val pNum = pgText.substringAfter("[PDF_PAGE:").substringBefore("]").trim().toIntOrNull()
+                    if (pNum != null) set.add(pNum)
+                }
+            }
+        }
+        set
+    }
+
     val context = LocalContext.current
     val view = LocalView.current
     var showReaderChrome by remember { mutableStateOf(true) }
@@ -597,12 +614,12 @@ fun ReaderScreen(
 
                                     val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                         !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                            book.id, leftZero, curLeftPdfBmp, uiState.activeBookIllustrations
+                                            leftZero, indexedIllustrationPages
                                         ))
                                     val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                         rightZero < metrics.totalBookPages &&
                                         !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                            book.id, rightZero, curRightPdfBmp, uiState.activeBookIllustrations
+                                            rightZero, indexedIllustrationPages
                                         ))
 
                                     renderTwoPageSpreadSnapshot(
@@ -681,12 +698,12 @@ fun ReaderScreen(
 
                                         val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                book.id, leftZero, nextLeftPdfBmp, uiState.activeBookIllustrations
+                                                leftZero, indexedIllustrationPages
                                             ))
                                         val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             rightZero < metrics.totalBookPages &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                book.id, rightZero, nextRightPdfBmp, uiState.activeBookIllustrations
+                                                rightZero, indexedIllustrationPages
                                             ))
 
                                         renderTwoPageSpreadSnapshot(
@@ -771,12 +788,12 @@ fun ReaderScreen(
 
                                         val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                book.id, leftZero, prevLeftPdfBmp, uiState.activeBookIllustrations
+                                                leftZero, indexedIllustrationPages
                                             ))
                                         val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             rightZero < metrics.totalBookPages &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                book.id, rightZero, prevRightPdfBmp, uiState.activeBookIllustrations
+                                                rightZero, indexedIllustrationPages
                                             ))
 
                                         renderTwoPageSpreadSnapshot(
@@ -840,17 +857,17 @@ fun ReaderScreen(
 
                             val curPdfColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                 !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                    book.id, curLeftIdx, curLeftPdfBmp, uiState.activeBookIllustrations
+                                    curLeftIdx, indexedIllustrationPages
                                 ))) pdfThemeColorFilter else null
                             val nextPdfColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                 nextLeftIdx < metrics.totalBookPages &&
                                 !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                    book.id, nextLeftIdx, nextLeftPdfBmp, uiState.activeBookIllustrations
+                                    nextLeftIdx, indexedIllustrationPages
                                 ))) pdfThemeColorFilter else null
                             val prevPdfColorFilter = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                 prevLeftIdx >= 0 &&
                                 !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                    book.id, prevLeftIdx, prevLeftPdfBmp, uiState.activeBookIllustrations
+                                    prevLeftIdx, indexedIllustrationPages
                                 ))) pdfThemeColorFilter else null
 
                             val activeCurrBmp = committedCurrentBmp ?: (if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap)
@@ -1377,7 +1394,7 @@ fun ReaderScreen(
                                     if (viewModel != null) {
                                         val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                book.id, pageZero, curLeftPdfBmp, uiState.activeBookIllustrations
+                                                pageZero, indexedIllustrationPages
                                             ))
                                         PdfPageItemContent(
                                             bookId = book.id,
@@ -1630,7 +1647,7 @@ fun ReaderScreen(
                                 ) { pageIdx ->
                                     val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                         !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                            book.id, pageIdx, null, uiState.activeBookIllustrations
+                                            pageIdx, indexedIllustrationPages
                                         ))
                                     PdfVerticalPageItem(
                                         pdfFilePath = pdfPath,

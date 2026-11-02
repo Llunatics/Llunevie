@@ -1637,32 +1637,15 @@ object PdfNativeRenderer {
         onUpdated(finalChapters, detectedIllusts)
     }
 
-    // Cached illustration detection results to avoid re-scanning pages
-    private val pdfIllustPageCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
-
     fun isPdfPageProtectedIllustration(
-        bookId: String,
         pageIndex: Int,
-        bitmap: Bitmap?,
-        knownIllustrations: List<BookIllustration>
+        knownIllustrationPages: Set<Int>,
+        pageRawText: String = ""
     ): Boolean {
-        // Page 0 is always the front cover
         if (pageIndex == 0) return true
-
-        // Check if this page is explicitly marked as an illustration
-        if (knownIllustrations.any { it.pageIndexInBook == pageIndex }) return true
-
-        // Check cache
-        val key = "$bookId:$pageIndex"
-        pdfIllustPageCache[key]?.let { return it }
-
-        // If no bitmap available, cannot determine
-        if (bitmap == null || bitmap.isRecycled) return false
-
-        // Detect if this is a true illustration page
-        val detected = isTrueIllustrationPageBitmap(bitmap)
-        pdfIllustPageCache[key] = detected
-        return detected
+        if (pageIndex in knownIllustrationPages) return true
+        if (pageRawText.contains("[ILLUST:")) return true
+        return false
     }
 
     fun buildPdfThemeColorFilter(
