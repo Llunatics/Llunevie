@@ -38,6 +38,7 @@ data class BookEntity(
     val lengthCm: Float = 20f,
     val weightGrams: Float = 300f,
     val createdAtMillis: Long = System.currentTimeMillis(),
+    val lastReadAtMillis: Long = 0L,
     val tocIndexed: Boolean = false,
     val tocIndexVersion: Int = 0,
     val genres: String = ""

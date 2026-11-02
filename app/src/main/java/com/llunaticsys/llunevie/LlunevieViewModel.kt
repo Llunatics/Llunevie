@@ -139,6 +139,10 @@ class LlunevieViewModel(
     private val apiRepo: MultiBookApiRepository
 ) : ViewModel() {
 
+    companion object {
+        private const val CURRENT_PDF_TOC_VERSION = 6
+    }
+
     private val _previewOverrides = MutableStateFlow<UserPreferencesState?>(null)
 
     val preferences: StateFlow<UserPreferencesState> = combine(
@@ -354,7 +358,7 @@ class LlunevieViewModel(
                         if (book != null) {
                             val nextSecs = book.readingSeconds + 60
                             val nextMins = book.timeMinutes + 1
-                            dao.updateBook(book.copy(readingSeconds = nextSecs, timeMinutes = nextMins))
+                            dao.updateBook(book.copy(readingSeconds = nextSecs, timeMinutes = nextMins, lastReadAtMillis = System.currentTimeMillis()))
                             recordDailyReadingMinute(1, 0)
                         }
                     }
@@ -1050,12 +1054,10 @@ class LlunevieViewModel(
                     }.getOrDefault(book.pagesCount)
 
                     val isEn = preferences.value.lang == "en"
-                    val totalPagesInChapters = parsedChapters.sumOf { it.pages.size }
 
-                    if (parsedChapters.isEmpty() || totalPagesInChapters != actualPageCount) {
+                    if (parsedChapters.isEmpty()) {
                         val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
                         dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), rebuilt)
-                        parsedChapters.clear()
                         rebuilt.forEach { ce ->
                             val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
                             val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }
@@ -1063,16 +1065,8 @@ class LlunevieViewModel(
                         }
                     }
 
-                    // Detect fallback "Section 1..N" chapters
-                    val hasOnlyFallbackSections = parsedChapters.isNotEmpty() && parsedChapters.all { ch ->
-                        ch.title.startsWith("Section ", ignoreCase = true) ||
-                        ch.title.startsWith("Bagian ", ignoreCase = true) ||
-                        ch.title.equals(book.title, ignoreCase = true)
-                    }
-                    
-                    // Trigger indexing automatically strictly once when the PDF is first imported (or the very first time it is opened if tocIndexed == false, or if tocIndexVersion < 5 to upgrade chapter and illustration detection).
-                    // On all subsequent opens (tocIndexed == true && tocIndexVersion >= 5), load the saved chapters and illustrations directly from Room and never show or re-run the indexing banner again!
-                    if ((!book.tocIndexed || book.tocIndexVersion < 5 || hasOnlyFallbackSections) && _pdfIndexingState.value[bookId] == null) {
+                    val needsPdfIndexing = !book.tocIndexed || book.tocIndexVersion < CURRENT_PDF_TOC_VERSION
+                    if (needsPdfIndexing && _pdfIndexingState.value[bookId] == null) {
                         indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                     }
                 }
@@ -1083,9 +1077,8 @@ class LlunevieViewModel(
             val safeChIdx = book.savedChapterIndex.coerceIn(0, (parsedChapters.size - 1).coerceAtLeast(0))
             val safePgIdx = book.savedPageIndex.coerceIn(0, (parsedChapters.getOrNull(safeChIdx)?.pages?.size ?: 1) - 1)
 
-            if (!book.completedAllPages) {
-                dao.updateBook(book.copy(onTheGo = true))
-            }
+            val nowMillis = System.currentTimeMillis()
+            dao.updateBook(book.copy(onTheGo = !book.completedAllPages, lastReadAtMillis = nowMillis))
 
             _uiState.update { cur ->
                 cur.copy(
@@ -1128,6 +1121,7 @@ class LlunevieViewModel(
                 _pdfIndexingState.update { it + (book.id to 5) }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 5)) }
 
+                var currentProgress = 5
                 PdfNativeRenderer.scanPdfChaptersAndIllustrationsAsync(
                     context = appContext,
                     bookId = book.id,
@@ -1135,18 +1129,26 @@ class LlunevieViewModel(
                     totalPages = actualPageCount,
                     defaultTitle = book.title,
                     isEn = isEn,
-                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= 5 && !hasOnlyFallbackSections && existingChapters.isNotEmpty()) existingChapters else null,
+                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= CURRENT_PDF_TOC_VERSION && !hasOnlyFallbackSections && existingChapters.isNotEmpty()) existingChapters else null,
                     onProgress = { pct ->
+                        currentProgress = pct
                         _pdfIndexingState.update { it + (book.id to pct) }
                         _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to pct)) }
                     }
                 ) { updatedChapters, updatedIllusts ->
+                    val isComplete = currentProgress >= 100
                     val currentBook = dao.getBookById(book.id) ?: book
-                    val updatedBook = currentBook.copy(
-                        pagesCount = actualPageCount,
-                        tocIndexed = true,
-                        tocIndexVersion = 5
-                    )
+                    val updatedBook = if (isComplete) {
+                        currentBook.copy(
+                            pagesCount = actualPageCount,
+                            tocIndexed = true,
+                            tocIndexVersion = CURRENT_PDF_TOC_VERSION
+                        )
+                    } else {
+                        currentBook.copy(
+                            pagesCount = actualPageCount
+                        )
+                    }
                     dao.saveBookWithChapters(updatedBook, updatedChapters)
                     if (_uiState.value.activeBookId == book.id) {
                         val liveChs = updatedChapters.map { ce ->
@@ -1266,11 +1268,13 @@ class LlunevieViewModel(
             val bookId = st.activeBookId ?: return
             viewModelScope.launch {
                 val book = dao.getBookById(bookId) ?: return@launch
+                val nowMillis = System.currentTimeMillis()
                 dao.updateBook(
                     book.copy(
                         progress = 100,
                         completedAllPages = true,
-                        onTheGo = false
+                        onTheGo = false,
+                        lastReadAtMillis = nowMillis
                     )
                 )
                 recordDailyReadingMinute(0, 1)
@@ -1302,11 +1306,13 @@ class LlunevieViewModel(
             val bookId = st.activeBookId ?: return
             viewModelScope.launch {
                 val book = dao.getBookById(bookId) ?: return@launch
+                val nowMillis = System.currentTimeMillis()
                 dao.updateBook(
                     book.copy(
                         progress = 100,
                         completedAllPages = true,
-                        onTheGo = false
+                        onTheGo = false,
+                        lastReadAtMillis = nowMillis
                     )
                 )
                 recordDailyReadingMinute(0, 1)
@@ -1343,13 +1349,15 @@ class LlunevieViewModel(
         val bookId = st.activeBookId ?: return
         viewModelScope.launch {
             val book = dao.getBookById(bookId) ?: return@launch
+            val nowMillis = System.currentTimeMillis()
             dao.updateBook(
                 book.copy(
                     savedChapterIndex = safeCh,
                     savedPageIndex = safePg,
                     progress = newMetrics.globalPct,
                     completedAllPages = newMetrics.isAtVeryLastPage,
-                    onTheGo = !newMetrics.isAtVeryLastPage
+                    onTheGo = !newMetrics.isAtVeryLastPage,
+                    lastReadAtMillis = nowMillis
                 )
             )
             if (recordTurn) {

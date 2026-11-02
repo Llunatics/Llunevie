@@ -29,6 +29,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,7 +81,15 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
-    val onTheGoBooks = books.filter { it.onTheGo || it.progress in 1..99 }
+    val onTheGoBooks = remember(books) {
+        val activelyRead = books.filter { !it.completedAllPages && (it.lastReadAtMillis > 0L || it.progress in 1..99) }
+        val source = if (activelyRead.isNotEmpty()) activelyRead else books.filter { it.onTheGo && !it.completedAllPages }.take(12)
+        source.sortedWith(
+            compareByDescending<BookEntity> { it.lastReadAtMillis }
+                .thenByDescending { it.progress }
+                .thenByDescending { it.createdAtMillis }
+        )
+    }
     val allTimeMins = books.sumOf { it.timeMinutes }.coerceAtLeast(dailyLogs.sumOf { it.minutesRead })
     val weekMins = dailyLogs.takeLast(7).sumOf { it.minutesRead }.coerceAtLeast(if (dailyLogs.isEmpty()) allTimeMins else 0)
     val activeDaysStreak = dailyLogs.count { it.minutesRead > 0 || it.pagesTurned > 0 }

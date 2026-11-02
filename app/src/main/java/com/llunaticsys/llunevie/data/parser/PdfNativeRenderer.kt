@@ -258,7 +258,8 @@ object PdfNativeRenderer {
             addedDate = todayKey,
             progress = 0,
             completedAllPages = false,
-            onTheGo = true,
+            onTheGo = false,
+            lastReadAtMillis = 0L,
             timeMinutes = 0,
             readingSeconds = 0,
             savedChapterIndex = 0,
@@ -481,7 +482,10 @@ object PdfNativeRenderer {
     }
 
     val CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(prolog|prologue|monolog|monologue|soliloquy|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+|volume\\s+[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|ss\\b|extra|bonus|afterword|kata\\s+penutup|penutup|prakata|pendahuluan|daftar\\s+isi|table\\s+of\\s+contents)\\b.*"
+        "(?i)^(prolog|prologue|monolog|monologue|soliloquy|epilog|epilogue|chapter\\s*[\\dIVXLCDM]+|bab\\s*[\\dIVXLCDM]+|bagian\\s*[\\dIVXLCDM]+|part\\s*[\\dIVXLCDM]+|act\\s*[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|ss\\b|extra|bonus|afterword|kata\\s+penutup|penutup|prakata|pendahuluan)\\b.*"
+    )
+    val STANDALONE_PREFIX_REGEX = Regex(
+        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s*[\\dIVXLCDM]+|bab\\s*[\\dIVXLCDM]+|bagian\\s*[\\dIVXLCDM]+|part\\s*[\\dIVXLCDM]+|act\\s*[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|afterword|kata\\s+penutup|penutup)[:.\\-–—]?$"
     )
     
     val CHAPTER_KEYWORD_SUFFIX_REGEX = Regex(
@@ -638,7 +642,7 @@ object PdfNativeRenderer {
 
                 // Stage 2: Contents / Table of Contents / Daftar Isi Pages (25% -> 55%)
                 val maxScan = minOf(25, safeTotalPages)
-                val textStripper = runCatching { PDFTextStripper() }.getOrNull()
+                val textStripper = runCatching { PDFTextStripper().apply { sortByPosition = true } }.getOrNull()
                 val linkPageOccurrences = mutableMapOf<String, MutableSet<Int>>()
 
                 if (textStripper != null) {
@@ -789,7 +793,7 @@ object PdfNativeRenderer {
                 fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
                 fun isValidChapterTitle(t: String): Boolean {
                     val n = norm(t)
-                    return t.length in 4..85 && n != normBookTitle && n.isNotEmpty() &&
+                    return t.length in 3..85 && n != normBookTitle && n.isNotEmpty() &&
                         !t.all { it.isDigit() || it.isWhitespace() || it == '.' }
                 }
 
@@ -803,7 +807,7 @@ object PdfNativeRenderer {
                         textStripper.startPage = p + 1
                         textStripper.endPage = p + 1
                         val pageText = runCatching { textStripper.getText(document) }.getOrDefault("")
-                        val lines = pageText.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                        val lines = pageText.lines().map { it.replace('\u00A0', ' ').trim() }.filter { it.isNotEmpty() }
                         pageLines[p] = lines
 
                         if (lines.isNotEmpty()) {
@@ -818,30 +822,6 @@ object PdfNativeRenderer {
                             val bestFooter = botCands.lastOrNull { isValidChapterTitle(it) }
                             if (bestFooter != null) {
                                 pageBottomTitles[p] = bestFooter
-                            }
-
-                            // Always run Condition B: explicit chapter headings in topLines AND cleaned bottom footers
-                            val topHeadingLines = lines.take(6)
-                            for (line in topHeadingLines) {
-                                val cleanLine = sanitizeChapterTitle(line)
-                                if (cleanLine.length in 4..85 && (CHAPTER_KEYWORD_REGEX.matches(cleanLine) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(cleanLine))) {
-                                    val n = norm(cleanLine)
-                                    if (n != normBookTitle && !cleanLine.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
-                                        conditionBBookmarks.add(PdfBookmark(cleanLine, p))
-                                        break
-                                    }
-                                }
-                            }
-                            
-                            // Also check cleaned bottom running footer
-                            if (bestFooter != null) {
-                                val cleanFooter = sanitizeChapterTitle(bestFooter)
-                                if (cleanFooter.length in 4..85 && (CHAPTER_KEYWORD_REGEX.matches(cleanFooter) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(cleanFooter))) {
-                                    val n = norm(cleanFooter)
-                                    if (n != normBookTitle && !conditionBBookmarks.any { norm(it.title) == n }) {
-                                        conditionBBookmarks.add(PdfBookmark(cleanFooter, p))
-                                    }
-                                }
                             }
                         }
 
@@ -877,18 +857,11 @@ object PdfNativeRenderer {
                     val span = lastPage - firstPage
                     
                     // Check if this normalized line matches any chapter keyword
-                    val matchesKeyword = linePageOccurrences.keys
-                        .filter { it == nLine }
-                        .any { normalizedKey ->
-                            // Find original titles with this normalized key
-                            conditionBBookmarks.any { bm ->
-                                norm(bm.title) == normalizedKey && 
-                                (CHAPTER_KEYWORD_REGEX.matches(bm.title) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(bm.title))
-                            } || 
-                            pageBottomTitles.filterNotNull().any { title ->
-                                norm(cleanFooterTitle(title)) == normalizedKey &&
-                                (CHAPTER_KEYWORD_REGEX.matches(title) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(title))
-                            }
+                    val matchesKeyword = CHAPTER_KEYWORD_REGEX.matches(nLine) ||
+                        STANDALONE_PREFIX_REGEX.matches(nLine) ||
+                        pageBottomTitles.filterNotNull().any { title ->
+                            norm(cleanFooterTitle(title)) == nLine &&
+                            (CHAPTER_KEYWORD_REGEX.matches(title) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(title))
                         }
                     
                     if (matchesKeyword) continue // Never blacklist chapter keywords!
@@ -896,6 +869,71 @@ object PdfNativeRenderer {
                     // Only blacklist if it spans > 35% of book AND has at least 5 occurrences
                     if (span > (safeTotalPages * 0.35f) && occurrenceCount >= 5) {
                         globalWatermarkBlacklist.add(nLine)
+                    }
+                }
+
+                fun isUrlLine(s: String): Boolean =
+                    s.startsWith("http://", true) ||
+                    s.startsWith("https://", true) ||
+                    s.contains("www.", true) ||
+                    s.contains(".com", true)
+
+                // Condition B: explicit chapter headings in topCandidates & 2-line heading merging
+                for (p in 0 until safeTotalPages) {
+                    val lines = pageLines[p] ?: continue
+                    if (lines.isEmpty()) continue
+
+                    val topCandidates = lines.take(8)
+                    for (idx in topCandidates.indices) {
+                        val rawLine = topCandidates[idx]
+                        if (isUrlLine(rawLine) || norm(rawLine) in globalWatermarkBlacklist) {
+                            continue
+                        }
+
+                        val cleanLine = sanitizeChapterTitle(rawLine)
+                        if (cleanLine.length !in 3..85) continue
+                        if (isUrlLine(cleanLine) || norm(cleanLine) in globalWatermarkBlacklist) continue
+
+                        val isMatch = CHAPTER_KEYWORD_REGEX.matches(cleanLine) ||
+                            ((cleanLine.endsWith("Monologue", true) || cleanLine.endsWith("Monolog", true)) && cleanLine.length in 5..55)
+
+                        if (isMatch) {
+                            var combinedTitle = cleanLine
+                            if (STANDALONE_PREFIX_REGEX.matches(cleanLine) && idx + 1 < topCandidates.size) {
+                                val nextRaw = topCandidates[idx + 1]
+                                val nextLine = sanitizeChapterTitle(nextRaw)
+                                if (nextLine.length in 2..65 &&
+                                    !nextLine.endsWith(".") &&
+                                    !isUrlLine(nextLine) &&
+                                    norm(nextLine) !in globalWatermarkBlacklist
+                                ) {
+                                    combinedTitle = "${cleanLine.trimEnd(':', '.', '-', '–', '—')}: $nextLine"
+                                }
+                            }
+                            val n = norm(combinedTitle)
+                            if (n != normBookTitle && !cleanLine.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
+                                val bookmark = PdfBookmark(combinedTitle, p)
+                                conditionBBookmarks.add(bookmark)
+                                additiveBookmarks.add(bookmark)
+                                break
+                            }
+                        }
+                    }
+
+                    // Also check cleaned bottom running footer
+                    val bestFooter = pageBottomTitles[p]
+                    if (bestFooter != null && !conditionBBookmarks.any { it.startPageZero == p }) {
+                        val cleanFooter = sanitizeChapterTitle(bestFooter)
+                        if (cleanFooter.length in 3..85 && (CHAPTER_KEYWORD_REGEX.matches(cleanFooter) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(cleanFooter))) {
+                            val n = norm(cleanFooter)
+                            if (n != normBookTitle && n !in globalWatermarkBlacklist && !cleanFooter.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
+                                if (!conditionBBookmarks.any { norm(it.title) == n }) {
+                                    val bm = PdfBookmark(cleanFooter, p)
+                                    conditionBBookmarks.add(bm)
+                                    additiveBookmarks.add(bm)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1377,6 +1415,116 @@ object PdfNativeRenderer {
         return !isTrueIllustrationPageBitmap(bmp)
     }
 
+    private fun buildBookChaptersFromBookmarks(
+        bookId: String,
+        bookmarks: List<PdfBookmark>,
+        totalPages: Int,
+        illustrations: List<BookIllustration>,
+        defaultTitle: String,
+        isEn: Boolean
+    ): List<BookChapterEntity> {
+        if (bookmarks.isEmpty()) {
+            val chCount = when {
+                totalPages <= 16 -> 1
+                totalPages <= 32 -> 2
+                totalPages <= 64 -> 4
+                totalPages <= 128 -> 8
+                totalPages <= 256 -> 12
+                totalPages <= 512 -> 16
+                else -> 20
+            }
+            val pagesPerChapter = ceil(totalPages.toDouble() / chCount.toDouble()).toInt().coerceAtLeast(1)
+            val result = mutableListOf<BookChapterEntity>()
+            var s = 0
+            var cIdx = 0
+            while (s < totalPages) {
+                val e = (s + pagesPerChapter).coerceAtMost(totalPages)
+                val pagesArr = JSONArray()
+                for (p in s until e) {
+                    val matchingIllust = illustrations.find { it.pageIndexInBook == p }
+                    if (matchingIllust != null) {
+                        pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
+                    } else {
+                        pagesArr.put("[PDF_PAGE:$p]")
+                    }
+                }
+                val illustArr = JSONArray()
+                illustrations.filter { il ->
+                    il.pageIndexInBook in s until e
+                }.forEach { il ->
+                    illustArr.put(JSONObject().apply {
+                        put("uriOrPath", il.uriOrPath)
+                        put("caption", il.caption)
+                        put("pageIndexInBook", il.pageIndexInBook)
+                    })
+                }
+                val title = if (chCount == 1) sanitizeChapterTitle(defaultTitle) else if (isEn) "Section ${cIdx + 1} (pp. ${s + 1}–$e)" else "Bagian ${cIdx + 1} (Hal ${s + 1}–$e)"
+                result.add(
+                    BookChapterEntity(
+                        bookId = bookId,
+                        chapterIndex = cIdx,
+                        title = title,
+                        pagesJson = pagesArr.toString(),
+                        illustrationsJson = illustArr.toString()
+                    )
+                )
+                cIdx++
+                s = e
+            }
+            return result
+        }
+
+        val sorted = bookmarks
+            .filter { it.startPageZero in 0 until totalPages }
+            .distinctBy { it.startPageZero }
+            .sortedBy { it.startPageZero }
+            .toMutableList()
+
+        if (sorted.isNotEmpty() && sorted.first().startPageZero > 0) {
+            sorted.add(0, PdfBookmark(sanitizeChapterTitle(defaultTitle), 0))
+        }
+
+        val result = mutableListOf<BookChapterEntity>()
+        for (i in sorted.indices) {
+            val bm = sorted[i]
+            val sIdx = bm.startPageZero
+            val eIdx = if (i + 1 < sorted.size) {
+                sorted[i + 1].startPageZero.coerceIn(sIdx + 1, totalPages)
+            } else {
+                totalPages
+            }
+            val pagesArr = JSONArray()
+            for (p in sIdx until eIdx) {
+                val matchingIllust = illustrations.find { it.pageIndexInBook == p }
+                if (matchingIllust != null) {
+                    pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
+                } else {
+                    pagesArr.put("[PDF_PAGE:$p]")
+                }
+            }
+            val illustArr = JSONArray()
+            illustrations.filter { il ->
+                il.pageIndexInBook in sIdx until eIdx
+            }.forEach { il ->
+                illustArr.put(JSONObject().apply {
+                    put("uriOrPath", il.uriOrPath)
+                    put("caption", il.caption)
+                    put("pageIndexInBook", il.pageIndexInBook)
+                })
+            }
+            result.add(
+                BookChapterEntity(
+                    bookId = bookId,
+                    chapterIndex = i,
+                    title = sanitizeChapterTitle(bm.title),
+                    pagesJson = pagesArr.toString(),
+                    illustrationsJson = illustArr.toString()
+                )
+            )
+        }
+        return result
+    }
+
     suspend fun scanPdfChaptersAndIllustrationsAsync(
         context: Context,
         bookId: String,
@@ -1425,15 +1573,26 @@ object PdfNativeRenderer {
             .filter { it.startPageZero in 0 until totalPages }
             .distinctBy { it.startPageZero }
             .sortedBy { it.startPageZero }
-            .let { list ->
-                if (list.isNotEmpty() && list.first().startPageZero > 0) {
-                    listOf(PdfBookmark(sanitizeChapterTitle(defaultTitle), 0)) + list
-                } else {
-                    list
+            .toMutableList()
+            .apply {
+                if (isNotEmpty() && first().startPageZero > 0) {
+                    add(0, PdfBookmark(sanitizeChapterTitle(defaultTitle), 0))
                 }
             }
 
         onProgress(45)
+
+        if (finalBookmarks.isNotEmpty()) {
+            val preliminaryChapters = buildBookChaptersFromBookmarks(
+                bookId = bookId,
+                bookmarks = finalBookmarks,
+                totalPages = totalPages,
+                illustrations = emptyList(),
+                defaultTitle = defaultTitle,
+                isEn = isEn
+            )
+            onUpdated(preliminaryChapters, emptyList())
+        }
 
         // Stage 2B: Multi-Signal Pre-pass using PDFBox:
         // Signal 1 (Embedded Image Resources) & Signal 2 (Captions)
@@ -1562,94 +1721,14 @@ object PdfNativeRenderer {
         detectedIllusts.addAll(uniqueIllusts)
         detectedIllusts.sortBy { it.pageIndexInBook }
 
-        // Build BookChapterEntity list with bookmarks & detected illustrations
-        val finalChapters = if (finalBookmarks.isNotEmpty()) {
-            val result = mutableListOf<BookChapterEntity>()
-            for (i in finalBookmarks.indices) {
-                val bm = finalBookmarks[i]
-                val sIdx = bm.startPageZero
-                val eIdx = if (i + 1 < finalBookmarks.size) finalBookmarks[i + 1].startPageZero.coerceIn(sIdx + 1, totalPages) else totalPages
-                val pagesArr = JSONArray()
-                for (p in sIdx until eIdx) {
-                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p }
-                    if (matchingIllust != null) {
-                        pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
-                    } else {
-                        pagesArr.put("[PDF_PAGE:$p]")
-                    }
-                }
-                val illustArr = JSONArray()
-                detectedIllusts.filter { il ->
-                    il.pageIndexInBook in sIdx until eIdx
-                }.forEach { il ->
-                    illustArr.put(JSONObject().apply {
-                        put("uriOrPath", il.uriOrPath)
-                        put("caption", il.caption)
-                        put("pageIndexInBook", il.pageIndexInBook)
-                    })
-                }
-                result.add(
-                    BookChapterEntity(
-                        bookId = bookId,
-                        chapterIndex = i,
-                        title = sanitizeChapterTitle(bm.title),
-                        pagesJson = pagesArr.toString(),
-                        illustrationsJson = illustArr.toString()
-                    )
-                )
-            }
-            result
-        } else {
-            // Fallback sections if no bookmarks found anywhere
-            val chCount = when {
-                totalPages <= 16 -> 1
-                totalPages <= 32 -> 2
-                totalPages <= 64 -> 4
-                totalPages <= 128 -> 8
-                totalPages <= 256 -> 12
-                totalPages <= 512 -> 16
-                else -> 20
-            }
-            val pagesPerChapter = ceil(totalPages.toDouble() / chCount.toDouble()).toInt().coerceAtLeast(1)
-            val result = mutableListOf<BookChapterEntity>()
-            var s = 0
-            var cIdx = 0
-            while (s < totalPages) {
-                val e = (s + pagesPerChapter).coerceAtMost(totalPages)
-                val pagesArr = JSONArray()
-                for (p in s until e) {
-                    val matchingIllust = detectedIllusts.find { it.pageIndexInBook == p }
-                    if (matchingIllust != null) {
-                        pagesArr.put("[ILLUST:${matchingIllust.uriOrPath}|${matchingIllust.caption}]\n\n[PDF_PAGE:$p]")
-                    } else {
-                        pagesArr.put("[PDF_PAGE:$p]")
-                    }
-                }
-                val illustArr = JSONArray()
-                detectedIllusts.filter { il ->
-                    il.pageIndexInBook in s until e
-                }.forEach { il ->
-                    illustArr.put(JSONObject().apply {
-                        put("uriOrPath", il.uriOrPath)
-                        put("caption", il.caption)
-                        put("pageIndexInBook", il.pageIndexInBook)
-                    })
-                }
-                val title = if (chCount == 1) sanitizeChapterTitle(defaultTitle) else if (isEn) "Section ${cIdx + 1} (pp. ${s + 1}–$e)" else "Bagian ${cIdx + 1} (Hal ${s + 1}–$e)"
-                result.add(
-                    BookChapterEntity(
-                        bookId = bookId,
-                        chapterIndex = cIdx,
-                        title = title,
-                        pagesJson = pagesArr.toString(),
-                        illustrationsJson = illustArr.toString()
-                    )
-                )
-                cIdx++
-                s = e
-            }
-            result
-        }
+        val finalChapters = buildBookChaptersFromBookmarks(
+            bookId = bookId,
+            bookmarks = finalBookmarks,
+            totalPages = totalPages,
+            illustrations = detectedIllusts,
+            defaultTitle = defaultTitle,
+            isEn = isEn
+        )
 
         onUpdated(finalChapters, detectedIllusts)
     }
