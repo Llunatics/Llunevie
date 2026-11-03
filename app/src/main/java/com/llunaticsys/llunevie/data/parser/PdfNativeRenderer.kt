@@ -399,6 +399,10 @@ object PdfNativeRenderer {
         }
     }
 
+    private val BARE_NUMBERED_CHAPTER_REGEX = Regex(
+        "(?i)^(bab|chapter|bagian|part|act|vol|volume|jilid|section)\\s+[\\dIVXLCDM]+$"
+    )
+
     fun sanitizeChapterTitle(raw: String): String {
         var t = raw
             .replace("&amp;", "&")
@@ -415,7 +419,30 @@ object PdfNativeRenderer {
             .replace("–", " – ")
             .replace(Regex("""\s+"""), " ")
             .trim()
-        t = t.replace(Regex("""(?:\s*[.·…_]{2,}\s*\d{1,4}|\s+\d{1,4})$"""), "").trim()
+
+        // Always strip dot-leader page numbers at the end of ToC lines:
+        t = t.replace(Regex("""\s*[.·…_]{2,}\s*\d{1,4}$"""), "").trim()
+
+        // Only strip a trailing whitespace + number if not a bare numbered chapter
+        // AND the prefix before the trailing number has at least 2 words (or contains :)
+        // and is not a bare keyword (bab, chapter, bagian, part, act, volume, jilid).
+        val trailingNumMatch = Regex("""\s+\d{1,4}$""").find(t)
+        if (trailingNumMatch != null && !BARE_NUMBERED_CHAPTER_REGEX.matches(t)) {
+            val prefix = t.substring(0, trailingNumMatch.range.first).trim()
+            val words = prefix.split(Regex("""\s+""")).filter { it.isNotEmpty() }
+            val bareKeywords = setOf("bab", "chapter", "bagian", "part", "act", "vol", "volume", "jilid", "section")
+            val isBareKeyword = words.size == 1 && words[0].lowercase() in bareKeywords
+            val hasAtLeastTwoWordsOrColon = words.size >= 2 || prefix.contains(":")
+            if (hasAtLeastTwoWordsOrColon && !isBareKeyword) {
+                t = prefix
+            } else if (!isBareKeyword && words.isNotEmpty()) {
+                val specialStandalone = setOf("prolog", "prologue", "epilog", "epilogue", "afterword", "penutup")
+                if (words.size == 1 && words[0].lowercase() in specialStandalone) {
+                    t = prefix
+                }
+            }
+        }
+
         return sanitizeBookOrChapterText(t)
     }
 
@@ -469,10 +496,39 @@ object PdfNativeRenderer {
     }
 
     fun cleanFooterTitle(line: String): String {
-        val s = line.trim()
-            .replace(Regex("^\\d{1,4}\\s+"), "")
-            .replace(Regex("\\s+\\d{1,4}$"), "")
+        var s = line.trim()
             .replace(Regex("^[|•\\-–—]+\\s*"), "")
+            .replace(Regex("\\s*[|•\\-–—]+$"), "")
+            .trim()
+        if (s.all { it.isDigit() || it.isWhitespace() || it == '.' || it == '-' || it == '–' || it == '—' || it == '|' || it == '•' }) {
+            return ""
+        }
+        if (BARE_NUMBERED_CHAPTER_REGEX.matches(s)) {
+            return sanitizeChapterTitle(s)
+        }
+        val withoutLeadingPage = s.replace(Regex("^\\d{1,4}\\s+"), "").trim()
+        if (BARE_NUMBERED_CHAPTER_REGEX.matches(withoutLeadingPage)) {
+            return sanitizeChapterTitle(withoutLeadingPage)
+        }
+        s = withoutLeadingPage
+
+        val trailingNumMatch = Regex("""\s+\d{1,4}$""").find(s)
+        if (trailingNumMatch != null && !BARE_NUMBERED_CHAPTER_REGEX.matches(s)) {
+            val prefix = s.substring(0, trailingNumMatch.range.first).trim()
+            val words = prefix.split(Regex("""\s+""")).filter { it.isNotEmpty() }
+            val bareKeywords = setOf("bab", "chapter", "bagian", "part", "act", "vol", "volume", "jilid", "section")
+            val isBareKeyword = words.size == 1 && words[0].lowercase() in bareKeywords
+            val hasAtLeastTwoWordsOrColon = words.size >= 2 || prefix.contains(":")
+            if (hasAtLeastTwoWordsOrColon && !isBareKeyword) {
+                s = prefix
+            } else if (!isBareKeyword && words.isNotEmpty()) {
+                val specialStandalone = setOf("prolog", "prologue", "epilog", "epilogue", "afterword", "penutup")
+                if (words.size == 1 && words[0].lowercase() in specialStandalone) {
+                    s = prefix
+                }
+            }
+        }
+        s = s.replace(Regex("^[|•\\-–—]+\\s*"), "")
             .replace(Regex("\\s*[|•\\-–—]+$"), "")
             .trim()
         if (s.all { it.isDigit() || it.isWhitespace() || it == '.' || it == '-' || it == '–' || it == '—' || it == '|' || it == '•' }) {
@@ -481,11 +537,14 @@ object PdfNativeRenderer {
         return sanitizeChapterTitle(s)
     }
 
-    val CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(prolog|prologue|monolog|monologue|soliloquy|epilog|epilogue|chapter\\s*[\\dIVXLCDM]+|bab\\s*[\\dIVXLCDM]+|bagian\\s*[\\dIVXLCDM]+|part\\s*[\\dIVXLCDM]+|act\\s*[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|ss\\b|extra|bonus|afterword|kata\\s+penutup|penutup|prakata|pendahuluan)\\b.*"
+    private val CHAPTER_KEYWORD_REGEX = Regex(
+        "(?i)^(prolog|prologue|monolog|monologue|soliloquy|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|ss\\b|extra|bonus|afterword|kata\\s+penutup|penutup)(?:\\b[\\s:\\-–—.]*.*)?$"
     )
-    val STANDALONE_PREFIX_REGEX = Regex(
-        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s*[\\dIVXLCDM]+|bab\\s*[\\dIVXLCDM]+|bagian\\s*[\\dIVXLCDM]+|part\\s*[\\dIVXLCDM]+|act\\s*[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|afterword|kata\\s+penutup|penutup)[:.\\-–—]?$"
+
+    // Only numbered chapters, Prolog/Prologue, and Epilog/Epilogue may merge with a subtitle on the next line.
+    // NEVER include "kata penutup", "penutup", or "afterword" here, because the line below "Kata Penutup" is always body text!
+    private val STANDALONE_PREFIX_REGEX = Regex(
+        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+)(?:\\s*[:.\\-–—])?$"
     )
     
     val CHAPTER_KEYWORD_SUFFIX_REGEX = Regex(
@@ -505,6 +564,57 @@ object PdfNativeRenderer {
         if (proseConjunctionRegex.containsMatchIn(trimmed) && !explicitPrefixRegex.containsMatchIn(trimmed)) {
             return true
         }
+        return false
+    }
+
+    private fun canonicalChapterIdentity(title: String): String {
+        val clean = sanitizeChapterTitle(title).lowercase().trim()
+        val numMatch = Regex("^(chapter|bab|bagian|part|act)\\s+([\\divxlcdm]+)\\b").find(clean)
+        if (numMatch != null) {
+            val kind = when (val k = numMatch.groupValues[1]) {
+                "bab", "chapter" -> "ch"
+                else -> k
+            }
+            return "${kind}_${numMatch.groupValues[2]}"
+        }
+        if (clean.startsWith("prolog") || clean.startsWith("prologue")) return "prolog"
+        if (clean.startsWith("epilog") || clean.startsWith("epilogue")) return "epilog"
+        if (clean.startsWith("kata penutup") || clean.startsWith("afterword") || clean == "penutup") return "afterword"
+        if (clean.startsWith("monolog") || clean.startsWith("monologue") || clean.endsWith("monologue") || clean.endsWith("monolog")) return "monolog"
+        return clean.replace(Regex("[^a-z0-9]"), "")
+    }
+
+    private fun isBetterChapterTitle(candidate: String, current: String): Boolean {
+        val candTrim = candidate.trim()
+        val currTrim = current.trim()
+        if (candTrim == currTrim) return false
+
+        val bareWords = setOf("prolog", "prologue", "epilog", "epilogue", "kata penutup", "afterword", "penutup")
+        val isCurrBare = BARE_NUMBERED_CHAPTER_REGEX.matches(currTrim) || currTrim.lowercase() in bareWords
+
+        val candHasEllipsis = candTrim.endsWith("...") || candTrim.endsWith("…") || candTrim.endsWith("..")
+        val currHasEllipsis = currTrim.endsWith("...") || currTrim.endsWith("…") || currTrim.endsWith("..")
+
+        // 1. If existing title is a bare prefix without a subtitle while candidate has a clean subtitle with length <= 55
+        if (isCurrBare && !candHasEllipsis && candTrim.length in (currTrim.length + 2)..55) {
+            return true
+        }
+
+        // 2. If existing title was longer/noisier (e.g. truncated with ellipsis) than a clean candidate
+        if (currHasEllipsis && !candHasEllipsis && candTrim.length in 3..65) {
+            return true
+        }
+
+        // 3. If neither has ellipsis, but existing title has trailing punctuation while candidate is clean
+        if (!candHasEllipsis && !currHasEllipsis) {
+            if ((currTrim.endsWith(".") || currTrim.endsWith(",")) && !candTrim.endsWith(".") && !candTrim.endsWith(",")) {
+                return true
+            }
+            if (currTrim.length > 55 && candTrim.length in 5..55 && (candTrim.contains(":") || candTrim.contains("–") || candTrim.contains("-"))) {
+                return true
+            }
+        }
+
         return false
     }
 
@@ -553,12 +663,33 @@ object PdfNativeRenderer {
             }
         }
 
-        // 3. Deduplicate by normalized title (keep earliest start page)
-        val seenKeys = mutableSetOf<String>()
+        // 3. Deduplicate by normalized title & canonical identity (keep earliest start page)
         val deduped = mutableListOf<PdfBookmark>()
         for (ch in sorted) {
-            val normKey = ch.title.lowercase().replace(Regex("[^a-z0-9]"), "")
-            if (seenKeys.add(normKey)) {
+            val chNorm = ch.title.lowercase().replace(Regex("[^a-z0-9]"), "")
+            val chCanonical = canonicalChapterIdentity(ch.title)
+
+            val existingIndex = deduped.indexOfFirst { existing ->
+                val existingNorm = existing.title.lowercase().replace(Regex("[^a-z0-9]"), "")
+                val existingCanonical = canonicalChapterIdentity(existing.title)
+
+                val canonicalMatch = existingCanonical.isNotEmpty() && existingCanonical == chCanonical
+                val prefixMatch = existingNorm.length >= 12 && chNorm.length >= 12 &&
+                    existingNorm.substring(0, 12) == chNorm.substring(0, 12)
+                val normExactMatch = existingNorm.isNotEmpty() && existingNorm == chNorm
+
+                canonicalMatch || prefixMatch || normExactMatch
+            }
+
+            if (existingIndex >= 0) {
+                val existing = deduped[existingIndex]
+                val earliestPage = minOf(existing.startPageZero, ch.startPageZero)
+                if (isBetterChapterTitle(ch.title, existing.title)) {
+                    deduped[existingIndex] = PdfBookmark(ch.title, earliestPage)
+                } else if (earliestPage != existing.startPageZero) {
+                    deduped[existingIndex] = PdfBookmark(existing.title, earliestPage)
+                }
+            } else {
                 deduped.add(ch)
             }
         }
@@ -902,9 +1033,16 @@ object PdfNativeRenderer {
                             if (STANDALONE_PREFIX_REGEX.matches(cleanLine) && idx + 1 < topCandidates.size) {
                                 val nextRaw = topCandidates[idx + 1]
                                 val nextLine = sanitizeChapterTitle(nextRaw)
-                                if (nextLine.length in 2..65 &&
+                                val nextWords = nextLine.split(Regex("""\s+""")).filter { it.isNotEmpty() }
+                                if (nextLine.length in 2..42 &&
+                                    nextWords.size <= 6 &&
                                     !nextLine.endsWith(".") &&
-                                    !isUrlLine(nextLine) &&
+                                    !nextLine.endsWith(",") &&
+                                    !nextLine.contains("\"") &&
+                                    !nextLine.contains("“") &&
+                                    !isUrlLine(nextRaw) &&
+                                    !isLikelyBodySentenceOrWatermark(nextLine) &&
+                                    !CHAPTER_KEYWORD_REGEX.matches(nextLine) &&
                                     norm(nextLine) !in globalWatermarkBlacklist
                                 ) {
                                     combinedTitle = "${cleanLine.trimEnd(':', '.', '-', '–', '—')}: $nextLine"
