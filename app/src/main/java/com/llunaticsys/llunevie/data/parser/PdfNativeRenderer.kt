@@ -51,9 +51,14 @@ import kotlin.math.ceil
 
 object PdfNativeRenderer {
 
-    const val CURRENT_PDF_TOC_VERSION = 11
+    const val CURRENT_PDF_TOC_VERSION = 12
 
     data class PdfBookmark(val title: String, val startPageZero: Int)
+
+    private data class PatternCCandidate(
+        val bookmark: PdfBookmark,
+        val isBoldOrLargerFont: Boolean
+    )
 
     data class VisualLine(
         val text: String,
@@ -427,7 +432,7 @@ object PdfNativeRenderer {
     )
 
     val BARE_NUMBERED_CHAPTER_REGEX = Regex(
-        "(?i)^(bab|chapter|bagian|part|act|vol|volume|jilid|section)\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)$"
+        "(?i)^(?:bab|chapter|bagian|part|act|episode|vol|volume|jilid|section|selingan)\\s*(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)$"
     )
 
     fun sanitizeChapterTitle(raw: String): String {
@@ -577,16 +582,42 @@ object PdfNativeRenderer {
     }
 
     private val NORM_CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(prolog|prologue|epilog|epilogue|monolog|monologue|chapter\\d+|bab\\d+|bagian\\d+|part\\d+|act\\d+|interlude|sidestory|shortstory|afterword|katapenutup|penutup).*"
+        "(?i)^(?:prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan[0-9ivxlcdm]*|sidestory|shortstory|afterword|katapenutup|penutup|catatantambahanpenulis|(?:chapter|bab|bagian|part|act|episode)\\d+).*"
     )
 
     private val CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(?:prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan(?:\\s+[0-9ivxlcdm]+)?|side\\s+story|short\\s+story|afterword|kata\\s+penutup|penutup|(?:chapter|bab|bagian|part|act)\\s*\\d+[a-z0-9.-]*|ss\\s*[:\\-–—])(?:\\b|[:.\\-–—\\s]|$).*"
+        "(?i)^(?:(?:bab|chapter|bagian|part|act|episode)\\s*(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)(?:\\s*$|\\s*[:.\\-\\u2013\\u2014~|]\\s*.*|\\s+.*)|(?:prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan(?:\\s+[0-9ivxlcdm]+)?|side\\s+story|short\\s+story|afterword|kata\\s+penutup|penutup|catatan\\s+tambahan\\s+penulis)(?:\\s*$|\\s*[:.\\-\\u2013\\u2014~|]\\s*.*|\\s+.*)|ss\\s*[:.\\-\\u2013\\u2014]\\s*\\S+.*)"
     )
 
     private val STANDALONE_PREFIX_REGEX = Regex(
-        "(?i)^(?:prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan(?:\\s+[0-9ivxlcdm]+)?|side\\s+story|short\\s+story|(?:chapter|bab|bagian|part|act)\\s*\\d+[a-z0-9.-]*)\\s*[:.\\-–—]?$"
+        "(?i)^(?:(?:bab|chapter|bagian|part|act|episode)\\s*(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan(?:\\s+[0-9ivxlcdm]+)?|side\\s+story|short\\s+story)\\s*[:.\\-\\u2013\\u2014]?$"
     )
+
+    private val NARRATIVE_STARTER_REGEX = Regex(
+        "(?i)^(?:aku|saya|gue|gua|kau|kamu|dia|ia|mereka|kami|kita|kalau|jika|bila|saat|ketika|setelah|sebelum|meski|meskipun|walaupun|walau|namun|tetapi|tapi|karena|sebab|dengan|tanpa|sudah|belum|tidak|tak|bukan|jangan|dan|atau|lalu|kemudian|sementara|sedangkan|mungkin|sepertinya|tampaknya|rasanya|entah|yah|nah|oh|ah|eh|hei|halo|maaf|terima\\s+kasih|itulah|inilah|begitu|begitulah|pada\\s+akhirnya|dulu\\s+saat|hari\\s+itu\\s+aku)\\b.*"
+    )
+
+    private fun isLikelyNarrativeOrDialogueLine(rawText: String, cleanedText: String): Boolean {
+        val r = rawText.trim()
+        val c = cleanedText.trim()
+        if (r.isEmpty() || c.isEmpty()) return true
+
+        // 1. Starts or ends with dialogue quotes, dashes, or ellipsis in raw text BEFORE sanitization
+        val dialogueAndDashChars = setOf('"', '“', '”', '\'', '‘', '’', '「', '『', '」', '』', '-', '\u2013', '\u2014', '\u2015', '\u2026')
+        if (r.first() in dialogueAndDashChars || r.last() in dialogueAndDashChars) return true
+        if (r.endsWith("..") || r.endsWith(",") || r.endsWith(";") || r.endsWith("!") || r.endsWith("?")) return true
+
+        // 2. Contains quotes, em-dash, ellipsis, or mid-line sentence boundary (". ", "? ", "! ")
+        if (r.contains('"') || r.contains('“') || r.contains('”') || r.contains('「') || r.contains('『') ||
+            r.contains('\u2014') || r.contains('\u2015') || r.contains('\u2026') || r.contains("...")
+        ) return true
+        if (Regex("[.?!]\\s+[A-Z0-9\"“']").containsMatchIn(r)) return true
+
+        // 3. Starts with common first-person pronouns or narrative conjunctions/adverbs
+        if (NARRATIVE_STARTER_REGEX.matches(c)) return true
+
+        return false
+    }
     
     val CHAPTER_KEYWORD_SUFFIX_REGEX = Regex(
         "(?i).*\\b(monologue|monolog|prologue|prolog|epilogue|epilog|soliloquy)$"
@@ -1080,7 +1111,13 @@ object PdfNativeRenderer {
                         if (!linkText.isNullOrBlank()) {
                             val clean = sanitizeChapterTitle(linkText)
                             val normL = norm(clean)
-                            if (normL.isNotEmpty()) {
+                            if (normL.isNotEmpty() &&
+                                !NORM_CHAPTER_KEYWORD_REGEX.matches(normL) &&
+                                !CHAPTER_KEYWORD_REGEX.matches(clean) &&
+                                !BARE_NUMBERED_CHAPTER_REGEX.matches(clean) &&
+                                !CHAPTER_KEYWORD_REGEX.matches(normL) &&
+                                !BARE_NUMBERED_CHAPTER_REGEX.matches(normL)
+                            ) {
                                 linkPageOccurrences.getOrPut(normL) { mutableSetOf() }.add(tocPageZero)
                             }
                             if (clean.length in 2..120) {
@@ -1149,15 +1186,29 @@ object PdfNativeRenderer {
                     val vLines = visualLinesMap[p] ?: emptyList()
                     val top2 = vLines.take(2)
                     for (line in top2) {
-                        val n = norm(line.text)
-                        if (n.isNotEmpty()) {
+                        val lineText = line.text.trim()
+                        val n = norm(lineText)
+                        if (n.isNotEmpty() &&
+                            !NORM_CHAPTER_KEYWORD_REGEX.matches(n) &&
+                            !CHAPTER_KEYWORD_REGEX.matches(lineText) &&
+                            !BARE_NUMBERED_CHAPTER_REGEX.matches(lineText) &&
+                            !CHAPTER_KEYWORD_REGEX.matches(n) &&
+                            !BARE_NUMBERED_CHAPTER_REGEX.matches(n)
+                        ) {
                             top2Freq.getOrPut(n) { mutableSetOf() }.add(p)
                         }
                     }
                     val bot2 = vLines.takeLast(2)
                     for (line in bot2) {
-                        val n = norm(line.text)
-                        if (n.isNotEmpty()) {
+                        val lineText = line.text.trim()
+                        val n = norm(lineText)
+                        if (n.isNotEmpty() &&
+                            !NORM_CHAPTER_KEYWORD_REGEX.matches(n) &&
+                            !CHAPTER_KEYWORD_REGEX.matches(lineText) &&
+                            !BARE_NUMBERED_CHAPTER_REGEX.matches(lineText) &&
+                            !CHAPTER_KEYWORD_REGEX.matches(n) &&
+                            !BARE_NUMBERED_CHAPTER_REGEX.matches(n)
+                        ) {
                             bot2Freq.getOrPut(n) { mutableSetOf() }.add(p)
                         }
                     }
@@ -1171,7 +1222,10 @@ object PdfNativeRenderer {
                 val repeatingTopHeaders = mutableSetOf<String>()
                 for ((n, pages) in top2Freq) {
                     if (pages.size >= 5) {
-                        if (!NORM_CHAPTER_KEYWORD_REGEX.matches(n) && !BARE_NUMBERED_CHAPTER_REGEX.matches(n) && !CHAPTER_KEYWORD_REGEX.matches(n)) {
+                        if (!NORM_CHAPTER_KEYWORD_REGEX.matches(n) &&
+                            !BARE_NUMBERED_CHAPTER_REGEX.matches(n) &&
+                            !CHAPTER_KEYWORD_REGEX.matches(n)
+                        ) {
                             repeatingTopHeaders.add(n)
                         }
                     }
@@ -1180,17 +1234,31 @@ object PdfNativeRenderer {
                 val globalWatermarkBlacklist = mutableSetOf<String>()
                 for ((nLink, pages) in linkPageOccurrences) {
                     if (pages.size >= 5) {
-                        globalWatermarkBlacklist.add(nLink)
+                        if (!NORM_CHAPTER_KEYWORD_REGEX.matches(nLink) &&
+                            !BARE_NUMBERED_CHAPTER_REGEX.matches(nLink) &&
+                            !CHAPTER_KEYWORD_REGEX.matches(nLink)
+                        ) {
+                            globalWatermarkBlacklist.add(nLink)
+                        }
                     }
                 }
                 for ((nBot, pages) in bot2Freq) {
-                    if (pages.size >= 5 && !CHAPTER_KEYWORD_REGEX.matches(nBot) && !BARE_NUMBERED_CHAPTER_REGEX.matches(nBot)) {
+                    if (pages.size >= 5 &&
+                        !NORM_CHAPTER_KEYWORD_REGEX.matches(nBot) &&
+                        !CHAPTER_KEYWORD_REGEX.matches(nBot) &&
+                        !BARE_NUMBERED_CHAPTER_REGEX.matches(nBot)
+                    ) {
                         globalWatermarkBlacklist.add(nBot)
                     }
                 }
 
                 // Stage 4: 4-Pattern Full-Book Scan
-                val conditionBBookmarks = mutableListOf<PdfBookmark>()
+                val patternABookmarks = mutableListOf<PdfBookmark>()
+                val patternBBookmarks = mutableListOf<PdfBookmark>()
+                val patternCBookmarks = mutableListOf<PatternCCandidate>()
+                val patternDBookmarks = mutableListOf<PdfBookmark>()
+                val footerBookmarks = mutableListOf<PdfBookmark>()
+                val footerTransitionBookmarks = mutableListOf<PdfBookmark>()
                 val tocMaxPage = tocPages.maxOrNull() ?: -1
 
                 for (p in 0 until safeTotalPages) {
@@ -1230,13 +1298,18 @@ object PdfNativeRenderer {
                             var title = sanitizeChapterTitle(stripped)
                             if (STANDALONE_PREFIX_REGEX.matches(stripped)) {
                                 val nextLine = contentLines.getOrNull(idx + 1)
-                                if (nextLine != null && (nextLine.yTop - line.yTop) in 2f..75f) {
+                                if (nextLine != null && (nextLine.yTop - line.yTop) in 2f..65f) {
                                     val nextClean = sanitizeChapterTitle(nextLine.text.replace(LEADING_BULLET_REGEX, ""))
                                     val nextWords = nextClean.split(Regex("\\s+")).filter { it.isNotEmpty() }
                                     val endsWithAbbrevDot = Regex("(?i).*\\b(a\\.m\\.|p\\.m\\.|am\\.|pm\\.|etc\\.|vol\\.|no\\.|jr\\.|sr\\.|dr\\.|mr\\.|mrs\\.|ms\\.|st\\.)$").matches(nextClean)
                                     val allowsTrailingDot = endsWithAbbrevDot || isSeparatorPage || (nextLine.isCentered && nextWords.size <= 6)
+                                    val isAligned = isSeparatorPage || nextLine.isBold || nextLine.isCentered ||
+                                            abs((nextLine.xLeft + nextLine.xRight) / 2f - (line.xLeft + line.xRight) / 2f) <= 60f
                                     if (nextClean.length in 2..70 && nextWords.size <= 10 &&
-                                        !CHAPTER_KEYWORD_REGEX.matches(nextClean) && (!nextClean.endsWith(".") || allowsTrailingDot)
+                                        !isLikelyNarrativeOrDialogueLine(nextLine.text, nextClean) &&
+                                        !CHAPTER_KEYWORD_REGEX.matches(nextClean) &&
+                                        (!nextClean.endsWith(".") || allowsTrailingDot) &&
+                                        isAligned
                                     ) {
                                         title = "${title.trimEnd(':', '.', '-', '–', '—').trim()}: $nextClean"
                                     }
@@ -1244,8 +1317,7 @@ object PdfNativeRenderer {
                             }
                             if (title.length in 3..120) {
                                 val bm = PdfBookmark(title, p)
-                                conditionBBookmarks.add(bm)
-                                additiveBookmarks.add(bm)
+                                patternABookmarks.add(bm)
                                 patternAMatched = true
                                 break
                             }
@@ -1273,10 +1345,12 @@ object PdfNativeRenderer {
                                 val startsWithAlnum = bulletTitle.firstOrNull()?.let { it.isUpperCase() || it.isDigit() } == true
                                 val endsWithoutPunct = !bulletTitle.endsWith(",") && !bulletTitle.endsWith(";")
                                 val isDistinctHeading = firstLine.isCentered || firstLine.isBold || firstLine.maxFontSize >= pageMedianFontSize + 0.3f || firstLine.xLeft >= colLeft + 12f || isSeparatorPage
-                                if (bulletTitle.length in 4..75 && words.size <= 10 && startsWithAlnum && endsWithoutPunct && isDistinctHeading) {
+                                val rawWithoutBullet = firstLine.text.replace(LEADING_BULLET_REGEX, "")
+                                if (bulletTitle.length in 4..75 && words.size <= 10 && startsWithAlnum && endsWithoutPunct && isDistinctHeading &&
+                                    !isLikelyNarrativeOrDialogueLine(rawWithoutBullet, bulletTitle)
+                                ) {
                                     val bm = PdfBookmark(bulletTitle, p)
-                                    conditionBBookmarks.add(bm)
-                                    additiveBookmarks.add(bm)
+                                    patternBBookmarks.add(bm)
                                     patternBMatched = true
                                 }
                             }
@@ -1342,47 +1416,73 @@ object PdfNativeRenderer {
                                     val bodyFontSizes = bodyLines.map { it.maxFontSize }.sorted()
                                     val bodyMedianFontSize = if (bodyFontSizes.isNotEmpty()) bodyFontSizes[bodyFontSizes.size / 2] else 12f
 
-                                    // Extra safeguard: a 1-line non-bold line that starts at the exact same first-line indent as other paragraphs on the page MUST have a right margin (`xRight <= colRight - 35f`) and a vertical gap `>= bodyMedianStep * 1.18f`
-                                    val firstLineStrictlyCentered = firstLine.xLeft >= colLeft + 55f &&
-                                            firstLine.xRight <= colRight - 55f &&
-                                            abs((firstLine.xLeft + firstLine.xRight) / 2f - colMidX) <= colWidth * 0.14f
-                                    val secondLineCheck = if (secondLineIsHeading) {
-                                        secondLine!!.xLeft >= colLeft + 55f &&
-                                                secondLine.xRight <= colRight - 55f &&
-                                                abs((secondLine.xLeft + secondLine.xRight) / 2f - colMidX) <= colWidth * 0.14f
-                                    } else true
-                                    val strictlyCenteredSignal = firstLineStrictlyCentered && secondLineCheck
+                                    // Guard B — Reject Lines That Sit at the Page's Normal Paragraph First-Line Indent Unless Bold or Larger Font
+                                    val indentedBodyLines = bodyLines.filter { it.xLeft in (colLeft + 8f)..(colLeft + 55f) }
+                                    val matchesBodyParaIndent = indentedBodyLines.count { abs(it.xLeft - firstLine.xLeft) <= 6.5f } >= 2
+                                    val isVisuallyDistinctFromBody = (firstLine.isBold && !firstBodyLine.isBold) ||
+                                            firstLine.maxFontSize >= bodyMedianFontSize + 0.5f ||
+                                            (secondLineIsHeading && secondLine!!.xLeft >= firstLine.xLeft + 20f)
 
-                                    val prominenceSignal = (firstLine.isBold && !firstBodyLine.isBold) ||
-                                            (lastHeadingLine.isBold && !firstBodyLine.isBold) ||
-                                            firstLine.maxFontSize >= bodyMedianFontSize + 0.4f ||
-                                            ((firstBodyLine.yTop - lastHeadingLine.yTop) >= bodyMedianStep * 1.18f && lastHeadingLine.xRight <= colRight - 35f) ||
-                                            strictlyCenteredSignal
+                                    if (!(matchesBodyParaIndent && !isVisuallyDistinctFromBody)) {
+                                        // Guard C — Require True Centering Symmetry for Non-Bold, Same-Font-Size Single-Line Pattern C Candidates
+                                        val passesGuardC = if (!firstLine.isBold && firstLine.maxFontSize < bodyMedianFontSize + 0.5f && !secondLineIsHeading) {
+                                            val leftMarginFromCol = firstLine.xLeft - colLeft
+                                            val rightMarginFromCol = colRight - firstLine.xRight
+                                            leftMarginFromCol >= 45f && rightMarginFromCol >= 45f && abs(leftMarginFromCol - rightMarginFromCol) <= colWidth * 0.14f
+                                        } else {
+                                            true
+                                        }
 
-                                    if (prominenceSignal) {
-                                        val combinedHeading = if (secondLineIsHeading) {
-                                            val fTrim = firstLine.text.trim()
-                                            if (STANDALONE_PREFIX_REGEX.matches(fTrim)) "${fTrim.trimEnd(':', '.', '-', '–', '—').trim()}: ${secondLine!!.text.trim()}"
-                                            else "$fTrim ${secondLine!!.text.trim()}"
-                                        } else firstLine.text.trim()
+                                        if (passesGuardC) {
+                                            val firstLineStrictlyCentered = firstLine.xLeft >= colLeft + 55f &&
+                                                    firstLine.xRight <= colRight - 55f &&
+                                                    abs((firstLine.xLeft + firstLine.xRight) / 2f - colMidX) <= colWidth * 0.14f
+                                            val secondLineCheck = if (secondLineIsHeading) {
+                                                secondLine!!.xLeft >= colLeft + 55f &&
+                                                        secondLine.xRight <= colRight - 55f &&
+                                                        abs((secondLine.xLeft + secondLine.xRight) / 2f - colMidX) <= colWidth * 0.14f
+                                            } else true
+                                            val strictlyCenteredSignal = firstLineStrictlyCentered && secondLineCheck
 
-                                        val rawCleanHeading = sanitizeChapterTitle(combinedHeading.replace(LEADING_BULLET_REGEX, ""))
-                                        val dialogueStartQuotes = setOf('"', '“', '‘', '\'', '「', '『', '(')
-                                        val cleanHeading = rawCleanHeading.dropWhile { !it.isLetterOrDigit() && it !in dialogueStartQuotes }.trim()
-                                        val words = cleanHeading.split(Regex("\\s+")).filter { it.isNotEmpty() }
-                                        val sentenceEndPunct = setOf('.', ',', ';', '!', '?', ':', '"', '”', ']', '』', '」')
+                                            val prominenceSignal = (firstLine.isBold && !firstBodyLine.isBold) ||
+                                                    (lastHeadingLine.isBold && !firstBodyLine.isBold) ||
+                                                    firstLine.maxFontSize >= bodyMedianFontSize + 0.4f ||
+                                                    ((firstBodyLine.yTop - lastHeadingLine.yTop) >= bodyMedianStep * 1.18f && lastHeadingLine.xRight <= colRight - 35f) ||
+                                                    strictlyCenteredSignal
 
-                                        val isValid = cleanHeading.length in 4..110 &&
-                                                words.size in 1..16 &&
-                                                cleanHeading.firstOrNull()?.let { it.isUpperCase() || it.isDigit() } == true &&
-                                                cleanHeading.firstOrNull() !in dialogueStartQuotes &&
-                                                cleanHeading.lastOrNull() !in sentenceEndPunct
+                                            if (prominenceSignal) {
+                                                val combinedHeading = if (secondLineIsHeading) {
+                                                    val fTrim = firstLine.text.trim()
+                                                    if (STANDALONE_PREFIX_REGEX.matches(fTrim)) "${fTrim.trimEnd(':', '.', '-', '–', '—').trim()}: ${secondLine!!.text.trim()}"
+                                                    else "$fTrim ${secondLine!!.text.trim()}"
+                                                } else firstLine.text.trim()
 
-                                        if (isValid) {
-                                            val bm = PdfBookmark(cleanHeading, p)
-                                            conditionBBookmarks.add(bm)
-                                            additiveBookmarks.add(bm)
-                                            patternCenteredMatched = true
+                                                val rawCleanHeading = sanitizeChapterTitle(combinedHeading.replace(LEADING_BULLET_REGEX, ""))
+                                                val dialogueStartQuotes = setOf('"', '“', '‘', '\'', '「', '『', '(')
+                                                val cleanHeading = rawCleanHeading.dropWhile { !it.isLetterOrDigit() && it !in dialogueStartQuotes }.trim()
+                                                val words = cleanHeading.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                                val sentenceEndPunct = setOf('.', ',', ';', '!', '?', ':', '"', '”', ']', '』', '」')
+
+                                                // Guard A — Reject Narrative/Dialogue Lines in Pattern C
+                                                val notNarrativeOrDialogue = !isLikelyNarrativeOrDialogueLine(firstLine.text, cleanHeading) &&
+                                                        (!secondLineIsHeading || !isLikelyNarrativeOrDialogueLine(secondLine!!.text, cleanHeading))
+
+                                                val isValid = cleanHeading.length in 4..110 &&
+                                                        words.size in 1..16 &&
+                                                        cleanHeading.firstOrNull()?.let { it.isUpperCase() || it.isDigit() } == true &&
+                                                        cleanHeading.firstOrNull() !in dialogueStartQuotes &&
+                                                        cleanHeading.lastOrNull() !in sentenceEndPunct &&
+                                                        notNarrativeOrDialogue
+
+                                                if (isValid) {
+                                                    val isBoldOrLargerFont = (firstLine.isBold && !firstBodyLine.isBold) ||
+                                                            (secondLineIsHeading && secondLine!!.isBold && !firstBodyLine.isBold) ||
+                                                            firstLine.maxFontSize >= bodyMedianFontSize + 0.5f
+                                                    val bm = PdfBookmark(cleanHeading, p)
+                                                    patternCBookmarks.add(PatternCCandidate(bm, isBoldOrLargerFont))
+                                                    patternCenteredMatched = true
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1397,7 +1497,7 @@ object PdfNativeRenderer {
                             val matchedCand = unnumberedTocCandidatesMap[n]
                             if (matchedCand != null) {
                                 val bm = PdfBookmark(matchedCand, p)
-                                additiveBookmarks.add(bm)
+                                patternDBookmarks.add(bm)
                                 break
                             } else {
                                 val lineIdx = contentLines.indexOf(line)
@@ -1407,7 +1507,7 @@ object PdfNativeRenderer {
                                     val matchedTwo = unnumberedTocCandidatesMap[twoLineNorm]
                                     if (matchedTwo != null) {
                                         val bm = PdfBookmark(matchedTwo, p)
-                                        additiveBookmarks.add(bm)
+                                        patternDBookmarks.add(bm)
                                         break
                                     }
                                 }
@@ -1417,15 +1517,18 @@ object PdfNativeRenderer {
 
                     // Pattern D — Running Bottom Footer Transition & Top/Bottom Match
                     val bestFooter = pageBottomTitles[p]
-                    if (bestFooter != null && !conditionBBookmarks.any { it.startPageZero == p }) {
+                    val pageHasStage4Match = patternAMatched || patternBMatched || patternCenteredMatched
+                    if (bestFooter != null && !pageHasStage4Match) {
                         val cleanFooter = sanitizeChapterTitle(bestFooter)
                         if (cleanFooter.length in 3..85 && (CHAPTER_KEYWORD_REGEX.matches(cleanFooter) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(cleanFooter))) {
                             val n = norm(cleanFooter)
                             if (n != normBookTitle && n !in globalWatermarkBlacklist && !cleanFooter.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
-                                if (!conditionBBookmarks.any { norm(it.title) == n }) {
+                                val titleAlreadyMatched = patternABookmarks.any { norm(it.title) == n } ||
+                                        patternBBookmarks.any { norm(it.title) == n } ||
+                                        patternCBookmarks.any { norm(it.bookmark.title) == n }
+                                if (!titleAlreadyMatched) {
                                     val bm = PdfBookmark(cleanFooter, p)
-                                    conditionBBookmarks.add(bm)
-                                    additiveBookmarks.add(bm)
+                                    footerBookmarks.add(bm)
                                 }
                             }
                         }
@@ -1443,14 +1546,48 @@ object PdfNativeRenderer {
                         val next2 = pageBottomTitles[p + 2]?.let { norm(it) }
                         val next3 = pageBottomTitles[p + 3]?.let { norm(it) }
                         if (next1 == normT && next2 == normT && next3 == normT) {
-                            additiveBookmarks.add(PdfBookmark(t, p))
+                            footerTransitionBookmarks.add(PdfBookmark(t, p))
                         }
                     }
                 }
 
                 onStageProgress(45)
 
-                val validConditionB = conditionBBookmarks.filter { norm(it.title) !in globalWatermarkBlacklist }
+                // Guard D — Book-Level Chapter Style Consistency Filter (Before deduplicateChapters)
+                val numberedKeywordPages = (detectedBookmarks + tocBookmarks + patternABookmarks)
+                    .filter { Regex("(?i)^(?:bab|chapter|bagian|part|act|selingan)\\s*(?:\\d+|[ivxlcdm]+)\\b.*").matches(it.title) }
+                    .map { it.startPageZero }
+
+                val filteredPatternC = if (numberedKeywordPages.size >= 3) {
+                    val lastNumberedPage = numberedKeywordPages.maxOrNull() ?: 0
+                    patternCBookmarks.filter { cand ->
+                        if (cand.bookmark.startPageZero <= lastNumberedPage) {
+                            cand.isBoldOrLargerFont && patternABookmarks.none { abs(it.startPageZero - cand.bookmark.startPageZero) <= 20 }
+                        } else {
+                            true
+                        }
+                    }.map { it.bookmark }
+                } else {
+                    patternCBookmarks.map { it.bookmark }
+                }
+
+                val stage4Bookmarks = mutableListOf<PdfBookmark>().apply {
+                    addAll(patternABookmarks)
+                    addAll(patternBBookmarks)
+                    addAll(filteredPatternC)
+                    addAll(footerBookmarks)
+                }
+
+                val validConditionB = stage4Bookmarks.filter { norm(it.title) !in globalWatermarkBlacklist }
+                val additiveBookmarks = mutableListOf<PdfBookmark>().apply {
+                    addAll(patternABookmarks)
+                    addAll(patternBBookmarks)
+                    addAll(filteredPatternC)
+                    addAll(footerBookmarks)
+                    addAll(patternDBookmarks)
+                    addAll(footerTransitionBookmarks)
+                }
+
                 val explicitCombined = detectedBookmarks + tocBookmarks + validConditionB
                 val structuredChapters = deduplicateChapters(explicitCombined + additiveBookmarks, safeTotalPages, defaultTitle, globalWatermarkBlacklist)
 
