@@ -3726,15 +3726,33 @@ fun ReaderScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Surface(
-                                    onClick = { onToggleTocDrawer(false) },
-                                    shape = CircleShape,
-                                    color = palette.bgSurface,
-                                    border = BorderStroke(1.dp, palette.borderSoft),
-                                    modifier = Modifier.size(32.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text("✕", color = palette.textMain, fontSize = 12.sp)
+                                    if (isPdfBook && uiState.pdfIndexingState[book.id] == null) {
+                                        Surface(
+                                            onClick = { viewModel?.forceReindexCurrentPdfBook() },
+                                            shape = CircleShape,
+                                            color = palette.bgSurface,
+                                            border = BorderStroke(1.dp, palette.borderSoft),
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text("↻", color = palette.textMain, fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = { onToggleTocDrawer(false) },
+                                        shape = CircleShape,
+                                        color = palette.bgSurface,
+                                        border = BorderStroke(1.dp, palette.borderSoft),
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text("✕", color = palette.textMain, fontSize = 12.sp)
+                                        }
                                     }
                                 }
                             }

@@ -140,7 +140,7 @@ class LlunevieViewModel(
 ) : ViewModel() {
 
     companion object {
-        private const val CURRENT_PDF_TOC_VERSION = 7
+        const val CURRENT_PDF_TOC_VERSION = 8
     }
 
     private val _previewOverrides = MutableStateFlow<UserPreferencesState?>(null)
@@ -1098,6 +1098,23 @@ class LlunevieViewModel(
         }
     }
 
+    private fun isFallbackSectionTitle(title: String): Boolean {
+        val t = title.trim()
+        return Regex("(?i)^(Section|Bagian)\\s+\\d+\\s*\\((?:pp\\.|Hal)\\s*\\d+[–-]\\d+\\)$").matches(t)
+    }
+
+    fun forceReindexCurrentPdfBook() {
+        val bookId = _uiState.value.activeBookId ?: return
+        if (_pdfIndexingState.value[bookId] != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val book = dao.getBookById(bookId) ?: return@launch
+            val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
+            if (isPdf && book.localFilePath != null) {
+                indexPdfChaptersAndIllustrations(book)
+            }
+        }
+    }
+
     fun indexPdfChaptersAndIllustrations(book: BookEntity) {
         val filePath = book.localFilePath ?: return
         val pdfFile = File(filePath)
@@ -1113,6 +1130,7 @@ class LlunevieViewModel(
 
                 val existingChapters = dao.getChaptersForBook(book.id)
                 val hasOnlyFallbackSections = existingChapters.isNotEmpty() && existingChapters.all { ce ->
+                    isFallbackSectionTitle(ce.title) ||
                     ce.title.startsWith("Section ", ignoreCase = true) ||
                     ce.title.startsWith("Bagian ", ignoreCase = true) ||
                     ce.title.equals(book.title, ignoreCase = true)

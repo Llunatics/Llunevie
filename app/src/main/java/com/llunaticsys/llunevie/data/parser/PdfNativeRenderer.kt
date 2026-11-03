@@ -32,6 +32,7 @@ import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOut
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.PDFTextStripperByArea
+import com.tom_roush.pdfbox.text.TextPosition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -50,7 +51,19 @@ import kotlin.math.ceil
 
 object PdfNativeRenderer {
 
+    const val CURRENT_PDF_TOC_VERSION = 8
+
     data class PdfBookmark(val title: String, val startPageZero: Int)
+
+    data class VisualLine(
+        val text: String,
+        val yTop: Float,
+        val xLeft: Float,
+        val xRight: Float,
+        val maxFontSize: Float,
+        val isBold: Boolean,
+        val isCentered: Boolean
+    )
 
     private val renderMutex = Mutex()
 
@@ -399,12 +412,14 @@ object PdfNativeRenderer {
         }
     }
 
-    private val BARE_NUMBERED_CHAPTER_REGEX = Regex(
-        "(?i)^(bab|chapter|bagian|part|act|vol|volume|jilid|section)\\s+[\\dIVXLCDM]+$"
+    val LEADING_BULLET_REGEX = Regex("^[•●▪◆❖★☆■□▸►▶✦✧]+\\s*")
+
+    val BARE_NUMBERED_CHAPTER_REGEX = Regex(
+        "(?i)^(bab|chapter|bagian|part|act|vol|volume|jilid|section)\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)$"
     )
 
     fun sanitizeChapterTitle(raw: String): String {
-        var t = raw
+        var t = raw.trim().replace(LEADING_BULLET_REGEX, "")
             .replace("&amp;", "&")
             .replace("&quot;", "\"")
             .replace("&apos;", "'")
@@ -418,6 +433,8 @@ object PdfNativeRenderer {
             .replace("—", " — ")
             .replace("–", " – ")
             .replace(Regex("""\s+"""), " ")
+            .trim()
+            .replace(LEADING_BULLET_REGEX, "")
             .trim()
 
         // Always strip dot-leader page numbers at the end of ToC lines:
@@ -497,6 +514,7 @@ object PdfNativeRenderer {
 
     fun cleanFooterTitle(line: String): String {
         var s = line.trim()
+            .replace(LEADING_BULLET_REGEX, "")
             .replace(Regex("^[|•\\-–—]+\\s*"), "")
             .replace(Regex("\\s*[|•\\-–—]+$"), "")
             .trim()
@@ -514,21 +532,13 @@ object PdfNativeRenderer {
 
         val trailingNumMatch = Regex("""\s+\d{1,4}$""").find(s)
         if (trailingNumMatch != null && !BARE_NUMBERED_CHAPTER_REGEX.matches(s)) {
-            val prefix = s.substring(0, trailingNumMatch.range.first).trim()
-            val words = prefix.split(Regex("""\s+""")).filter { it.isNotEmpty() }
-            val bareKeywords = setOf("bab", "chapter", "bagian", "part", "act", "vol", "volume", "jilid", "section")
-            val isBareKeyword = words.size == 1 && words[0].lowercase() in bareKeywords
-            val hasAtLeastTwoWordsOrColon = words.size >= 2 || prefix.contains(":")
-            if (hasAtLeastTwoWordsOrColon && !isBareKeyword) {
+            val prefix = tPrefix(s, trailingNumMatch.range.first)
+            if (prefix.isNotEmpty()) {
                 s = prefix
-            } else if (!isBareKeyword && words.isNotEmpty()) {
-                val specialStandalone = setOf("prolog", "prologue", "epilog", "epilogue", "afterword", "penutup")
-                if (words.size == 1 && words[0].lowercase() in specialStandalone) {
-                    s = prefix
-                }
             }
         }
-        s = s.replace(Regex("^[|•\\-–—]+\\s*"), "")
+        s = s.replace(LEADING_BULLET_REGEX, "")
+            .replace(Regex("^[|•\\-–—]+\\s*"), "")
             .replace(Regex("\\s*[|•\\-–—]+$"), "")
             .trim()
         if (s.all { it.isDigit() || it.isWhitespace() || it == '.' || it == '-' || it == '–' || it == '—' || it == '|' || it == '•' }) {
@@ -537,14 +547,29 @@ object PdfNativeRenderer {
         return sanitizeChapterTitle(s)
     }
 
+    private fun tPrefix(s: String, endIdx: Int): String {
+        val prefix = s.substring(0, endIdx).trim()
+        val words = prefix.split(Regex("""\s+""")).filter { it.isNotEmpty() }
+        val bareKeywords = setOf("bab", "chapter", "bagian", "part", "act", "vol", "volume", "jilid", "section")
+        val isBareKeyword = words.size == 1 && words[0].lowercase() in bareKeywords
+        val hasAtLeastTwoWordsOrColon = words.size >= 2 || prefix.contains(":")
+        if (hasAtLeastTwoWordsOrColon && !isBareKeyword) {
+            return prefix
+        } else if (!isBareKeyword && words.isNotEmpty()) {
+            val specialStandalone = setOf("prolog", "prologue", "epilog", "epilogue", "afterword", "penutup")
+            if (words.size == 1 && words[0].lowercase() in specialStandalone) {
+                return prefix
+            }
+        }
+        return ""
+    }
+
     private val CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(prolog|prologue|monolog|monologue|soliloquy|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+|interlude|side\\s+story|short\\s+story|ss\\b|extra|bonus|afterword|kata\\s+penutup|penutup)(?:\\b[\\s:\\-–—.]*.*)?$"
+        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|bab\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|bagian\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|part\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|act\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|interlude|side\\s+story|short\\s+story|ss\\s*[:\\-–—]|afterword|kata\\s+penutup|penutup)\\b.*"
     )
 
-    // Only numbered chapters, Prolog/Prologue, and Epilog/Epilogue may merge with a subtitle on the next line.
-    // NEVER include "kata penutup", "penutup", or "afterword" here, because the line below "Kata Penutup" is always body text!
     private val STANDALONE_PREFIX_REGEX = Regex(
-        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+[\\dIVXLCDM]+|bab\\s+[\\dIVXLCDM]+|bagian\\s+[\\dIVXLCDM]+|part\\s+[\\dIVXLCDM]+|act\\s+[\\dIVXLCDM]+)(?:\\s*[:.\\-–—])?$"
+        "(?i)^(prolog|prologue|epilog|epilogue|chapter\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|bab\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|bagian\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|part\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|act\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)|interlude|side\\s+story|short\\s+story)[:.\\-–—]?$"
     )
     
     val CHAPTER_KEYWORD_SUFFIX_REGEX = Regex(
@@ -569,7 +594,7 @@ object PdfNativeRenderer {
 
     private fun canonicalChapterIdentity(title: String): String {
         val clean = sanitizeChapterTitle(title).lowercase().trim()
-        val numMatch = Regex("^(chapter|bab|bagian|part|act)\\s+([\\divxlcdm]+)\\b").find(clean)
+        val numMatch = Regex("^(chapter|bab|bagian|part|act)\\s+([\\divxlcdm.-]+)\\b").find(clean)
         if (numMatch != null) {
             val kind = when (val k = numMatch.groupValues[1]) {
                 "bab", "chapter" -> "ch"
@@ -721,6 +746,137 @@ object PdfNativeRenderer {
         return result
     }
 
+    fun extractVisualLinesForPages(
+        document: PDDocument,
+        startPageZero: Int,
+        endPageZeroInclusive: Int
+    ): Map<Int, List<VisualLine>> {
+        val totalPages = document.numberOfPages
+        if (totalPages <= 0 || startPageZero > endPageZeroInclusive || startPageZero >= totalPages) {
+            return emptyMap()
+        }
+        val safeStart = startPageZero.coerceIn(0, totalPages - 1)
+        val safeEnd = endPageZeroInclusive.coerceIn(safeStart, totalPages - 1)
+
+        val resultMap = mutableMapOf<Int, List<VisualLine>>()
+
+        val stripper = object : PDFTextStripper() {
+            private val currentPagePositions = mutableListOf<TextPosition>()
+
+            init {
+                sortByPosition = true
+            }
+
+            override fun startPage(page: PDPage) {
+                currentPagePositions.clear()
+            }
+
+            override fun processTextPosition(tp: TextPosition) {
+                if (tp.unicode?.isNotBlank() == true) {
+                    currentPagePositions.add(tp)
+                }
+            }
+
+            override fun endPage(page: PDPage) {
+                val pZero = currentPageNo - 1
+                if (currentPagePositions.isEmpty()) {
+                    resultMap[pZero] = emptyList()
+                    return
+                }
+
+                // 1. Sort the collected TextPosition list by yDirAdj ascending, then xDirAdj ascending
+                val sortedPositions = currentPagePositions.sortedWith(
+                    compareBy<TextPosition> { it.yDirAdj }
+                        .thenBy { it.xDirAdj }
+                )
+
+                // 2. Group consecutive TextPositions into horizontal line clusters
+                val clusters = mutableListOf<MutableList<TextPosition>>()
+                for (tp in sortedPositions) {
+                    val currentCluster = clusters.lastOrNull()
+                    if (currentCluster == null) {
+                        clusters.add(mutableListOf(tp))
+                    } else {
+                        val clusterAvgY = currentCluster.map { it.yDirAdj }.average().toFloat()
+                        val clusterMaxHeight = currentCluster.maxOf {
+                            val h = it.heightDir
+                            if (h > 0f) h else it.fontSizeInPt
+                        }
+                        if (abs(tp.yDirAdj - clusterAvgY) <= maxOf(3.8f, clusterMaxHeight * 0.48f)) {
+                            currentCluster.add(tp)
+                        } else {
+                            clusters.add(mutableListOf(tp))
+                        }
+                    }
+                }
+
+                val pageW = (page.mediaBox?.width ?: 600f).coerceAtLeast(1f)
+                val lines = mutableListOf<VisualLine>()
+
+                for (cluster in clusters) {
+                    if (cluster.isEmpty()) continue
+                    val linePositions = cluster.sortedBy { it.xDirAdj }
+                    val sb = StringBuilder()
+                    var prevEndX = Float.NaN
+
+                    for (tp in linePositions) {
+                        val u = tp.unicode.orEmpty()
+                        if (u.isEmpty()) continue
+                        if (!prevEndX.isNaN()) {
+                            val gap = tp.xDirAdj - prevEndX
+                            val threshold = maxOf(tp.widthOfSpace * 0.28f, tp.fontSizeInPt * 0.12f)
+                            if (gap > threshold && !sb.endsWith(" ") && !sb.endsWith("-") && !sb.endsWith("–") && !sb.endsWith("—")) {
+                                sb.append(" ")
+                            }
+                        }
+                        sb.append(u)
+                        prevEndX = tp.xDirAdj + tp.widthDirAdj
+                    }
+
+                    val xLeft = linePositions.first().xDirAdj
+                    val xRight = linePositions.maxOf { it.xDirAdj + it.widthDirAdj }
+                    val yTop = linePositions.map { it.yDirAdj }.average().toFloat()
+                    val maxFontSize = linePositions.maxOf { it.fontSizeInPt }
+                    val isBold = linePositions.any {
+                        val fn = it.font?.name.orEmpty()
+                        fn.contains("Bold", true) ||
+                            fn.contains("Semibold", true) ||
+                            fn.contains("Medium", true) ||
+                            (it.font?.fontDescriptor?.fontWeight ?: 400f) >= 600f
+                    }
+                    val lineW = (xRight - xLeft).coerceAtLeast(0f)
+                    val midX = (xLeft + xRight) / 2f
+                    val isCentered = lineW < pageW * 0.82f && abs(midX - pageW / 2f) <= pageW * 0.18f
+                    val cleanText = sb.toString().replace(Regex("\\s+"), " ").trim()
+
+                    if (cleanText.isNotEmpty()) {
+                        lines.add(
+                            VisualLine(
+                                text = cleanText,
+                                yTop = yTop,
+                                xLeft = xLeft,
+                                xRight = xRight,
+                                maxFontSize = maxFontSize,
+                                isBold = isBold,
+                                isCentered = isCentered
+                            )
+                        )
+                    }
+                }
+
+                resultMap[pZero] = lines.sortedBy { it.yTop }
+            }
+        }
+
+        stripper.startPage = safeStart + 1
+        stripper.endPage = safeEnd + 1
+        runCatching {
+            stripper.writeText(document, java.io.StringWriter())
+        }
+
+        return resultMap
+    }
+
     suspend fun extractChaptersWithPdfBox(
         context: Context,
         pdfFile: File,
@@ -771,147 +927,182 @@ object PdfNativeRenderer {
 
                 onStageProgress(25)
 
-                // Stage 2: Contents / Table of Contents / Daftar Isi Pages (25% -> 55%)
+                // Extract Visual Lines for all pages 0 until safeTotalPages
+                val visualLinesMap = extractVisualLinesForPages(document, 0, safeTotalPages - 1)
+
+                // Stage 2: Contents / Table of Contents / Daftar Isi Pages (25% -> 35%)
                 val maxScan = minOf(25, safeTotalPages)
-                val textStripper = runCatching { PDFTextStripper().apply { sortByPosition = true } }.getOrNull()
-                val linkPageOccurrences = mutableMapOf<String, MutableSet<Int>>()
+                val tocHeadingRegex = Regex(
+                    "\\b(Table\\s+of\\s+Contents|Contents|Daftar\\s+Isi|Table\\s+des\\s+mati[èe]res|Inhaltsverzeichnis|Índice|Indice)\\b",
+                    RegexOption.IGNORE_CASE
+                )
+                val tocPages = mutableListOf<Int>()
+                val unnumberedTocCandidatesMap = mutableMapOf<String, String>()
+                val pageLabels = runCatching { document.documentCatalog.pageLabels?.pageIndicesByLabels }.getOrNull()
+                val numberedLineRegex = Regex("^(.+?)(?:[.\\s_\\-–—·…]{2,}|\\t+)\\s*(\\d{1,4})\\s*$")
 
-                if (textStripper != null) {
-                    val tocHeadingRegex = Regex(
-                        "\\b(Table\\s+of\\s+Contents|Contents|Daftar\\s+Isi|Table\\s+des\\s+mati[èe]res|Inhaltsverzeichnis|Índice|Indice)\\b",
-                        RegexOption.IGNORE_CASE
-                    )
-                    val tocPages = mutableListOf<Int>()
-
-                    for (p in 0 until maxScan) {
-                        textStripper.startPage = p + 1
-                        textStripper.endPage = p + 1
-                        val text = runCatching { textStripper.getText(document) }.getOrDefault("")
-                        if (tocHeadingRegex.containsMatchIn(text)) {
+                for (p in 0 until maxScan) {
+                    val pageVLines = visualLinesMap[p] ?: emptyList()
+                    val hasHeading = pageVLines.any { tocHeadingRegex.containsMatchIn(it.text) }
+                    val keywordMatchCount = pageVLines.count { CHAPTER_KEYWORD_REGEX.matches(it.text.replace(LEADING_BULLET_REGEX, "").trim()) }
+                    if (hasHeading || keywordMatchCount >= 3) {
+                        tocPages.add(p)
+                    } else if (tocPages.isNotEmpty() && tocPages.last() == p - 1) {
+                        val pdPage = runCatching { document.getPage(p) }.getOrNull()
+                        val hasLinks = pdPage?.annotations?.filterIsInstance<PDAnnotationLink>()?.isNotEmpty() == true
+                        val hasNumberedLines = pageVLines.count { vl ->
+                            numberedLineRegex.containsMatchIn(vl.text)
+                        } >= 3
+                        if (hasLinks || hasNumberedLines) {
                             tocPages.add(p)
-                        } else if (tocPages.isNotEmpty() && tocPages.last() == p - 1) {
-                            val pdPage = runCatching { document.getPage(p) }.getOrNull()
-                            val hasLinks = pdPage?.annotations?.filterIsInstance<PDAnnotationLink>()?.isNotEmpty() == true
-                            val hasNumberedLines = text.lines().count { line ->
-                                Regex("(?:[.\\s_\\-–—·…]{2,}|\\t+)\\s*(\\d{1,4})\\s*$").containsMatchIn(line.trim())
-                            } >= 3
-                            if (hasLinks || hasNumberedLines) {
-                                tocPages.add(p)
+                        }
+                    }
+                }
+
+                onStageProgress(35)
+
+                // Process TOC Pages: Links, Numbered TOC lines, and Unnumbered TOC lines
+                val linkPageOccurrences = mutableMapOf<String, MutableSet<Int>>()
+                val normBookTitle = defaultTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
+                fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+                fun isNoiseOrWatermark(text: String): Boolean {
+                    val lower = text.lowercase()
+                    if (lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
+                        lower.contains(".com") || lower.contains(".org") || lower.contains(".net") || lower.contains(".id") ||
+                        lower.contains("arakiyota") || lower.contains("youzitsu")) {
+                        return true
+                    }
+                    val n = norm(text)
+                    if (normBookTitle.isNotEmpty() && (n == normBookTitle || (n.contains(normBookTitle) && n.length < normBookTitle.length + 5))) {
+                        return true
+                    }
+                    return false
+                }
+
+                for (tocPageZero in tocPages) {
+                    val pdPage = runCatching { document.getPage(tocPageZero) }.getOrNull() ?: continue
+                    val pageVLines = visualLinesMap[tocPageZero] ?: emptyList()
+                    val mediaBox = pdPage.mediaBox ?: pdPage.cropBox
+                    val pageH = (mediaBox?.height ?: 800f).coerceAtLeast(1f)
+
+                    // Strategy 2A: Interactive Link Annotations (PDAnnotationLink)
+                    val links = runCatching { pdPage.annotations.filterIsInstance<PDAnnotationLink>() }.getOrDefault(emptyList())
+                    for (link in links) {
+                        val dest = link.destination ?: (link.action as? PDActionGoTo)?.destination ?: continue
+                        val targetPage = resolveDestinationPage(document, dest) ?: continue
+                        if (targetPage !in 0 until safeTotalPages) continue
+
+                        val rect = link.rectangle
+                        var linkText: String? = null
+                        if (rect != null) {
+                            val linkTop = (pageH - maxOf(rect.lowerLeftY, rect.upperRightY)).coerceAtLeast(0f)
+                            val linkBottom = (pageH - minOf(rect.lowerLeftY, rect.upperRightY)).coerceAtLeast(0f)
+                            val overlappingLine = pageVLines.find { vl ->
+                                vl.yTop in (linkTop - 6f)..(linkBottom + 6f)
+                            }
+                            linkText = overlappingLine?.text
+                        }
+
+                        if (!linkText.isNullOrBlank()) {
+                            val clean = sanitizeChapterTitle(linkText)
+                            val normL = norm(clean)
+                            if (normL.isNotEmpty()) {
+                                linkPageOccurrences.getOrPut(normL) { mutableSetOf() }.add(tocPageZero)
+                            }
+                            if (clean.length in 2..120) {
+                                tocBookmarks.add(PdfBookmark(clean, targetPage))
                             }
                         }
                     }
 
-                    onStageProgress(35)
+                    // Strategy 2B & 2C: Numbered & Unnumbered TOC Lines
+                    for (vl in pageVLines) {
+                        val trimmed = vl.text.trim()
+                        if (trimmed.length < 3) continue
+                        if (tocHeadingRegex.containsMatchIn(trimmed)) {
+                            continue
+                        }
 
-                    val pageLabels = runCatching { document.documentCatalog.pageLabels?.pageIndicesByLabels }.getOrNull()
-                    val numberedLineRegex = Regex("^(.+?)(?:[.\\s_\\-–—·…]{2,}|\\t+)\\s*(\\d{1,4})\\s*$")
-                    val unnumberedCandidates = mutableListOf<String>()
-
-                    for (tocPageZero in tocPages) {
-                        val pdPage = runCatching { document.getPage(tocPageZero) }.getOrNull() ?: continue
-
-                        // Strategy 2A: Interactive Link Annotations (PDAnnotationLink)
-                        val links = runCatching { pdPage.annotations.filterIsInstance<PDAnnotationLink>() }.getOrDefault(emptyList())
-                        if (links.isNotEmpty()) {
-                            val mediaBox = pdPage.mediaBox ?: pdPage.cropBox
-                            val pageH = mediaBox.height
-                            val areaStripper = runCatching { PDFTextStripperByArea() }.getOrNull()
-
-                            for ((linkIdx, link) in links.withIndex()) {
-                                val dest = link.destination ?: (link.action as? PDActionGoTo)?.destination ?: continue
-                                val targetPage = resolveDestinationPage(document, dest) ?: continue
-                                if (targetPage !in 0 until safeTotalPages) continue
-
-                                var linkText: String? = null
-                                if (areaStripper != null) {
-                                    val rect = link.rectangle
-                                    if (rect != null) {
-                                        val left = minOf(rect.lowerLeftX, rect.upperRightX)
-                                        val right = maxOf(rect.lowerLeftX, rect.upperRightX)
-                                        val top = (pageH - maxOf(rect.lowerLeftY, rect.upperRightY)).coerceAtLeast(0f)
-                                        val bottom = (pageH - minOf(rect.lowerLeftY, rect.upperRightY)).coerceAtLeast(0f)
-                                        val rectF = RectF(left - 2f, top - 2f, right + 2f, bottom + 2f)
-                                        val rKey = "link_$linkIdx"
-                                        areaStripper.addRegion(rKey, rectF)
-                                        runCatching { areaStripper.extractRegions(pdPage) }
-                                        linkText = areaStripper.getTextForRegion(rKey)?.trim()
-                                        areaStripper.removeRegion(rKey)
-                                    }
+                        val match = numberedLineRegex.find(trimmed)
+                        if (match != null) {
+                            val rawTitle = match.groupValues[1].trim()
+                            val pageStr = match.groupValues[2]
+                            val clean = sanitizeChapterTitle(rawTitle)
+                            if (clean.length in 2..120) {
+                                val targetPage: Int? = if (pageLabels != null && pageLabels.containsKey(pageStr)) {
+                                    pageLabels[pageStr]
+                                } else {
+                                    val pNum = pageStr.toIntOrNull()
+                                    if (pNum != null && pNum in 1..safeTotalPages) {
+                                        pNum - 1
+                                    } else null
                                 }
-                                if (!linkText.isNullOrBlank()) {
-                                    val clean = sanitizeChapterTitle(linkText)
-                                    val normL = clean.lowercase().replace(Regex("[^a-z0-9]"), "")
-                                    if (normL.isNotEmpty()) {
-                                        linkPageOccurrences.getOrPut(normL) { mutableSetOf() }.add(tocPageZero)
-                                    }
-                                    if (clean.length in 2..120) {
-                                        tocBookmarks.add(PdfBookmark(clean, targetPage))
+                                if (targetPage != null && targetPage in 0 until safeTotalPages) {
+                                    tocBookmarks.add(PdfBookmark(clean, targetPage))
+                                } else if (clean.length in 3..75 && isPlausibleChapterTitle(clean) && !isNoiseOrWatermark(clean)) {
+                                    val n = norm(clean)
+                                    if (n.length >= 3) {
+                                        unnumberedTocCandidatesMap[n] = clean
                                     }
                                 }
                             }
-                        }
-
-                        // Strategy 2B: Numbered ToC lines
-                        textStripper.startPage = tocPageZero + 1
-                        textStripper.endPage = tocPageZero + 1
-                        val text = runCatching { textStripper.getText(document) }.getOrDefault("")
-
-                        for (line in text.lines()) {
-                            val trimmed = line.trim()
-                            if (trimmed.length < 3) continue
-                            val match = numberedLineRegex.find(trimmed)
-                            if (match != null) {
-                                val rawTitle = match.groupValues[1].trim()
-                                val pageStr = match.groupValues[2]
-                                val clean = sanitizeChapterTitle(rawTitle)
-                                if (clean.length in 2..120) {
-                                    val targetPage: Int? = if (pageLabels != null && pageLabels.containsKey(pageStr)) {
-                                        pageLabels[pageStr]
-                                    } else {
-                                        val pNum = pageStr.toIntOrNull()
-                                        if (pNum != null && pNum in 1..safeTotalPages) {
-                                            pNum - 1
-                                        } else null
-                                    }
-                                    if (targetPage != null && targetPage in 0 until safeTotalPages) {
-                                        tocBookmarks.add(PdfBookmark(clean, targetPage))
-                                    } else {
-                                        unnumberedCandidates.add(clean)
-                                    }
-                                }
-                            } else {
-                                val clean = sanitizeChapterTitle(trimmed)
-                                if (clean.length in 3..80 && isPlausibleChapterTitle(clean)) {
-                                    unnumberedCandidates.add(clean)
-                                }
-                            }
-                        }
-                    }
-
-                    onStageProgress(45)
-
-                    // Strategy 2C: Unnumbered ToC Lines Fallback
-                    if (tocBookmarks.isEmpty() && unnumberedCandidates.isNotEmpty() && detectedBookmarks.size < 2) {
-                        var searchStart = (tocPages.maxOrNull() ?: 0) + 1
-                        for (cand in unnumberedCandidates) {
-                            val normCand = cand.lowercase().replace(Regex("[^a-z0-9]"), "")
-                            if (normCand.length < 3) continue
-                            for (p in searchStart until minOf(safeTotalPages, searchStart + 80)) {
-                                textStripper.startPage = p + 1
-                                textStripper.endPage = p + 1
-                                val pageText = runCatching { textStripper.getText(document) }.getOrDefault("")
-                                val topLines = pageText.lines().take(6).map { it.lowercase().replace(Regex("[^a-z0-9]"), "") }
-                                if (topLines.any { it.contains(normCand) || (normCand.contains(it) && it.length > 5) }) {
-                                    tocBookmarks.add(PdfBookmark(cand, p))
-                                    searchStart = p + 1
-                                    break
+                        } else {
+                            val clean = sanitizeChapterTitle(trimmed)
+                            if (clean.length in 3..75 && isPlausibleChapterTitle(clean) && !isNoiseOrWatermark(clean)) {
+                                val n = norm(clean)
+                                if (n.length >= 3) {
+                                    unnumberedTocCandidatesMap[n] = clean
                                 }
                             }
                         }
                     }
                 }
 
-                onStageProgress(45)
+                // Stage 3: Repeating Running Header / Watermark Frequency Analysis Across All Pages
+                onStageProgress(38)
+
+                val top2Freq = mutableMapOf<String, MutableSet<Int>>()
+                val bot2Freq = mutableMapOf<String, MutableSet<Int>>()
+                val pageBottomTitles = arrayOfNulls<String>(safeTotalPages)
+
+                fun isValidChapterTitle(t: String): Boolean {
+                    val n = norm(t)
+                    return t.length in 3..85 && n != normBookTitle && n.isNotEmpty() &&
+                        !t.all { it.isDigit() || it.isWhitespace() || it == '.' }
+                }
+
+                for (p in 0 until safeTotalPages) {
+                    val vLines = visualLinesMap[p] ?: emptyList()
+                    val top2 = vLines.take(2)
+                    for (line in top2) {
+                        val n = norm(line.text)
+                        if (n.isNotEmpty()) {
+                            top2Freq.getOrPut(n) { mutableSetOf() }.add(p)
+                        }
+                    }
+                    val bot2 = vLines.takeLast(2)
+                    for (line in bot2) {
+                        val n = norm(line.text)
+                        if (n.isNotEmpty()) {
+                            bot2Freq.getOrPut(n) { mutableSetOf() }.add(p)
+                        }
+                    }
+                    val botCands = bot2.map { cleanFooterTitle(it.text) }.filter { it.isNotBlank() }
+                    val bestFooter = botCands.lastOrNull { isValidChapterTitle(it) }
+                    if (bestFooter != null) {
+                        pageBottomTitles[p] = bestFooter
+                    }
+                }
+
+                val repeatingTopHeaders = mutableSetOf<String>()
+                for ((n, pages) in top2Freq) {
+                    if (pages.size >= 5) {
+                        if (!BARE_NUMBERED_CHAPTER_REGEX.matches(n) && !CHAPTER_KEYWORD_REGEX.matches(n)) {
+                            repeatingTopHeaders.add(n)
+                        }
+                    }
+                }
 
                 val globalWatermarkBlacklist = mutableSetOf<String>()
                 for ((nLink, pages) in linkPageOccurrences) {
@@ -919,146 +1110,121 @@ object PdfNativeRenderer {
                         globalWatermarkBlacklist.add(nLink)
                     }
                 }
-
-                val normBookTitle = defaultTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
-                fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
-                fun isValidChapterTitle(t: String): Boolean {
-                    val n = norm(t)
-                    return t.length in 3..85 && n != normBookTitle && n.isNotEmpty() &&
-                        !t.all { it.isDigit() || it.isWhitespace() || it == '.' }
+                for ((nBot, pages) in bot2Freq) {
+                    if (pages.size >= 5 && !CHAPTER_KEYWORD_REGEX.matches(nBot) && !BARE_NUMBERED_CHAPTER_REGEX.matches(nBot)) {
+                        globalWatermarkBlacklist.add(nBot)
+                    }
                 }
 
-                val pageLines = arrayOfNulls<List<String>>(safeTotalPages)
-                val pageBottomTitles = arrayOfNulls<String>(safeTotalPages)
-                val linePageOccurrences = mutableMapOf<String, MutableSet<Int>>()
+                // Stage 4: 4-Pattern Full-Book Scan
                 val conditionBBookmarks = mutableListOf<PdfBookmark>()
+                val tocMaxPage = tocPages.maxOrNull() ?: -1
 
-                if (textStripper != null) {
-                    for (p in 0 until safeTotalPages) {
-                        textStripper.startPage = p + 1
-                        textStripper.endPage = p + 1
-                        val pageText = runCatching { textStripper.getText(document) }.getOrDefault("")
-                        val lines = pageText.lines().map { it.replace('\u00A0', ' ').trim() }.filter { it.isNotEmpty() }
-                        pageLines[p] = lines
-
-                        if (lines.isNotEmpty()) {
-                            val topCands = lines.take(2).map { cleanFooterTitle(it) }.filter { it.isNotBlank() }
-                            val botCands = lines.takeLast(2).map { cleanFooterTitle(it) }.filter { it.isNotBlank() }
-                            for (c in (topCands + botCands)) {
-                                val n = norm(c)
-                                if (n.isNotEmpty()) {
-                                    linePageOccurrences.getOrPut(n) { mutableSetOf() }.add(p)
-                                }
-                            }
-                            val bestFooter = botCands.lastOrNull { isValidChapterTitle(it) }
-                            if (bestFooter != null) {
-                                pageBottomTitles[p] = bestFooter
-                            }
-                        }
-
-                        if (p % 20 == 0 || p == safeTotalPages - 1) {
-                            val pct = 45 + (p * 10 / safeTotalPages.coerceAtLeast(1))
-                            onStageProgress(pct.coerceIn(45, 55))
-                        }
-                    }
-                }
-
-                // NEVER blacklist chapter keywords - they are real chapters, not watermarks!
-                val lineSpanTracking = mutableMapOf<String, Pair<Int, Int>>() // normalized -> (firstPage, lastPage)
-                for ((nLine, pages) in linePageOccurrences) {
-                    if (pages.isNotEmpty()) {
-                        val firstPage = pages.minOrNull() ?: 0
-                        val lastPage = pages.maxOrNull() ?: 0
-                        lineSpanTracking[nLine] = Pair(firstPage, lastPage)
-                    }
-                }
-                
-                for ((nLine, pages) in linkPageOccurrences) {
-                    if (pages.size >= 5) {
-                        globalWatermarkBlacklist.add(nLine)
-                    }
-                }
-                
-                // Only blacklist non-keyword strings that span > 35% of the book from front to back
-                for ((nLine, pages) in linePageOccurrences) {
-                    val occurrenceCount = pages.size
-                    if (occurrenceCount < 5) continue
-                    
-                    val (firstPage, lastPage) = lineSpanTracking[nLine] ?: continue
-                    val span = lastPage - firstPage
-                    
-                    // Check if this normalized line matches any chapter keyword
-                    val matchesKeyword = CHAPTER_KEYWORD_REGEX.matches(nLine) ||
-                        STANDALONE_PREFIX_REGEX.matches(nLine) ||
-                        pageBottomTitles.filterNotNull().any { title ->
-                            norm(cleanFooterTitle(title)) == nLine &&
-                            (CHAPTER_KEYWORD_REGEX.matches(title) || CHAPTER_KEYWORD_SUFFIX_REGEX.matches(title))
-                        }
-                    
-                    if (matchesKeyword) continue // Never blacklist chapter keywords!
-                    
-                    // Only blacklist if it spans > 35% of book AND has at least 5 occurrences
-                    if (span > (safeTotalPages * 0.35f) && occurrenceCount >= 5) {
-                        globalWatermarkBlacklist.add(nLine)
-                    }
-                }
-
-                fun isUrlLine(s: String): Boolean =
-                    s.startsWith("http://", true) ||
-                    s.startsWith("https://", true) ||
-                    s.contains("www.", true) ||
-                    s.contains(".com", true)
-
-                // Condition B: explicit chapter headings in topCandidates & 2-line heading merging
                 for (p in 0 until safeTotalPages) {
-                    val lines = pageLines[p] ?: continue
-                    if (lines.isEmpty()) continue
+                    val pdPage = runCatching { document.getPage(p) }.getOrNull()
+                    val mediaBox = pdPage?.mediaBox ?: pdPage?.cropBox
+                    val pageH = (mediaBox?.height ?: 800f).coerceAtLeast(1f)
+                    val rawVLines = visualLinesMap[p] ?: emptyList()
+                    if (rawVLines.isEmpty()) continue
 
-                    val topCandidates = lines.take(8)
-                    for (idx in topCandidates.indices) {
-                        val rawLine = topCandidates[idx]
-                        if (isUrlLine(rawLine) || norm(rawLine) in globalWatermarkBlacklist) {
-                            continue
-                        }
+                    val contentLines = rawVLines.filterIndexed { index, vl ->
+                        val text = vl.text
+                        val isPurePageNum = text.all { it.isDigit() || it.isWhitespace() || it in ".-–—|•[]" }
+                        if (isPurePageNum) return@filterIndexed false
+                        if (isNoiseOrWatermark(text)) return@filterIndexed false
+                        val n = norm(text)
+                        if (index < 3 && (n in repeatingTopHeaders || n == normBookTitle)) return@filterIndexed false
+                        true
+                    }
 
-                        val cleanLine = sanitizeChapterTitle(rawLine)
-                        if (cleanLine.length !in 3..85) continue
-                        if (isUrlLine(cleanLine) || norm(cleanLine) in globalWatermarkBlacklist) continue
+                    if (contentLines.isEmpty()) continue
 
-                        val isMatch = CHAPTER_KEYWORD_REGEX.matches(cleanLine) ||
-                            ((cleanLine.endsWith("Monologue", true) || cleanLine.endsWith("Monolog", true)) && cleanLine.length in 5..55)
+                    val isSeparatorPage = contentLines.size in 1..5
+                    val candidateTopLines = if (isSeparatorPage) contentLines else contentLines.filter { it.yTop <= pageH * 0.42f }.take(5)
+                    val pageMedianFontSize = contentLines.map { it.maxFontSize }.sorted().let {
+                        if (it.isEmpty()) 12f else it[it.size / 2]
+                    }
 
-                        if (isMatch) {
-                            var combinedTitle = cleanLine
-                            if (STANDALONE_PREFIX_REGEX.matches(cleanLine) && idx + 1 < topCandidates.size) {
-                                val nextRaw = topCandidates[idx + 1]
-                                val nextLine = sanitizeChapterTitle(nextRaw)
-                                val nextWords = nextLine.split(Regex("""\s+""")).filter { it.isNotEmpty() }
-                                if (nextLine.length in 2..42 &&
-                                    nextWords.size <= 6 &&
-                                    !nextLine.endsWith(".") &&
-                                    !nextLine.endsWith(",") &&
-                                    !nextLine.contains("\"") &&
-                                    !nextLine.contains("“") &&
-                                    !isUrlLine(nextRaw) &&
-                                    !isLikelyBodySentenceOrWatermark(nextLine) &&
-                                    !CHAPTER_KEYWORD_REGEX.matches(nextLine) &&
-                                    norm(nextLine) !in globalWatermarkBlacklist
-                                ) {
-                                    combinedTitle = "${cleanLine.trimEnd(':', '.', '-', '–', '—')}: $nextLine"
+                    var patternAMatched = false
+
+                    // Pattern A — Keyword Chapter Heading + 2-Line Subtitle Lookahead (Bab 1 + Lagu Kesepian)
+                    for (line in candidateTopLines) {
+                        val stripped = line.text.replace(LEADING_BULLET_REGEX, "").trim()
+                        if (CHAPTER_KEYWORD_REGEX.matches(stripped)) {
+                            var title = sanitizeChapterTitle(stripped)
+                            if (STANDALONE_PREFIX_REGEX.matches(stripped)) {
+                                val lineIdx = contentLines.indexOf(line)
+                                val nextLine = contentLines.getOrNull(lineIdx + 1)
+                                if (nextLine != null && (nextLine.yTop - line.yTop) in 2f..65f) {
+                                    val nextClean = sanitizeChapterTitle(nextLine.text.replace(LEADING_BULLET_REGEX, ""))
+                                    val nextWords = nextClean.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val isCenteredOrBold = nextLine.isCentered || nextLine.isBold
+                                    if (nextClean.length in 2..60 &&
+                                        nextWords.size <= 8 &&
+                                        !CHAPTER_KEYWORD_REGEX.matches(nextClean) &&
+                                        (!nextClean.endsWith(".") || isCenteredOrBold)
+                                    ) {
+                                        title = "${title.trimEnd(':', '.', '-', '–', '—').trim()}: $nextClean"
+                                    }
                                 }
                             }
-                            val n = norm(combinedTitle)
-                            if (n != normBookTitle && !cleanLine.all { it.isDigit() || it.isWhitespace() || it == '.' }) {
-                                val bookmark = PdfBookmark(combinedTitle, p)
-                                conditionBBookmarks.add(bookmark)
-                                additiveBookmarks.add(bookmark)
-                                break
+                            val bm = PdfBookmark(title, p)
+                            conditionBBookmarks.add(bm)
+                            additiveBookmarks.add(bm)
+                            patternAMatched = true
+                            break
+                        }
+                    }
+
+                    var patternBMatched = false
+                    // Pattern B — Top-of-Page Standalone Bulleted Heading (• Dua Guru, Ujian Khusus Yang Ditakdirkan)
+                    if (!patternAMatched) {
+                        val firstLine = contentLines.firstOrNull()
+                        if (firstLine != null && (firstLine.yTop <= pageH * 0.32f || isSeparatorPage) && LEADING_BULLET_REGEX.containsMatchIn(firstLine.text)) {
+                            val secondLine = contentLines.getOrNull(1)
+                            val secondHasBullet = secondLine != null && LEADING_BULLET_REGEX.containsMatchIn(secondLine.text)
+                            if (!secondHasBullet) {
+                                val bulletTitle = sanitizeChapterTitle(firstLine.text.replace(LEADING_BULLET_REGEX, ""))
+                                val words = bulletTitle.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                val startsWithAlnum = bulletTitle.firstOrNull()?.isLetterOrDigit() == true
+                                val endsWithoutPunct = !bulletTitle.endsWith(",") && !bulletTitle.endsWith(";")
+                                val isDistinctHeading = firstLine.isCentered || firstLine.isBold || firstLine.maxFontSize >= pageMedianFontSize + 0.3f || isSeparatorPage
+                                if (bulletTitle.length in 4..75 && words.size <= 10 && startsWithAlnum && endsWithoutPunct && isDistinctHeading) {
+                                    val bm = PdfBookmark(bulletTitle, p)
+                                    conditionBBookmarks.add(bm)
+                                    additiveBookmarks.add(bm)
+                                    patternBMatched = true
+                                }
                             }
                         }
                     }
 
-                    // Also check cleaned bottom running footer
+                    // Pattern C — Unnumbered Daftar Isi / Table of Contents Title Match
+                    if (!patternAMatched && !patternBMatched && p > tocMaxPage && unnumberedTocCandidatesMap.isNotEmpty()) {
+                        for (line in candidateTopLines) {
+                            val n = norm(line.text)
+                            val matchedCand = unnumberedTocCandidatesMap[n]
+                            if (matchedCand != null) {
+                                val bm = PdfBookmark(matchedCand, p)
+                                additiveBookmarks.add(bm)
+                                break
+                            } else {
+                                val lineIdx = contentLines.indexOf(line)
+                                val nextLine = contentLines.getOrNull(lineIdx + 1)
+                                if (nextLine != null && (nextLine.yTop - line.yTop) in 2f..65f) {
+                                    val twoLineNorm = norm("${line.text} ${nextLine.text}")
+                                    val matchedTwo = unnumberedTocCandidatesMap[twoLineNorm]
+                                    if (matchedTwo != null) {
+                                        val bm = PdfBookmark(matchedTwo, p)
+                                        additiveBookmarks.add(bm)
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Pattern D — Running Bottom Footer Transition & Top/Bottom Match
                     val bestFooter = pageBottomTitles[p]
                     if (bestFooter != null && !conditionBBookmarks.any { it.startPageZero == p }) {
                         val cleanFooter = sanitizeChapterTitle(bestFooter)
@@ -1075,63 +1241,29 @@ object PdfNativeRenderer {
                     }
                 }
 
+                // Running bottom footer transition check repeating across >= 4 pages (Pattern D footer transition)
+                for (p in 0 until safeTotalPages - 3) {
+                    val t = pageBottomTitles[p] ?: continue
+                    val normT = norm(t)
+                    if (normT in globalWatermarkBlacklist || isLikelyBodySentenceOrWatermark(t)) continue
+                    val prevT = if (p > 0) pageBottomTitles[p - 1]?.let { norm(it) } else null
+                    if (normT != prevT) {
+                        val next1 = pageBottomTitles[p + 1]?.let { norm(it) }
+                        val next2 = pageBottomTitles[p + 2]?.let { norm(it) }
+                        val next3 = pageBottomTitles[p + 3]?.let { norm(it) }
+                        if (next1 == normT && next2 == normT && next3 == normT) {
+                            additiveBookmarks.add(PdfBookmark(t, p))
+                        }
+                    }
+                }
+
+                onStageProgress(45)
+
                 val validConditionB = conditionBBookmarks.filter { norm(it.title) !in globalWatermarkBlacklist }
                 val explicitCombined = detectedBookmarks + tocBookmarks + validConditionB
-                val structuredChapters = deduplicateChapters(explicitCombined, safeTotalPages, defaultTitle, globalWatermarkBlacklist)
+                val structuredChapters = deduplicateChapters(explicitCombined + additiveBookmarks, safeTotalPages, defaultTitle, globalWatermarkBlacklist)
 
-                // If detectedBookmarks + tocBookmarks + Condition B already yield >= 3 chapters,
-                // do NOT include Condition A or Condition C candidates at all!
-                if (structuredChapters.size >= 3) {
-                    onStageProgress(55)
-                    finalResultChapters = structuredChapters
-                    return@use
-                }
-
-                // Fallback for books that have fewer than 3 explicit chapters
-                if (textStripper != null) {
-                    // Condition A — Top + Bottom Matching Chapter Title on the Same Page
-                    for (p in 0 until safeTotalPages) {
-                        val lines = pageLines[p] ?: continue
-                        if (lines.size < 10) continue // Substantial body text check
-                        val topLines = lines.take(2).map { cleanFooterTitle(it) }.filter { isValidChapterTitle(it) }
-                        val bottomLines = lines.takeLast(1).map { cleanFooterTitle(it) }.filter { isValidChapterTitle(it) }
-                        var conditionAMatched = false
-                        for (topClean in topLines) {
-                            val topNorm = norm(topClean)
-                            if (topNorm in globalWatermarkBlacklist || isLikelyBodySentenceOrWatermark(topClean)) continue
-                            for (botClean in bottomLines) {
-                                val botNorm = norm(botClean)
-                                if (botNorm in globalWatermarkBlacklist || isLikelyBodySentenceOrWatermark(botClean)) continue
-                                if (topNorm == botNorm) {
-                                    val candidateTitle = if (topClean.length >= botClean.length) topClean else botClean
-                                    additiveBookmarks.add(PdfBookmark(candidateTitle, p))
-                                    conditionAMatched = true
-                                    break
-                                }
-                            }
-                            if (conditionAMatched) break
-                        }
-                    }
-
-                    // Condition C — Running Bottom Footer Chapter Name Transition repeating on at least 4 consecutive pages
-                    for (p in 0 until safeTotalPages - 3) {
-                        val t = pageBottomTitles[p] ?: continue
-                        val normT = norm(t)
-                        if (normT in globalWatermarkBlacklist || isLikelyBodySentenceOrWatermark(t)) continue
-                        val prevT = if (p > 0) pageBottomTitles[p - 1]?.let { norm(it) } else null
-                        if (normT != prevT) {
-                            val next1 = pageBottomTitles[p + 1]?.let { norm(it) }
-                            val next2 = pageBottomTitles[p + 2]?.let { norm(it) }
-                            val next3 = pageBottomTitles[p + 3]?.let { norm(it) }
-                            if (next1 == normT && next2 == normT && next3 == normT) {
-                                additiveBookmarks.add(PdfBookmark(t, p))
-                            }
-                        }
-                    }
-                }
-
-                onStageProgress(55)
-                finalResultChapters = deduplicateChapters(explicitCombined + additiveBookmarks, safeTotalPages, defaultTitle, globalWatermarkBlacklist)
+                finalResultChapters = structuredChapters
             }
         }
 
@@ -1681,31 +1813,14 @@ object PdfNativeRenderer {
 
         onProgress(5)
 
-        // Stage 1 & 2: Extract Outline & TOC bookmarks (or preserve existing chapters if already indexed)
-        val rawBookmarks = if (existingChapters != null && existingChapters.isNotEmpty()) {
-            onProgress(45)
-            existingChapters.map { ch ->
-                val pArr = runCatching { JSONArray(ch.pagesJson) }.getOrNull() ?: JSONArray()
-                var startPage = 0
-                for (k in 0 until pArr.length()) {
-                    val pStr = pArr.optString(k)
-                    val m = Regex("\\[PDF_PAGE:(\\d+)\\]").find(pStr)
-                    if (m != null) {
-                        startPage = m.groupValues[1].toIntOrNull() ?: 0
-                        break
-                    }
-                }
-                PdfBookmark(sanitizeChapterTitle(ch.title), startPage)
-            }
-        } else {
-            extractChaptersWithPdfBox(
-                context = context,
-                pdfFile = pdfFile,
-                totalPages = totalPages,
-                defaultTitle = defaultTitle,
-                onStageProgress = onProgress
-            )
-        }
+        // Stage 1 & 2: Extract Outline & TOC bookmarks
+        val rawBookmarks = extractChaptersWithPdfBox(
+            context = context,
+            pdfFile = pdfFile,
+            totalPages = totalPages,
+            defaultTitle = defaultTitle,
+            onStageProgress = onProgress
+        )
 
         val finalBookmarks = rawBookmarks
             .filter { it.startPageZero in 0 until totalPages }
@@ -1720,7 +1835,7 @@ object PdfNativeRenderer {
 
         onProgress(45)
 
-        if (finalBookmarks.isNotEmpty()) {
+        if (finalBookmarks.size >= 2) {
             val preliminaryChapters = buildBookChaptersFromBookmarks(
                 bookId = bookId,
                 bookmarks = finalBookmarks,
