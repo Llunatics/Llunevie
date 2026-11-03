@@ -51,7 +51,7 @@ import kotlin.math.ceil
 
 object PdfNativeRenderer {
 
-    const val CURRENT_PDF_TOC_VERSION = 10
+    const val CURRENT_PDF_TOC_VERSION = 11
 
     data class PdfBookmark(val title: String, val startPageZero: Int)
 
@@ -422,7 +422,9 @@ object PdfNativeRenderer {
         }
     }
 
-    val LEADING_BULLET_REGEX = Regex("^[•●▪◆❖★☆■□▸►▶✦✧]+\\s*")
+    val LEADING_BULLET_REGEX = Regex(
+        "^(?:[•●○◦◯⚬∙⋅°º¤▪▫■□◆◇❖★☆✦✧▸▹►▻▶▷❥❧\\u25A0-\\u25FF\\u2600-\\u27BF\\uF000-\\uF0FF]+|[oO](?=\\s+[A-Z0-9]))\\s*"
+    )
 
     val BARE_NUMBERED_CHAPTER_REGEX = Regex(
         "(?i)^(bab|chapter|bagian|part|act|vol|volume|jilid|section)\\s+(?:\\d+[a-z0-9.-]*|[ivxlcdm]+)$"
@@ -579,11 +581,11 @@ object PdfNativeRenderer {
     )
 
     private val CHAPTER_KEYWORD_REGEX = Regex(
-        "(?i)^(prolog|prologue|epilog|epilogue|monolog|monologue|chapter\\s*\\d+[a-z0-9.-]*|bab\\s*\\d+[a-z0-9.-]*|bagian\\s*\\d+[a-z0-9.-]*|part\\s*\\d+[a-z0-9.-]*|act\\s*\\d+[a-z0-9.-]*|interlude|side\\s+story|short\\s+story|ss\\s*[:\\-–—]|afterword|kata\\s+penutup|penutup)\\b.*"
+        "(?i)^(?:prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan(?:\\s+[0-9ivxlcdm]+)?|side\\s+story|short\\s+story|afterword|kata\\s+penutup|penutup|(?:chapter|bab|bagian|part|act)\\s*\\d+[a-z0-9.-]*|ss\\s*[:\\-–—])(?:\\b|[:.\\-–—\\s]|$).*"
     )
 
     private val STANDALONE_PREFIX_REGEX = Regex(
-        "(?i)^(prolog|prologue|epilog|epilogue|monolog|monologue|chapter\\s*\\d+[a-z0-9.-]*|bab\\s*\\d+[a-z0-9.-]*|bagian\\s*\\d+[a-z0-9.-]*|part\\s*\\d+[a-z0-9.-]*|act\\s*\\d+[a-z0-9.-]*|interlude|side\\s+story|short\\s+story)[:.\\-–—]?$"
+        "(?i)^(?:prolog|prologue|epilog|epilogue|monolog|monologue|interlude|selingan(?:\\s+[0-9ivxlcdm]+)?|side\\s+story|short\\s+story|(?:chapter|bab|bagian|part|act)\\s*\\d+[a-z0-9.-]*)\\s*[:.\\-–—]?$"
     )
     
     val CHAPTER_KEYWORD_SUFFIX_REGEX = Regex(
@@ -886,8 +888,31 @@ object PdfNativeRenderer {
 
                 for (cluster in clusters) {
                     if (cluster.isEmpty()) continue
-                    val rawLineText = cluster.sortedBy { it.xLeft }.joinToString(" ") { it.text }.replace(Regex("\\s+"), " ").trim()
-                    val lineText = rawLineText.replace(Regex("(?i)\\b(bab|chapter|bagian|part|act)(\\d+)"), "$1 $2")
+                    val sortedLineChunks = cluster.sortedBy { it.xLeft }
+                    val sb = StringBuilder()
+                    var prevRight = Float.NaN
+                    for (chunk in sortedLineChunks) {
+                        val cleanChunkText = chunk.text
+                            .replace(Regex("[\\u00A0\\u2000-\\u200B\\u202F\\u205F\\u3000\\uFEFF]"), " ")
+                            .trim()
+                        if (cleanChunkText.isEmpty()) continue
+                        if (!prevRight.isNaN()) {
+                            val gap = chunk.xLeft - prevRight
+                            val wordGapThreshold = maxOf(1.2f, chunk.maxFontSize * 0.14f)
+                            if (gap > wordGapThreshold && !sb.endsWith(" ") && !sb.endsWith("-")) {
+                                sb.append(" ")
+                            }
+                        }
+                        sb.append(cleanChunkText)
+                        prevRight = if (prevRight.isNaN()) chunk.xRight else maxOf(prevRight, chunk.xRight)
+                    }
+                    val rawLineText = sb.toString().replace(Regex("\\s+"), " ").trim()
+                    val lineText = rawLineText
+                        .replace(Regex("(?i)\\b([bB])\\s+([aA])\\s+([bB])\\s*(\\d+)"), "Bab $4")
+                        .replace(Regex("(?i)\\b([cC])\\s+([hH])\\s+([aA])\\s+([pP])\\s+([tT])\\s+([eE])\\s+([rR])\\s*(\\d+)"), "Chapter $8")
+                        .replace(Regex("(?i)\\b([pP])\\s+([rR])\\s+([oO])\\s+([lL])\\s+([oO])\\s+([gG])\\b"), "Prolog")
+                        .replace(Regex("(?i)\\b([eE])\\s+([pP])\\s+([iI])\\s+([lL])\\s+([oO])\\s+([gG])\\b"), "Epilog")
+                        .replace(Regex("(?i)\\b(bab|chapter|bagian|part|act)(\\d+)"), "$1 $2")
                     if (lineText.isEmpty()) continue
 
                     val xLeft = cluster.minOf { it.xLeft }
@@ -1188,7 +1213,7 @@ object PdfNativeRenderer {
 
                     if (contentLines.isEmpty()) continue
 
-                    val isSeparatorPage = contentLines.size in 1..5
+                    val isSeparatorPage = contentLines.size in 1..5 && contentLines.all { it.text.length <= 80 }
                     val candidateTopLines = if (isSeparatorPage) contentLines else contentLines.filter { it.yTop <= pageH * 0.42f }.take(5)
                     val pageMedianFontSize = contentLines.map { it.maxFontSize }.sorted().let {
                         if (it.isEmpty()) 12f else it[it.size / 2]
@@ -1198,7 +1223,8 @@ object PdfNativeRenderer {
                     val maxScanIdx = if (isSeparatorPage) contentLines.size else minOf(4, contentLines.size)
                     for (idx in 0 until maxScanIdx) {
                         val line = contentLines[idx]
-                        if (!isSeparatorPage && line.yTop > pageH * 0.45f) continue
+                        val maxAllowedY = if (isSeparatorPage) pageH * 0.85f else pageH * 0.45f
+                        if (line.yTop > maxAllowedY) continue
                         val stripped = line.text.replace(LEADING_BULLET_REGEX, "").trim()
                         if (CHAPTER_KEYWORD_REGEX.matches(stripped)) {
                             var title = sanitizeChapterTitle(stripped)
@@ -1207,10 +1233,12 @@ object PdfNativeRenderer {
                                 if (nextLine != null && (nextLine.yTop - line.yTop) in 2f..75f) {
                                     val nextClean = sanitizeChapterTitle(nextLine.text.replace(LEADING_BULLET_REGEX, ""))
                                     val nextWords = nextClean.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val endsWithAbbrevDot = Regex("(?i).*\\b(a\\.m\\.|p\\.m\\.|am\\.|pm\\.|etc\\.|vol\\.|no\\.|jr\\.|sr\\.|dr\\.|mr\\.|mrs\\.|ms\\.|st\\.)$").matches(nextClean)
+                                    val allowsTrailingDot = endsWithAbbrevDot || isSeparatorPage || (nextLine.isCentered && nextWords.size <= 6)
                                     if (nextClean.length in 2..70 && nextWords.size <= 10 &&
-                                        !CHAPTER_KEYWORD_REGEX.matches(nextClean) && !nextClean.endsWith(".")
+                                        !CHAPTER_KEYWORD_REGEX.matches(nextClean) && (!nextClean.endsWith(".") || allowsTrailingDot)
                                     ) {
-                                        title = "${title.trimEnd(':', '.', '-', '–', '—').trim()}:$nextClean"
+                                        title = "${title.trimEnd(':', '.', '-', '–', '—').trim()}: $nextClean"
                                     }
                                 }
                             }
@@ -1224,19 +1252,27 @@ object PdfNativeRenderer {
                         }
                     }
 
+                    val bodySample = if (contentLines.size >= 5) contentLines.drop(2) else contentLines
+                    val colLeft = bodySample.minOf { it.xLeft }
+                    val colRight = bodySample.maxOf { it.xRight }.coerceAtLeast(colLeft + 100f)
+                    val colWidth = (colRight - colLeft).coerceAtLeast(1f)
+                    val colMidX = (colLeft + colRight) / 2f
+
                     var patternBMatched = false
                     // Pattern B — Top-of-Page Standalone Bulleted Heading (• Dua Guru, Ujian Khusus Yang Ditakdirkan)
                     if (!patternAMatched) {
                         val firstLine = contentLines.firstOrNull()
-                        if (firstLine != null && (firstLine.yTop <= pageH * 0.32f || isSeparatorPage) && LEADING_BULLET_REGEX.containsMatchIn(firstLine.text)) {
+                        if (firstLine != null && (firstLine.yTop <= pageH * 0.40f || isSeparatorPage) && LEADING_BULLET_REGEX.containsMatchIn(firstLine.text)) {
                             val secondLine = contentLines.getOrNull(1)
                             val secondHasBullet = secondLine != null && LEADING_BULLET_REGEX.containsMatchIn(secondLine.text)
                             if (!secondHasBullet) {
-                                val bulletTitle = sanitizeChapterTitle(firstLine.text.replace(LEADING_BULLET_REGEX, ""))
+                                val rawBulletTitle = sanitizeChapterTitle(firstLine.text.replace(LEADING_BULLET_REGEX, ""))
+                                val dialogueStartQuotes = setOf('"', '“', '‘', '\'', '「', '『', '(')
+                                val bulletTitle = rawBulletTitle.dropWhile { !it.isLetterOrDigit() && it !in dialogueStartQuotes }.trim()
                                 val words = bulletTitle.split(Regex("\\s+")).filter { it.isNotEmpty() }
-                                val startsWithAlnum = bulletTitle.firstOrNull()?.isLetterOrDigit() == true
+                                val startsWithAlnum = bulletTitle.firstOrNull()?.let { it.isUpperCase() || it.isDigit() } == true
                                 val endsWithoutPunct = !bulletTitle.endsWith(",") && !bulletTitle.endsWith(";")
-                                val isDistinctHeading = firstLine.isCentered || firstLine.isBold || firstLine.maxFontSize >= pageMedianFontSize + 0.3f || isSeparatorPage
+                                val isDistinctHeading = firstLine.isCentered || firstLine.isBold || firstLine.maxFontSize >= pageMedianFontSize + 0.3f || firstLine.xLeft >= colLeft + 12f || isSeparatorPage
                                 if (bulletTitle.length in 4..75 && words.size <= 10 && startsWithAlnum && endsWithoutPunct && isDistinctHeading) {
                                     val bm = PdfBookmark(bulletTitle, p)
                                     conditionBBookmarks.add(bm)
@@ -1250,11 +1286,6 @@ object PdfNativeRenderer {
                     var patternCenteredMatched = false
                     // Pattern C – Top-of-Page Centered or Bold Heading (1 or 2 Lines, e.g. "Wawancara sekilas dua arah", "Permintaan dari Horikita dan permintaan dari Ayanokouji")
                     if (!patternAMatched && !patternBMatched && contentLines.size >= 3) {
-                        val bodySample = if (contentLines.size >= 5) contentLines.drop(2) else contentLines
-                        val colLeft = bodySample.minOf { it.xLeft }
-                        val colRight = bodySample.maxOf { it.xRight }.coerceAtLeast(colLeft + 100f)
-                        val colWidth = (colRight - colLeft).coerceAtLeast(1f)
-                        val colMidX = (colLeft + colRight) / 2f
                         val pageMidX = pageW / 2f
 
                         // Determine normal paragraph first-line indent on this page (wrapped body lines sit near colLeft)
@@ -1306,22 +1337,39 @@ object PdfNativeRenderer {
                                 if (firstBodyLine != null && firstBodyIsNormalParagraph) {
                                     val bodyMedianStep = if (bodyLines.size >= 2) {
                                         val steps = bodyLines.zipWithNext { a, b -> b.yTop - a.yTop }.filter { it in 4f..45f }.sorted()
-                                        if (steps.isNotEmpty()) steps[steps.size / 2] else 16f
+                                        if (steps.isNotEmpty()) steps[steps.size / 4] else 16f
                                     } else 16f
                                     val bodyFontSizes = bodyLines.map { it.maxFontSize }.sorted()
                                     val bodyMedianFontSize = if (bodyFontSizes.isNotEmpty()) bodyFontSizes[bodyFontSizes.size / 2] else 12f
 
                                     // Extra safeguard: a 1-line non-bold line that starts at the exact same first-line indent as other paragraphs on the page MUST have a right margin (`xRight <= colRight - 35f`) and a vertical gap `>= bodyMedianStep * 1.18f`
+                                    val firstLineStrictlyCentered = firstLine.xLeft >= colLeft + 55f &&
+                                            firstLine.xRight <= colRight - 55f &&
+                                            abs((firstLine.xLeft + firstLine.xRight) / 2f - colMidX) <= colWidth * 0.14f
+                                    val secondLineCheck = if (secondLineIsHeading) {
+                                        secondLine!!.xLeft >= colLeft + 55f &&
+                                                secondLine.xRight <= colRight - 55f &&
+                                                abs((secondLine.xLeft + secondLine.xRight) / 2f - colMidX) <= colWidth * 0.14f
+                                    } else true
+                                    val strictlyCenteredSignal = firstLineStrictlyCentered && secondLineCheck
+
                                     val prominenceSignal = (firstLine.isBold && !firstBodyLine.isBold) ||
                                             (lastHeadingLine.isBold && !firstBodyLine.isBold) ||
                                             firstLine.maxFontSize >= bodyMedianFontSize + 0.4f ||
-                                            ((firstBodyLine.yTop - lastHeadingLine.yTop) >= bodyMedianStep * 1.18f && lastHeadingLine.xRight <= colRight - 35f)
+                                            ((firstBodyLine.yTop - lastHeadingLine.yTop) >= bodyMedianStep * 1.18f && lastHeadingLine.xRight <= colRight - 35f) ||
+                                            strictlyCenteredSignal
 
                                     if (prominenceSignal) {
-                                        val combinedHeading = if (secondLineIsHeading) "${firstLine.text}${secondLine!!.text}" else firstLine.text
-                                        val cleanHeading = sanitizeChapterTitle(combinedHeading.replace(LEADING_BULLET_REGEX, ""))
-                                        val words = cleanHeading.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                        val combinedHeading = if (secondLineIsHeading) {
+                                            val fTrim = firstLine.text.trim()
+                                            if (STANDALONE_PREFIX_REGEX.matches(fTrim)) "${fTrim.trimEnd(':', '.', '-', '–', '—').trim()}: ${secondLine!!.text.trim()}"
+                                            else "$fTrim ${secondLine!!.text.trim()}"
+                                        } else firstLine.text.trim()
+
+                                        val rawCleanHeading = sanitizeChapterTitle(combinedHeading.replace(LEADING_BULLET_REGEX, ""))
                                         val dialogueStartQuotes = setOf('"', '“', '‘', '\'', '「', '『', '(')
+                                        val cleanHeading = rawCleanHeading.dropWhile { !it.isLetterOrDigit() && it !in dialogueStartQuotes }.trim()
+                                        val words = cleanHeading.split(Regex("\\s+")).filter { it.isNotEmpty() }
                                         val sentenceEndPunct = setOf('.', ',', ';', '!', '?', ':', '"', '”', ']', '』', '」')
 
                                         val isValid = cleanHeading.length in 4..110 &&

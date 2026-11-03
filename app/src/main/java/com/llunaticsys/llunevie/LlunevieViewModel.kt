@@ -140,7 +140,7 @@ class LlunevieViewModel(
 ) : ViewModel() {
 
     companion object {
-        const val CURRENT_PDF_TOC_VERSION = 10
+        const val CURRENT_PDF_TOC_VERSION = 11
     }
 
     private val _previewOverrides = MutableStateFlow<UserPreferencesState?>(null)
