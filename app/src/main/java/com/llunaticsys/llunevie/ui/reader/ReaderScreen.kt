@@ -73,6 +73,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -208,6 +209,11 @@ import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.HighlightColorKey
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
+import com.llunaticsys.llunevie.ui.components.targetLanguageDisplayName
+import com.llunaticsys.llunevie.ui.components.targetLanguageBadgeLabel
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.IntrinsicSize
 import com.llunaticsys.llunevie.ui.components.FlyleafThinSlider
 import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
@@ -408,6 +414,67 @@ fun ReaderScreen(
     val view = LocalView.current
     var showReaderChrome by remember { mutableStateOf(true) }
     val isTwoPageSpread = isSpread
+
+    val translationRepo = remember { TranslationRepository.getInstance() }
+    var isPageTranslationActive by remember { mutableStateOf(false) }
+    var showPdfPageTranslationSheet by remember { mutableStateOf(false) }
+    var pageTranslationMap by remember { mutableStateOf<Map<Int, List<Pair<String, String?>>>>(emptyMap()) }
+    var isTranslatingPage by remember { mutableStateOf(false) }
+
+    var showInlineTranslation by remember { mutableStateOf(false) }
+    var inlineTranslationText by remember { mutableStateOf<String?>(null) }
+    var isTranslatingInline by remember { mutableStateOf(false) }
+    var inlineTranslationError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(prefs.translatorTargetLang, prefs.translatorEngine, prefs.aiModelName, prefs.aiSystemPrompt) {
+        pageTranslationMap = emptyMap()
+    }
+
+    LaunchedEffect(
+        isPageTranslationActive,
+        displayPageIndex,
+        prefs.translatorTargetLang,
+        prefs.translatorEngine,
+        prefs.aiModelName,
+        prefs.aiSystemPrompt
+    ) {
+        if (isPageTranslationActive && !isPdfBook) {
+            val pagesToTranslate = if (isSpread) {
+                val sStart = (displayPageIndex / 2) * 2
+                listOf(sStart, sStart + 1)
+            } else {
+                listOf(displayPageIndex)
+            }
+
+            for (pZero in pagesToTranslate) {
+                if (pZero < metrics.totalBookPages && !pageTranslationMap.containsKey(pZero)) {
+                    val pTriple = getPageAtGlobalZero(pZero)
+                    val pRaw = pTriple?.third.orEmpty().ifBlank { if (pZero == displayPageIndex) currentPageRaw else "" }
+                    if (pRaw.isNotBlank()) {
+                        isTranslatingPage = true
+                        val res = translationRepo.translatePageParagraphs(pRaw, prefs, context)
+                        if (res.isSuccess) {
+                            pageTranslationMap = pageTranslationMap + (pZero to res.getOrThrow())
+                        }
+                        isTranslatingPage = false
+                    }
+                }
+            }
+
+            // Pre-fetch next page in background
+            val nextP = if (isSpread) ((displayPageIndex / 2) * 2) + 2 else displayPageIndex + 1
+            if (nextP < metrics.totalBookPages && !pageTranslationMap.containsKey(nextP)) {
+                val nextTriple = getPageAtGlobalZero(nextP)
+                val nextRaw = nextTriple?.third.orEmpty()
+                if (nextRaw.isNotBlank()) {
+                    val res = translationRepo.translatePageParagraphs(nextRaw, prefs, context)
+                    if (res.isSuccess) {
+                        pageTranslationMap = pageTranslationMap + (nextP to res.getOrThrow())
+                    }
+                }
+            }
+        }
+    }
 
     LaunchedEffect(prefs.flowMode, isTwoPageSpread) {
         showReaderChrome = true
@@ -1250,14 +1317,16 @@ fun ReaderScreen(
                                         isCoverPage = (curZero == 0),
                                         bookTitle = book.title,
                                         fontScale = 1f,
-                                        transparentTextForFlipbook = (activeBmp != null),
+                                        transparentTextForFlipbook = (activeBmp != null && !isPageTranslationActive),
                                         topClearanceDp = topClearanceDp,
                                         bottomClearanceDp = bottomClearanceDp,
                                         onSelectionActiveChanged = { active, start, end ->
                                             hasSelectionActive = active
                                             selStartHandleAnchor = start
                                             selEndHandleAnchor = end
-                                        }
+                                        },
+                                        isPageTranslationActive = isPageTranslationActive,
+                                        translatedParagraphs = pageTranslationMap[curZero]
                                     )
                                 }
                             }
@@ -1436,7 +1505,9 @@ fun ReaderScreen(
                                             fontScale = 1f,
                                             transparentTextForFlipbook = false,
                                             topClearanceDp = topClearanceDp,
-                                            bottomClearanceDp = bottomClearanceDp
+                                            bottomClearanceDp = bottomClearanceDp,
+                                            isPageTranslationActive = isPageTranslationActive,
+                                            translatedParagraphs = pageTranslationMap[pageZero]
                                         )
                                     }
                                 }
@@ -1817,39 +1888,147 @@ fun ReaderScreen(
                     bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
                 }
 
-                Surface(
-                    onClick = {
-                        val curPageNum = displayPageIndex + 1
-                        val curTriple = getPageAtGlobalZero(displayPageIndex)
-                        val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
-                            ?: currentChapter?.title
-                            ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
-                        val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
-                        val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
-                            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                            .trim()
-                            .take(100)
-                        viewModel?.togglePageBookmark(
-                            bookId = book.id,
-                            pageNumber = curPageNum,
-                            chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
-                            chapterTitle = chTitle,
-                            snippetText = snippet
-                        )
-                    },
-                    shape = CircleShape,
-                    color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
-                    border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
-                    modifier = Modifier.size(34.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                            contentDescription = "Bookmark",
-                            tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
-                            modifier = Modifier.size(17.dp)
-                        )
+                    Surface(
+                        onClick = {
+                            if (isPdfBook) {
+                                showPdfPageTranslationSheet = true
+                            } else {
+                                isPageTranslationActive = !isPageTranslationActive
+                            }
+                        },
+                        shape = CircleShape,
+                        color = if (isPageTranslationActive) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
+                        border = BorderStroke(1.dp, if (isPageTranslationActive) palette.accent else palette.borderSoft),
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.TRANSLATE,
+                                tint = if (isPageTranslationActive) palette.accent else palette.textMain,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
+
+                    Surface(
+                        onClick = {
+                            val curPageNum = displayPageIndex + 1
+                            val curTriple = getPageAtGlobalZero(displayPageIndex)
+                            val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
+                                ?: currentChapter?.title
+                                ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
+                            val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+                            val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
+                                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                                .trim()
+                                .take(100)
+                            viewModel?.togglePageBookmark(
+                                bookId = book.id,
+                                pageNumber = curPageNum,
+                                chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
+                                chapterTitle = chTitle,
+                                snippetText = snippet
+                            )
+                        },
+                        shape = CircleShape,
+                        color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
+                        border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                                contentDescription = "Bookmark",
+                                tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Floating Quick Translator Bar (when `isPageTranslationActive == true` and `showReaderChrome == true`)
+        if (showReaderChrome && isPageTranslationActive) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = palette.bgSurface.copy(alpha = 0.96f),
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 58.dp)
+                    .height(30.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (prefs.translatorDisplayMode == "bilingual") (if (strings.isId) "Dwibahasa" else "Bilingual") else (if (strings.isId) "Ganti Teks" else "Replace"),
+                        color = palette.accent,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable {
+                                val newMode = if (prefs.translatorDisplayMode == "bilingual") "replace" else "bilingual"
+                                viewModel?.updateTranslatorPrefs(displayMode = newMode)
+                            }
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(12.dp)
+                            .background(palette.borderSoft)
+                    )
+
+                    Text(
+                        text = targetLanguageBadgeLabel(prefs.translatorTargetLang),
+                        color = palette.accent,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable {
+                                val langs = listOf("id", "en", "ja", "zh", "ko", "es", "fr", "de")
+                                val nextIdx = (langs.indexOf(prefs.translatorTargetLang) + 1) % langs.size
+                                viewModel?.updateTranslatorPrefs(targetLang = langs[nextIdx])
+                            }
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(12.dp)
+                            .background(palette.borderSoft)
+                    )
+
+                    val engBadge = when (prefs.translatorEngine) {
+                        "gemini" -> "GEMINI"
+                        "openrouter" -> "OPENROUTER"
+                        "custom" -> "CUSTOM"
+                        else -> "FREE"
+                    }
+                    val statusText = if (isTranslatingPage) {
+                        if (strings.isId) "Menerjemahkan..." else "Translating..."
+                    } else {
+                        if (strings.isId) "✓ Terjemahan Aktif" else "✓ Translation Active"
+                    }
+                    Text(
+                        text = "$engBadge · $statusText",
+                        color = palette.textMuted,
+                        fontSize = 9.5.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
             }
         }
@@ -2425,6 +2604,9 @@ fun ReaderScreen(
                             onClick = {
                                 selectedQuoteForPopover = null
                                 showInlineNoteInput = false
+                                showInlineTranslation = false
+                                inlineTranslationText = null
+                                inlineTranslationError = null
                             },
                             shape = CircleShape,
                             color = palette.bgSurface,
@@ -2542,6 +2724,394 @@ fun ReaderScreen(
                             }
                         }
                     }
+
+                    AnimatedVisibility(visible = showInlineTranslation) {
+                        Column {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider(color = palette.borderSoft)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val badge = if (prefs.translatorEngine == "free") "FREE INSTANT"
+                                        else "AI · ${prefs.aiModelName.substringAfterLast('/').uppercase()}"
+                                        Text(
+                                            text = badge,
+                                            fontSize = 9.5.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = palette.textMuted
+                                        )
+                                        Surface(
+                                            onClick = {
+                                                val langs = listOf("id", "en", "ja", "zh", "ko", "es", "fr", "de")
+                                                val nextIdx = (langs.indexOf(prefs.translatorTargetLang) + 1) % langs.size
+                                                val newLang = langs[nextIdx]
+                                                viewModel?.updateTranslatorPrefs(targetLang = newLang)
+                                                scope.launch {
+                                                    isTranslatingInline = true
+                                                    inlineTranslationError = null
+                                                    val updatedPrefs = prefs.copy(translatorTargetLang = newLang)
+                                                    val res = translationRepo.translate(quote, updatedPrefs, context)
+                                                    if (res.isSuccess) {
+                                                        inlineTranslationText = res.getOrNull()
+                                                    } else {
+                                                        inlineTranslationError = res.exceptionOrNull()?.message ?: "Translation error"
+                                                    }
+                                                    isTranslatingInline = false
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = palette.accent.copy(alpha = 0.12f),
+                                            modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                                        ) {
+                                            Text(
+                                                text = "→ ${targetLanguageDisplayName(prefs.translatorTargetLang, strings.isEn)} ▾",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = palette.accent,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    if (isTranslatingInline) {
+                                        Text(
+                                            text = if (strings.isId) "Menerjemahkan kutipan..." else "Translating passage...",
+                                            fontSize = 11.5.sp,
+                                            fontFamily = FontFamily.Serif,
+                                            color = palette.textMuted,
+                                            modifier = Modifier.padding(vertical = 8.dp)
+                                        )
+                                    } else if (inlineTranslationError != null) {
+                                        Column {
+                                            Text(
+                                                text = inlineTranslationError.orEmpty(),
+                                                fontSize = 11.5.sp,
+                                                color = Color(0xFFE53935),
+                                                modifier = Modifier.padding(vertical = 4.dp)
+                                            )
+                                            Surface(
+                                                onClick = {
+                                                    scope.launch {
+                                                        isTranslatingInline = true
+                                                        inlineTranslationError = null
+                                                        val res = translationRepo.translate(quote, prefs, context)
+                                                        if (res.isSuccess) {
+                                                            inlineTranslationText = res.getOrNull()
+                                                        } else {
+                                                            inlineTranslationError = res.exceptionOrNull()?.message ?: "Translation error"
+                                                        }
+                                                        isTranslatingInline = false
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = palette.accentDark,
+                                                modifier = Modifier.padding(top = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (strings.isId) "Coba Lagi" else "Retry",
+                                                    color = palette.bgApp,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                        }
+                                    } else if (!inlineTranslationText.isNullOrBlank()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 150.dp)
+                                                .verticalScroll(rememberScrollState())
+                                        ) {
+                                            Text(
+                                                text = inlineTranslationText.orEmpty(),
+                                                fontSize = 13.sp,
+                                                fontFamily = FontFamily.Serif,
+                                                lineHeight = 19.sp,
+                                                color = palette.textMain
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        HorizontalDivider(color = palette.borderSoft)
+                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Surface(
+                                                onClick = {
+                                                    clipboard.setText(AnnotatedString(inlineTranslationText.orEmpty()))
+                                                    viewModel?.showToast(if (strings.isId) "Terjemahan disalin" else "Translation copied")
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = palette.bgCard,
+                                                border = BorderStroke(1.dp, palette.borderSoft)
+                                            ) {
+                                                Text(
+                                                    text = if (strings.isId) "Salin Terjemahan" else "Copy",
+                                                    fontSize = 10.5.sp,
+                                                    color = palette.textMain,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
+
+                                            Surface(
+                                                onClick = {
+                                                    onSaveHighlightNote(
+                                                        quote,
+                                                        inlineTranslationText.orEmpty(),
+                                                        HighlightColorKey.fromKey(existingHl?.colorKey),
+                                                        existingHl?.id,
+                                                        -1,
+                                                        -1
+                                                    )
+                                                    selectedQuoteForPopover = null
+                                                    showInlineTranslation = false
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = palette.accentDark
+                                            ) {
+                                                Text(
+                                                    text = if (strings.isId) "Simpan ke Catatan" else "Save to Note",
+                                                    fontSize = 10.5.sp,
+                                                    color = palette.bgApp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                        }
+                    }
+                }
+            }
+        }
+
+        // PDF PAGE TRANSLATION IN-HIERARCHY SHEET
+        if (showPdfPageTranslationSheet) {
+            var pdfExtractedText by remember(displayPageIndex) { mutableStateOf<String?>(null) }
+            var pdfTranslatedList by remember(displayPageIndex, prefs.translatorTargetLang, prefs.translatorEngine) {
+                mutableStateOf<List<Pair<String, String?>>?>(null)
+            }
+            var isPdfTranslating by remember(displayPageIndex) { mutableStateOf(false) }
+
+            LaunchedEffect(showPdfPageTranslationSheet, displayPageIndex, prefs.translatorTargetLang, prefs.translatorEngine) {
+                if (showPdfPageTranslationSheet && book.localFilePath != null) {
+                    isPdfTranslating = true
+                    val text = withContext(Dispatchers.IO) {
+                        translationRepo.extractPdfPageText(book.localFilePath, displayPageIndex)
+                    }
+                    pdfExtractedText = text
+                    if (text.isNotBlank()) {
+                        val res = translationRepo.translatePageParagraphs(text, prefs, context)
+                        if (res.isSuccess) {
+                            pdfTranslatedList = res.getOrNull()
+                        }
+                    }
+                    isPdfTranslating = false
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showPdfPageTranslationSheet = false }
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    color = palette.sheetBg,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 16.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.72f)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {}
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(18.dp)
+                    ) {
+                        // Header Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = if (strings.isId) "Terjemahan Halaman ${displayPageIndex + 1}" else "Page ${displayPageIndex + 1} Translation",
+                                    fontSize = 15.sp,
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = palette.textMain
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = if (prefs.translatorEngine == "free") "FREE INSTANT" else "AI · ${prefs.aiModelName.substringAfterLast('/').uppercase()}",
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.textMuted
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Mode chip
+                                Surface(
+                                    onClick = {
+                                        val newMode = if (prefs.translatorDisplayMode == "bilingual") "replace" else "bilingual"
+                                        viewModel?.updateTranslatorPrefs(displayMode = newMode)
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = palette.bgSurface,
+                                    border = BorderStroke(1.dp, palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = if (prefs.translatorDisplayMode == "bilingual") (if (strings.isId) "Dwibahasa" else "Bilingual") else (if (strings.isId) "Ganti Teks" else "Replace"),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = palette.accent,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                // Target Lang Pill
+                                Surface(
+                                    onClick = {
+                                        val langs = listOf("id", "en", "ja", "zh", "ko", "es", "fr", "de")
+                                        val nextIdx = (langs.indexOf(prefs.translatorTargetLang) + 1) % langs.size
+                                        viewModel?.updateTranslatorPrefs(targetLang = langs[nextIdx])
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = palette.bgSurface,
+                                    border = BorderStroke(1.dp, palette.borderSoft)
+                                ) {
+                                    Text(
+                                        text = "→ ${targetLanguageBadgeLabel(prefs.translatorTargetLang)}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = palette.accent,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                // Close button
+                                Surface(
+                                    onClick = { showPdfPageTranslationSheet = false },
+                                    shape = CircleShape,
+                                    color = palette.bgSurface,
+                                    border = BorderStroke(1.dp, palette.borderSoft),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text("✕", color = palette.textMain, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(color = palette.borderSoft)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Body
+                        if (isPdfTranslating) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isId) "Mengekstrak dan menerjemahkan halaman PDF..." else "Extracting and translating PDF page...",
+                                    fontSize = 13.sp,
+                                    fontFamily = FontFamily.Serif,
+                                    color = palette.textMuted
+                                )
+                            }
+                        } else if (pdfExtractedText.isNullOrBlank()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isId) "Tidak ada teks yang dapat diekstrak dari halaman ini." else "No extractable text found on this page.",
+                                    fontSize = 13.sp,
+                                    fontFamily = FontFamily.Serif,
+                                    color = palette.textMuted
+                                )
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                val itemsList = pdfTranslatedList ?: pdfExtractedText.orEmpty().split(Regex("\n\\s*\n")).map { Pair(it.trim(), null as String?) }
+                                items(itemsList) { item ->
+                                    val orig = item.first
+                                    val trans = item.second
+                                    if (orig.isNotBlank() && !orig.startsWith("[PDF_PAGE:") && !orig.startsWith("[ILLUST:")) {
+                                        if (prefs.translatorDisplayMode == "replace") {
+                                            Text(
+                                                text = trans ?: orig,
+                                                fontSize = (prefs.fontSizeSp - 2).coerceAtLeast(13).sp,
+                                                fontFamily = FontFamily.Serif,
+                                                lineHeight = ((prefs.fontSizeSp - 2).coerceAtLeast(13) * 1.6f).sp,
+                                                color = palette.textMain
+                                            )
+                                        } else {
+                                            Column {
+                                                Text(
+                                                    text = orig,
+                                                    fontSize = (prefs.fontSizeSp - 3).coerceAtLeast(12).sp,
+                                                    fontFamily = FontFamily.Serif,
+                                                    color = palette.textMuted
+                                                )
+                                                if (!trans.isNullOrBlank()) {
+                                                    Spacer(modifier = Modifier.height(4.dp))
+                                                    Row {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .width(2.dp)
+                                                                .height(IntrinsicSize.Min)
+                                                                .background(palette.accent.copy(alpha = 0.5f))
+                                                        )
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = trans,
+                                                            fontSize = (prefs.fontSizeSp - 2).coerceAtLeast(13).sp,
+                                                            fontFamily = FontFamily.Serif,
+                                                            lineHeight = ((prefs.fontSizeSp - 2).coerceAtLeast(13) * 1.6f).sp,
+                                                            color = palette.textMain.copy(alpha = 0.9f)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
                     Spacer(modifier = Modifier.height(10.dp))
                     HorizontalDivider(color = palette.borderSoft)
@@ -2691,6 +3261,52 @@ fun ReaderScreen(
                                 Text(
                                     text = strings.hlFind,
                                     color = palette.textMain,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // 5. [Translate Icon] Terjemah
+                        Surface(
+                            onClick = {
+                                showInlineTranslation = !showInlineTranslation
+                                if (showInlineTranslation && inlineTranslationText == null) {
+                                    scope.launch {
+                                        isTranslatingInline = true
+                                        inlineTranslationError = null
+                                        val res = translationRepo.translate(quote, prefs, context)
+                                        if (res.isSuccess) {
+                                            inlineTranslationText = res.getOrNull()
+                                        } else {
+                                            inlineTranslationError = res.exceptionOrNull()?.message ?: "Translation error"
+                                        }
+                                        isTranslatingInline = false
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (showInlineTranslation) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                PrototypeSvgIcon(
+                                    type = PrototypeIconType.TRANSLATE,
+                                    tint = if (showInlineTranslation && !palette.isGlass) palette.bgApp else palette.textMain,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = strings.hlTranslate,
+                                    color = if (showInlineTranslation && !palette.isGlass) palette.bgApp else palette.textMain,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 1
@@ -4899,7 +5515,9 @@ private fun InteractiveTextPageContent(
     transparentTextForFlipbook: Boolean = false,
     topClearanceDp: Dp = 0.dp,
     bottomClearanceDp: Dp = 0.dp,
-    onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> }
+    onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> },
+    isPageTranslationActive: Boolean = false,
+    translatedParagraphs: List<Pair<String, String?>>? = null
 ) {
     val palette = LocalLluneviePalette.current
     val context = LocalContext.current
@@ -4957,6 +5575,17 @@ private fun InteractiveTextPageContent(
         rawParagraphs.filter { !it.startsWith("[ILLUST:") }
     }
 
+    val isBilingual = isPageTranslationActive && prefs.translatorDisplayMode == "bilingual" && !translatedParagraphs.isNullOrEmpty()
+    val isReplace = isPageTranslationActive && prefs.translatorDisplayMode == "replace" && !translatedParagraphs.isNullOrEmpty()
+
+    val effectiveParagraphs = remember(textParagraphs, isReplace, translatedParagraphs) {
+        if (isReplace && !translatedParagraphs.isNullOrEmpty()) {
+            translatedParagraphs.map { it.second ?: it.first }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
+        } else {
+            textParagraphs
+        }
+    }
+
     val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
         "justify" -> TextAlign.Justify
         "center" -> TextAlign.Center
@@ -4991,13 +5620,13 @@ private fun InteractiveTextPageContent(
 
     // Build unified AnnotatedString with ParagraphStyle, word spacing, indent, and dark ink highlighted text
     val annotatedString = remember(
-        textParagraphs, prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.paraIndent,
+        effectiveParagraphs, prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.paraIndent,
         prefs.pageMargin, prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
         fontScale, prefs.fontWeight, prefs.textAlign, prefs.fontFamily, pageHighlights,
         currentChapterIndex, currentPageInChapter, displayPageIndex, palette
     ) {
         buildEpubPageAnnotatedString(
-            textParagraphs = textParagraphs,
+            textParagraphs = effectiveParagraphs,
             prefs = prefs,
             fontScale = fontScale,
             resolvedTextAlign = resolvedTextAlign,
@@ -5070,7 +5699,8 @@ private fun InteractiveTextPageContent(
         }
     }
 
-    val outerScrollModifier = if (scrollable) {
+    val effectiveScrollable = scrollable || isBilingual
+    val outerScrollModifier = if (effectiveScrollable) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
@@ -5139,7 +5769,46 @@ private fun InteractiveTextPageContent(
             val currentPageHighlights by rememberUpdatedState(pageHighlights)
 
             Box(modifier = Modifier.fillMaxWidth()) {
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                if (isBilingual) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                        translatedParagraphs.orEmpty().forEach { (origPara, transPara) ->
+                            if (origPara.isNotBlank() && !origPara.startsWith("[ILLUST:") && !origPara.startsWith("[PDF_PAGE:")) {
+                                Text(
+                                    text = origPara,
+                                    style = pageTextStyle.copy(color = palette.textMain),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onParagraphClicked(origPara, false) }
+                                        .padding(bottom = 6.dp)
+                                )
+                                if (!transPara.isNullOrBlank()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 2.dp, bottom = 14.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(2.dp)
+                                                .height(IntrinsicSize.Min)
+                                                .background(palette.accent.copy(alpha = 0.5f))
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = transPara,
+                                            color = palette.textMain.copy(alpha = 0.86f),
+                                            fontSize = (prefs.fontSizeSp - 1).coerceAtLeast(13).sp,
+                                            fontFamily = FontFamily.Serif,
+                                            lineHeight = ((prefs.fontSizeSp - 1).coerceAtLeast(13) * prefs.lineHeightMultiplier).sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     val padBottomPx = with(density) { bottomPadDp.toPx() }
                     val availHeightPx = (with(density) { maxHeight.toPx() } - padBottomPx).coerceAtLeast(100f)
                     Text(
@@ -5467,6 +6136,7 @@ private fun InteractiveTextPageContent(
                                 }
                             }
                     )
+                }
                 }
             }
         }

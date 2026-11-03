@@ -111,7 +111,18 @@ data class LlunevieStrings(
     val hlNote: String,
     val hlCopy: String,
     val hlInBook: String,
-    val hlFind: String
+    val hlFind: String,
+    val hlTranslate: String,
+    val secTranslation: String,
+    val transEngineLabel: String,
+    val transTargetLangLabel: String,
+    val transDisplayModeLabel: String,
+    val transApiKeyLabel: String,
+    val transAiModelLabel: String,
+    val transCustomUrlLabel: String,
+    val transSystemPromptLabel: String,
+    val transCacheLabel: String,
+    val transClearBtn: String
 ) {
     /**
      * Dynamically localizes canonical shelf keys ("Koleksi Fisik" <-> "Physical Collection")
@@ -256,7 +267,18 @@ fun getLlunevieStrings(lang: String): LlunevieStrings {
             hlNote = "Catatan",
             hlCopy = "Salin",
             hlInBook = "Di buku ini",
-            hlFind = "Cari"
+            hlFind = "Cari",
+            hlTranslate = "Terjemah",
+            secTranslation = "TERJEMAHAN & AI",
+            transEngineLabel = "Mesin Penerjemah",
+            transTargetLangLabel = "Bahasa Tujuan",
+            transDisplayModeLabel = "Mode Tampilan Halaman",
+            transApiKeyLabel = "API Key",
+            transAiModelLabel = "Model AI",
+            transCustomUrlLabel = "Endpoint Base URL",
+            transSystemPromptLabel = "Prompt Sistem AI",
+            transCacheLabel = "Cache Terjemahan Lokal",
+            transClearBtn = "Bersihkan"
         )
     } else {
         LlunevieStrings(
@@ -366,7 +388,18 @@ fun getLlunevieStrings(lang: String): LlunevieStrings {
             hlNote = "Note",
             hlCopy = "Copy",
             hlInBook = "In book",
-            hlFind = "Find"
+            hlFind = "Find",
+            hlTranslate = "Translate",
+            secTranslation = "TRANSLATION & AI",
+            transEngineLabel = "Translation Engine",
+            transTargetLangLabel = "Target Language",
+            transDisplayModeLabel = "Page Display Mode",
+            transApiKeyLabel = "API Key",
+            transAiModelLabel = "AI Model",
+            transCustomUrlLabel = "Endpoint Base URL",
+            transSystemPromptLabel = "AI System Prompt",
+            transCacheLabel = "Local Translation Cache",
+            transClearBtn = "Clear"
         )
     }
 }

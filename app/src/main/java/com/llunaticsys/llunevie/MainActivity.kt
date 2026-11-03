@@ -453,7 +453,11 @@ private fun LlunevieMainContainer(
                     onSelectAutoImportFolder = { path, uri -> viewModel.setAutoImportFolder(path, uri) },
                     onRescanFolder = { viewModel.scanAutoImportFolder(force = true) },
                     onExportBackup = { onShareBackupJson(viewModel.buildBackupJsonString()) },
-                    onRestoreBackup = onPickLocalFile
+                    onRestoreBackup = onPickLocalFile,
+                    onUpdateTranslatorPrefs = { engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt ->
+                        viewModel.updateTranslatorPrefs(engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt)
+                    },
+                    onClearTranslationCache = { viewModel.clearTranslationCache() }
                 )
 
                 MainNavTab.READER -> {

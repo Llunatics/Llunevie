@@ -208,7 +208,8 @@ enum class PrototypeIconType {
     TOC_LIST,
     TORCH_BOLT,
     DOWNLOAD_TRAY,
-    UPLOAD_TRAY
+    UPLOAD_TRAY,
+    TRANSLATE
 }
 
 @Composable
@@ -358,8 +359,44 @@ fun PrototypeSvgIcon(
                     drawPath(p("M17 8l-5-5-5 5"), tint, style = stroke)
                     drawLine(tint, Offset(12f, 3f), Offset(12f, 15f), strokeWidth = stroke.width, cap = StrokeCap.Round)
                 }
+                PrototypeIconType.TRANSLATE -> {
+                    drawPath(p("m5 8 6 6"), tint, style = stroke)
+                    drawPath(p("m4 14 6-6 2-3"), tint, style = stroke)
+                    drawPath(p("M2 5h12"), tint, style = stroke)
+                    drawPath(p("M7 2h1v3"), tint, style = stroke)
+                    drawPath(p("m22 22-5-10-5 10"), tint, style = stroke)
+                    drawPath(p("M14 18h6"), tint, style = stroke)
+                }
             }
         }
+    }
+}
+
+fun targetLanguageDisplayName(code: String, isEnglish: Boolean = false): String {
+    return when (code.lowercase()) {
+        "id" -> if (isEnglish) "Indonesian" else "Bahasa Indonesia"
+        "en" -> "English"
+        "ja" -> "日本語"
+        "zh" -> "中文"
+        "ko" -> "한국어"
+        "es" -> "Español"
+        "fr" -> "Français"
+        "de" -> "Deutsch"
+        else -> code.uppercase()
+    }
+}
+
+fun targetLanguageBadgeLabel(code: String): String {
+    return when (code.lowercase()) {
+        "id" -> "ID"
+        "en" -> "EN"
+        "ja" -> "JA"
+        "zh" -> "ZH"
+        "ko" -> "KO"
+        "es" -> "ES"
+        "fr" -> "FR"
+        "de" -> "DE"
+        else -> code.uppercase()
     }
 }
 

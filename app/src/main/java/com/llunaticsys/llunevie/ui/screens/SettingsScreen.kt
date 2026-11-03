@@ -78,6 +78,12 @@ import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.ui.platform.LocalClipboardManager
+import com.llunaticsys.llunevie.data.local.DEFAULT_AI_TRANSLATOR_PROMPT
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import com.llunaticsys.llunevie.ui.components.CustomThemeDropdown
 import com.llunaticsys.llunevie.ui.components.LlunevieAppLogoSvg
 import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
@@ -92,6 +98,7 @@ import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     prefs: UserPreferencesState,
@@ -118,6 +125,16 @@ fun SettingsScreen(
     onRescanFolder: () -> Unit = {},
     onExportBackup: () -> Unit,
     onRestoreBackup: () -> Unit,
+    onUpdateTranslatorPrefs: (
+        engine: String?,
+        targetLang: String?,
+        displayMode: String?,
+        apiKey: String?,
+        modelName: String?,
+        customBaseUrl: String?,
+        systemPrompt: String?
+    ) -> Unit = { _, _, _, _, _, _, _ -> },
+    onClearTranslationCache: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
@@ -126,6 +143,13 @@ fun SettingsScreen(
     val context = LocalContext.current
     val isEn = prefs.lang == "en"
     var showNameDialog by remember { mutableStateOf(false) }
+
+    val translationRepo = remember { TranslationRepository.getInstance() }
+    var cacheStats by remember { mutableStateOf(translationRepo.getCacheStats(context)) }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
+    var showModelDialog by remember { mutableStateOf(false) }
+    var showCustomUrlDialog by remember { mutableStateOf(false) }
+    var showSystemPromptDialog by remember { mutableStateOf(false) }
 
     var pendingCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var cropScale by remember { mutableFloatStateOf(1f) }
@@ -568,6 +592,302 @@ fun SettingsScreen(
             }
         }
 
+        // SECTION: TRANSLATION & AI (`#secTranslation`)
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            text = strings.secTranslation,
+            color = palette.textMuted,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 1.4.sp,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+        )
+
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = palette.bgCard,
+            border = BorderStroke(1.dp, palette.borderSoft),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column {
+                // 1. Mesin Penerjemah / Translation Engine
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                        Text(text = strings.transEngineLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (strings.isId) "Pilih mesin instant tanpa kunci atau AI canggih" else "Choose free instant or advanced AI engine",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    val engineOptions = listOf(
+                        "free" to (if (strings.isId) "Free Instant (Tanpa API Key)" else "Free Instant (No API Key)"),
+                        "gemini" to "Google Gemini AI",
+                        "openrouter" to "OpenRouter AI",
+                        "custom" to "Custom OpenAI-Compatible"
+                    )
+                    CustomThemeDropdown(
+                        title = strings.transEngineLabel,
+                        selectedValue = prefs.translatorEngine,
+                        options = engineOptions,
+                        onValueSelected = { onUpdateTranslatorPrefs(it, null, null, null, null, null, null) }
+                    )
+                }
+                HorizontalDivider(color = palette.borderSoft)
+
+                // 2. Bahasa Tujuan / Target Language
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                        Text(text = strings.transTargetLangLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (strings.isId) "Bahasa hasil terjemahan kutipan dan halaman" else "Target output language for reader translations",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    val langOptions = listOf(
+                        "id" to "Bahasa Indonesia",
+                        "en" to "English",
+                        "ja" to "日本語",
+                        "zh" to "中文",
+                        "ko" to "한국어",
+                        "es" to "Español",
+                        "fr" to "Français",
+                        "de" to "Deutsch"
+                    )
+                    CustomThemeDropdown(
+                        title = strings.transTargetLangLabel,
+                        selectedValue = prefs.translatorTargetLang,
+                        options = langOptions,
+                        onValueSelected = { onUpdateTranslatorPrefs(null, it, null, null, null, null, null) }
+                    )
+                }
+                HorizontalDivider(color = palette.borderSoft)
+
+                // 3. Mode Tampilan Halaman / Page Display Mode
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(text = strings.transDisplayModeLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (strings.isId) "Tampilkan paragraf asli + terjemahan atau ganti teks langsung" else "Show original + translated paragraph or replace text directly",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft)
+                    ) {
+                        Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            val isBilingual = prefs.translatorDisplayMode == "bilingual"
+                            Surface(
+                                onClick = { onUpdateTranslatorPrefs(null, null, "bilingual", null, null, null, null) },
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (isBilingual) palette.accentDark else Color.Transparent
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Dwibahasa" else "Bilingual",
+                                    color = if (isBilingual) palette.bgApp else palette.textMain,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isBilingual) FontWeight.SemiBold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                            Surface(
+                                onClick = { onUpdateTranslatorPrefs(null, null, "replace", null, null, null, null) },
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (!isBilingual) palette.accentDark else Color.Transparent
+                            ) {
+                                Text(
+                                    text = if (strings.isId) "Ganti Teks" else "Replace",
+                                    color = if (!isBilingual) palette.bgApp else palette.textMain,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (!isBilingual) FontWeight.SemiBold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 4. AI Configuration Rows (wrapped in AnimatedVisibility)
+                AnimatedVisibility(visible = prefs.translatorEngine != "free") {
+                    Column {
+                        HorizontalDivider(color = palette.borderSoft)
+
+                        // API Key row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showApiKeyDialog = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(text = strings.transApiKeyLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val keyText = if (prefs.aiApiKey.isBlank()) {
+                                    if (strings.isId) "Belum diatur" else "Not set"
+                                } else {
+                                    (if (strings.isId) "Tersimpan (••••" else "Saved (••••") + prefs.aiApiKey.takeLast(4) + ")"
+                                }
+                                Text(text = keyText, color = palette.textMuted, fontSize = 11.5.sp)
+                            }
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.CHEVRON_RIGHT,
+                                tint = palette.textMuted.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        HorizontalDivider(color = palette.borderSoft)
+
+                        // Model AI row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showModelDialog = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(text = strings.transAiModelLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(text = prefs.aiModelName, color = palette.textMuted, fontSize = 11.5.sp)
+                            }
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.CHEVRON_RIGHT,
+                                tint = palette.textMuted.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+
+                        // Endpoint Base URL (visible when prefs.translatorEngine == "custom")
+                        if (prefs.translatorEngine == "custom") {
+                            HorizontalDivider(color = palette.borderSoft)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showCustomUrlDialog = true }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                    Text(text = strings.transCustomUrlLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(text = prefs.aiCustomBaseUrl, color = palette.textMuted, fontSize = 11.5.sp)
+                                }
+                                PrototypeSvgIcon(
+                                    type = PrototypeIconType.CHEVRON_RIGHT,
+                                    tint = palette.textMuted.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = palette.borderSoft)
+
+                        // System Prompt row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showSystemPromptDialog = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(text = strings.transSystemPromptLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = if (strings.isId) "Kustomisasi instruksi dan persona penerjemah sastra" else "Customize literary translation instructions and persona",
+                                    color = palette.textMuted,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.CHEVRON_RIGHT,
+                                tint = palette.textMuted.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = palette.borderSoft)
+
+                // 5. Cache Terjemahan Lokal
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                        Text(text = strings.transCacheLabel, color = palette.textMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val count = cacheStats.first
+                        val bytes = cacheStats.second
+                        val sizeStr = if (bytes < 1024 * 1024) {
+                            "%.1f KB".format(bytes / 1024f)
+                        } else {
+                            "%.1f MB".format(bytes / (1024f * 1024f))
+                        }
+                        Text(
+                            text = if (strings.isId) "$count item tersimpan ($sizeStr)" else "$count items cached ($sizeStr)",
+                            color = palette.textMuted,
+                            fontSize = 11.5.sp
+                        )
+                    }
+                    Surface(
+                        onClick = {
+                            onClearTranslationCache()
+                            cacheStats = Pair(0, 0L)
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft)
+                    ) {
+                        Text(
+                            text = strings.transClearBtn,
+                            color = palette.textMain,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // SECTION 3: LOCAL DATA & BACKUP (`#i18nSecJourney` in `llunevie_prototype.html`)
         Spacer(modifier = Modifier.height(20.dp))
         Text(
@@ -868,6 +1188,538 @@ fun SettingsScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 10.dp)
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // SET API KEY MODAL
+    if (showApiKeyDialog) {
+        var keyInput by remember(prefs.aiApiKey) { mutableStateOf(prefs.aiApiKey) }
+        val clipboard = LocalClipboardManager.current
+        Dialog(onDismissRequest = { showApiKeyDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (strings.isId) "Atur API Key" else "Set API Key",
+                            color = palette.textMain,
+                            fontSize = 18.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Surface(
+                            onClick = { showApiKeyDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (strings.isId) "Kunci API disimpan secara lokal di perangkat ini dan tidak pernah dikirim ke pihak ketiga."
+                        else "API key is stored locally on this device and never shared with third parties.",
+                        color = palette.textMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            if (keyInput.isEmpty()) {
+                                Text(
+                                    text = if (strings.isId) "Tempel atau ketik API Key..." else "Paste or type API Key...",
+                                    color = palette.textMuted.copy(alpha = 0.7f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            BasicTextField(
+                                value = keyInput,
+                                onValueChange = { keyInput = it },
+                                singleLine = true,
+                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                                cursorBrush = SolidColor(palette.textMain),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            onClick = {
+                                val clip = clipboard.getText()?.text.orEmpty()
+                                if (clip.isNotBlank()) keyInput = clip.trim()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isId) "Tempel" else "Paste",
+                                    color = palette.textMain,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                onUpdateTranslatorPrefs(null, null, null, keyInput.trim(), null, null, null)
+                                showApiKeyDialog = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = palette.accentDark,
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isId) "Simpan" else "Save",
+                                    color = palette.bgApp,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // SELECT AI MODEL MODAL
+    if (showModelDialog) {
+        var modelInput by remember(prefs.aiModelName) { mutableStateOf(prefs.aiModelName) }
+        val presets = if (prefs.translatorEngine == "gemini") {
+            listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash")
+        } else {
+            listOf(
+                "google/gemini-2.5-flash",
+                "deepseek/deepseek-chat-v3-0324:free",
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "openai/gpt-4o-mini",
+                "anthropic/claude-3.5-haiku"
+            )
+        }
+
+        Dialog(onDismissRequest = { showModelDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (strings.isId) "Pilih Model AI" else "Select AI Model",
+                            color = palette.textMain,
+                            fontSize = 18.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Surface(
+                            onClick = { showModelDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (strings.isId) "Pilih salah satu preset cepat atau ketik model kustom:" else "Choose a quick preset or type any custom model slug:",
+                        color = palette.textMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        presets.forEach { preset ->
+                            val isSelected = modelInput.equals(preset, ignoreCase = true)
+                            Surface(
+                                onClick = { modelInput = preset },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) palette.accentDark else palette.bgSurface,
+                                border = BorderStroke(1.dp, if (isSelected) palette.accentDark else palette.borderSoft)
+                            ) {
+                                Text(
+                                    text = preset,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (isSelected) palette.bgApp else palette.textMain,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            if (modelInput.isEmpty()) {
+                                Text(
+                                    text = "model-slug...",
+                                    color = palette.textMuted.copy(alpha = 0.7f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            BasicTextField(
+                                value = modelInput,
+                                onValueChange = { modelInput = it },
+                                singleLine = true,
+                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                                cursorBrush = SolidColor(palette.textMain),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            if (modelInput.isNotBlank()) {
+                                onUpdateTranslatorPrefs(null, null, null, null, modelInput.trim(), null, null)
+                            }
+                            showModelDialog = false
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = palette.accentDark,
+                        modifier = Modifier.fillMaxWidth().height(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = if (strings.isId) "Simpan" else "Save",
+                                color = palette.bgApp,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // CUSTOM ENDPOINT BASE URL MODAL
+    if (showCustomUrlDialog) {
+        var urlInput by remember(prefs.aiCustomBaseUrl) { mutableStateOf(prefs.aiCustomBaseUrl) }
+        Dialog(onDismissRequest = { showCustomUrlDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Endpoint Base URL",
+                            color = palette.textMain,
+                            fontSize = 18.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Surface(
+                            onClick = { showCustomUrlDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (strings.isId) "Masukkan base URL endpoint OpenAI-compatible (misal https://openrouter.ai/api/v1 atau http://localhost:11434/v1):"
+                        else "Enter base URL for OpenAI-compatible endpoint (e.g. https://openrouter.ai/api/v1 or http://localhost:11434/v1):",
+                        color = palette.textMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            BasicTextField(
+                                value = urlInput,
+                                onValueChange = { urlInput = it },
+                                singleLine = true,
+                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                                cursorBrush = SolidColor(palette.textMain),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            onClick = { urlInput = "https://openrouter.ai/api/v1" },
+                            shape = RoundedCornerShape(12.dp),
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "Reset Default",
+                                    color = palette.textMain,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                if (urlInput.isNotBlank()) {
+                                    onUpdateTranslatorPrefs(null, null, null, null, null, urlInput.trim(), null)
+                                }
+                                showCustomUrlDialog = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = palette.accentDark,
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isId) "Simpan" else "Save",
+                                    color = palette.bgApp,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // SYSTEM PROMPT MODAL
+    if (showSystemPromptDialog) {
+        var promptInput by remember(prefs.aiSystemPrompt) { mutableStateOf(prefs.aiSystemPrompt) }
+        val promptLightNovel = DEFAULT_AI_TRANSLATOR_PROMPT
+        val promptAcademic = "You are a professional academic and non-fiction translator. Translate the text into {{TARGET_LANG}} with precision, objective tone, and accurate terminology. Preserve original paragraph structure and citations. Output ONLY the translated text without commentary."
+        val promptNatural = "You are a skilled translator. Translate the text into natural, modern, concise {{TARGET_LANG}}. Maintain clarity and readable everyday flow while preserving paragraph breaks. Output ONLY the translated text."
+
+        Dialog(onDismissRequest = { showSystemPromptDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (strings.isId) "Prompt Sistem AI" else "AI System Prompt",
+                            color = palette.textMain,
+                            fontSize = 18.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Surface(
+                            onClick = { showSystemPromptDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (strings.isId) "Gunakan {{TARGET_LANG}} sebagai variabel bahasa tujuan otomatis. Pilih gaya preset:"
+                        else "Use {{TARGET_LANG}} as the target language variable. Choose a style preset:",
+                        color = palette.textMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val chip1 = if (strings.isId) "Light Novel / Fiksi" else "Light Novel / Fiction"
+                        val chip2 = if (strings.isId) "Akademik" else "Academic"
+                        val chip3 = if (strings.isId) "Natural Ringkas" else "Natural Concise"
+
+                        Surface(
+                            onClick = { promptInput = promptLightNovel },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (promptInput == promptLightNovel) palette.accentDark else palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 6.dp)) {
+                                Text(
+                                    text = chip1,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (promptInput == promptLightNovel) palette.bgApp else palette.textMain
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = { promptInput = promptAcademic },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (promptInput == promptAcademic) palette.accentDark else palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 6.dp)) {
+                                Text(
+                                    text = chip2,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (promptInput == promptAcademic) palette.bgApp else palette.textMain
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = { promptInput = promptNatural },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (promptInput == promptNatural) palette.accentDark else palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 6.dp)) {
+                                Text(
+                                    text = chip3,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (promptInput == promptNatural) palette.bgApp else palette.textMain
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier.fillMaxWidth().height(140.dp)
+                    ) {
+                        Box(modifier = Modifier.padding(12.dp)) {
+                            BasicTextField(
+                                value = promptInput,
+                                onValueChange = { promptInput = it },
+                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp, lineHeight = 17.sp),
+                                cursorBrush = SolidColor(palette.textMain),
+                                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            onClick = { promptInput = DEFAULT_AI_TRANSLATOR_PROMPT },
+                            shape = RoundedCornerShape(12.dp),
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "Reset Default",
+                                    color = palette.textMain,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                if (promptInput.isNotBlank()) {
+                                    onUpdateTranslatorPrefs(null, null, null, null, null, null, promptInput.trim())
+                                }
+                                showSystemPromptDialog = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = palette.accentDark,
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (strings.isId) "Simpan" else "Save",
+                                    color = palette.bgApp,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }

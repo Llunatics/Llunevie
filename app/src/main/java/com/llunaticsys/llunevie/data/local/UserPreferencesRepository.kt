@@ -25,6 +25,9 @@ val DEFAULT_CURATED_GENRES = listOf(
     "Slice of Life", "Sci-Fi", "Drama", "Horror", "Psychological"
 )
 
+const val DEFAULT_AI_TRANSLATOR_PROMPT =
+    "You are an expert literary and Light Novel translator. Translate the text into {{TARGET_LANG}} naturally, fluidly, and accurately. Preserve character voice, emotional nuance, Japanese/foreign honorifics (-san, -kun, -senpai, -sama, etc.), dialogue formatting, and exact paragraph breaks. Output ONLY the translated text without any introductory or concluding remarks."
+
 data class UserPreferencesState(
     val isLoaded: Boolean = false,
     val lang: String = "id",
@@ -63,7 +66,14 @@ data class UserPreferencesState(
     val autoImportFolderUri: String? = null,
     val importedFileSignatures: Set<String> = emptySet(),
     val pdfThemeTintEnabled: Boolean = true,
-    val pdfProtectIllustrations: Boolean = true
+    val pdfProtectIllustrations: Boolean = true,
+    val translatorEngine: String = "free",
+    val translatorTargetLang: String = "id",
+    val translatorDisplayMode: String = "bilingual",
+    val aiApiKey: String = "",
+    val aiModelName: String = "gemini-2.5-flash",
+    val aiCustomBaseUrl: String = "https://openrouter.ai/api/v1",
+    val aiSystemPrompt: String = DEFAULT_AI_TRANSLATOR_PROMPT
 ) {
     val lineHeightMult: Float get() = lineHeightMultiplier
     val flowMode: ReadingFlowMode get() = readingFlowMode
@@ -140,6 +150,13 @@ class UserPreferencesRepository(private val context: Context) {
         val IMPORTED_FILE_SIGNATURES = stringSetPreferencesKey("imported_file_signatures")
         val PDF_THEME_TINT_ENABLED = booleanPreferencesKey("pdf_theme_tint_enabled")
         val PDF_PROTECT_ILLUSTRATIONS = booleanPreferencesKey("pdf_protect_illustrations")
+        val TRANSLATOR_ENGINE = stringPreferencesKey("translator_engine")
+        val TRANSLATOR_TARGET_LANG = stringPreferencesKey("translator_target_lang")
+        val TRANSLATOR_DISPLAY_MODE = stringPreferencesKey("translator_display_mode")
+        val AI_API_KEY = stringPreferencesKey("ai_api_key")
+        val AI_MODEL_NAME = stringPreferencesKey("ai_model_name")
+        val AI_CUSTOM_BASE_URL = stringPreferencesKey("ai_custom_base_url")
+        val AI_SYSTEM_PROMPT = stringPreferencesKey("ai_system_prompt")
     }
 
     val preferencesFlow: Flow<UserPreferencesState> = context.llunevieDataStore.data.map { prefs ->
@@ -196,7 +213,14 @@ class UserPreferencesRepository(private val context: Context) {
             autoImportFolderUri = prefs[Keys.AUTO_IMPORT_URI],
             importedFileSignatures = prefs[Keys.IMPORTED_FILE_SIGNATURES] ?: emptySet(),
             pdfThemeTintEnabled = prefs[Keys.PDF_THEME_TINT_ENABLED] ?: true,
-            pdfProtectIllustrations = prefs[Keys.PDF_PROTECT_ILLUSTRATIONS] ?: true
+            pdfProtectIllustrations = prefs[Keys.PDF_PROTECT_ILLUSTRATIONS] ?: true,
+            translatorEngine = prefs[Keys.TRANSLATOR_ENGINE] ?: "free",
+            translatorTargetLang = prefs[Keys.TRANSLATOR_TARGET_LANG] ?: "id",
+            translatorDisplayMode = prefs[Keys.TRANSLATOR_DISPLAY_MODE] ?: "bilingual",
+            aiApiKey = prefs[Keys.AI_API_KEY] ?: "",
+            aiModelName = prefs[Keys.AI_MODEL_NAME] ?: "gemini-2.5-flash",
+            aiCustomBaseUrl = prefs[Keys.AI_CUSTOM_BASE_URL] ?: "https://openrouter.ai/api/v1",
+            aiSystemPrompt = prefs[Keys.AI_SYSTEM_PROMPT] ?: DEFAULT_AI_TRANSLATOR_PROMPT
         )
     }
 
@@ -380,5 +404,25 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setPdfProtectIllustrations(enabled: Boolean) {
         context.llunevieDataStore.edit { it[Keys.PDF_PROTECT_ILLUSTRATIONS] = enabled }
+    }
+
+    suspend fun updateTranslatorPrefs(
+        engine: String? = null,
+        targetLang: String? = null,
+        displayMode: String? = null,
+        apiKey: String? = null,
+        modelName: String? = null,
+        customBaseUrl: String? = null,
+        systemPrompt: String? = null
+    ) {
+        context.llunevieDataStore.edit { prefs ->
+            engine?.let { prefs[Keys.TRANSLATOR_ENGINE] = it }
+            targetLang?.let { prefs[Keys.TRANSLATOR_TARGET_LANG] = it }
+            displayMode?.let { prefs[Keys.TRANSLATOR_DISPLAY_MODE] = it }
+            apiKey?.let { prefs[Keys.AI_API_KEY] = it.trim() }
+            modelName?.let { prefs[Keys.AI_MODEL_NAME] = it.trim() }
+            customBaseUrl?.let { prefs[Keys.AI_CUSTOM_BASE_URL] = it.trim() }
+            systemPrompt?.let { prefs[Keys.AI_SYSTEM_PROMPT] = it }
+        }
     }
 }

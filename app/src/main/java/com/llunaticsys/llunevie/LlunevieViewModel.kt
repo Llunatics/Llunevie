@@ -535,6 +535,36 @@ class LlunevieViewModel(
         }
     }
 
+    fun updateTranslatorPrefs(
+        engine: String? = null,
+        targetLang: String? = null,
+        displayMode: String? = null,
+        apiKey: String? = null,
+        modelName: String? = null,
+        customBaseUrl: String? = null,
+        systemPrompt: String? = null
+    ) {
+        viewModelScope.launch {
+            prefsRepo.updateTranslatorPrefs(
+                engine = engine,
+                targetLang = targetLang,
+                displayMode = displayMode,
+                apiKey = apiKey,
+                modelName = modelName,
+                customBaseUrl = customBaseUrl,
+                systemPrompt = systemPrompt
+            )
+        }
+    }
+
+    fun clearTranslationCache() {
+        viewModelScope.launch {
+            com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance().clearCache(appContext)
+            val isId = preferences.value.lang != "en"
+            showToast(if (isId) "Cache terjemahan dibersihkan" else "Translation cache cleared")
+        }
+    }
+
     fun setPdfThemeTintEnabled(enabled: Boolean) {
         viewModelScope.launch {
             prefsRepo.setPdfThemeTintEnabled(enabled)
