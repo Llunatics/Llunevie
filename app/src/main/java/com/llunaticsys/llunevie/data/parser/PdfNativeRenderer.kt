@@ -51,7 +51,7 @@ import kotlin.math.ceil
 
 object PdfNativeRenderer {
 
-    const val CURRENT_PDF_TOC_VERSION = 8
+    const val CURRENT_PDF_TOC_VERSION = 9
 
     data class PdfBookmark(val title: String, val startPageZero: Int)
 
@@ -63,6 +63,16 @@ object PdfNativeRenderer {
         val maxFontSize: Float,
         val isBold: Boolean,
         val isCentered: Boolean
+    )
+
+    private data class WordChunk(
+        val text: String,
+        val yTop: Float,
+        val xLeft: Float,
+        val xRight: Float,
+        val height: Float,
+        val maxFontSize: Float,
+        val isBold: Boolean
     )
 
     private val renderMutex = Mutex()
@@ -592,7 +602,7 @@ object PdfNativeRenderer {
         return false
     }
 
-    private fun canonicalChapterIdentity(title: String): String {
+    private fun extractChapterPrefixAndSubtitle(title: String): Pair<String, String> {
         val clean = sanitizeChapterTitle(title).lowercase().trim()
         val numMatch = Regex("^(chapter|bab|bagian|part|act)\\s+([\\divxlcdm.-]+)\\b").find(clean)
         if (numMatch != null) {
@@ -600,11 +610,38 @@ object PdfNativeRenderer {
                 "bab", "chapter" -> "ch"
                 else -> k
             }
-            return "${kind}_${numMatch.groupValues[2]}"
+            val numStr = numMatch.groupValues[2]
+            val normNum = numStr.toIntOrNull()?.toString() ?: numStr
+            val prefixKey = "${kind}_${normNum}"
+            val remainder = clean.substring(numMatch.range.last + 1).trim()
+            val subtitleNorm = remainder.replace(Regex("[^a-z0-9]"), "")
+            return Pair(prefixKey, subtitleNorm)
         }
-        if (clean.startsWith("prolog") || clean.startsWith("prologue")) return "prolog"
-        if (clean.startsWith("epilog") || clean.startsWith("epilogue")) return "epilog"
-        if (clean.startsWith("kata penutup") || clean.startsWith("afterword") || clean == "penutup") return "afterword"
+        val specialList = listOf(
+            "prologue" to "prolog",
+            "prolog" to "prolog",
+            "epilogue" to "epilog",
+            "epilog" to "epilog",
+            "kata penutup" to "afterword",
+            "afterword" to "afterword"
+        )
+        for ((word, key) in specialList) {
+            if (clean.startsWith(word)) {
+                val remainder = clean.removePrefix(word).trim()
+                val subtitleNorm = remainder.replace(Regex("[^a-z0-9]"), "")
+                return Pair(key, subtitleNorm)
+            }
+        }
+        if (clean == "penutup") {
+            return Pair("afterword", "")
+        }
+        return Pair("", "")
+    }
+
+    private fun canonicalChapterIdentity(title: String): String {
+        val (prefix, _) = extractChapterPrefixAndSubtitle(title)
+        if (prefix.isNotEmpty()) return prefix
+        val clean = sanitizeChapterTitle(title).lowercase().trim()
         if (clean.startsWith("monolog") || clean.startsWith("monologue") || clean.endsWith("monologue") || clean.endsWith("monolog")) return "monolog"
         return clean.replace(Regex("[^a-z0-9]"), "")
     }
@@ -692,18 +729,22 @@ object PdfNativeRenderer {
         val deduped = mutableListOf<PdfBookmark>()
         for (ch in sorted) {
             val chNorm = ch.title.lowercase().replace(Regex("[^a-z0-9]"), "")
-            val chCanonical = canonicalChapterIdentity(ch.title)
+            val (chPrefix, chSubtitleNorm) = extractChapterPrefixAndSubtitle(ch.title)
 
             val existingIndex = deduped.indexOfFirst { existing ->
                 val existingNorm = existing.title.lowercase().replace(Regex("[^a-z0-9]"), "")
-                val existingCanonical = canonicalChapterIdentity(existing.title)
+                val (existingPrefix, existingSubtitleNorm) = extractChapterPrefixAndSubtitle(existing.title)
 
-                val canonicalMatch = existingCanonical.isNotEmpty() && existingCanonical == chCanonical
-                val prefixMatch = existingNorm.length >= 12 && chNorm.length >= 12 &&
-                    existingNorm.substring(0, 12) == chNorm.substring(0, 12)
-                val normExactMatch = existingNorm.isNotEmpty() && existingNorm == chNorm
+                val fullNormMatch = chNorm.isNotEmpty() && chNorm == existingNorm
+                val prefixKeyMatch = chPrefix.isNotEmpty() && chPrefix == existingPrefix && (
+                    chSubtitleNorm.isEmpty() ||
+                    existingSubtitleNorm.isEmpty() ||
+                    chSubtitleNorm.startsWith(existingSubtitleNorm.take(10)) ||
+                    existingSubtitleNorm.startsWith(chSubtitleNorm.take(10)) ||
+                    abs(ch.startPageZero - existing.startPageZero) <= 2
+                )
 
-                canonicalMatch || prefixMatch || normExactMatch
+                fullNormMatch || prefixKeyMatch
             }
 
             if (existingIndex >= 0) {
@@ -761,51 +802,77 @@ object PdfNativeRenderer {
         val resultMap = mutableMapOf<Int, List<VisualLine>>()
 
         val stripper = object : PDFTextStripper() {
-            private val currentPagePositions = mutableListOf<TextPosition>()
+            private val currentPageChunks = mutableListOf<WordChunk>()
 
             init {
                 sortByPosition = true
             }
 
             override fun startPage(page: PDPage) {
-                currentPagePositions.clear()
+                currentPageChunks.clear()
             }
 
-            override fun processTextPosition(tp: TextPosition) {
-                if (tp.unicode?.isNotBlank() == true) {
-                    currentPagePositions.add(tp)
+            override fun writeString(text: String, textPositions: MutableList<TextPosition>?) {
+                val trimmed = text.trim()
+                if (trimmed.isEmpty() || textPositions.isNullOrEmpty()) return
+                val validPos = textPositions.filter { !it.unicode.isNullOrBlank() }
+                if (validPos.isEmpty()) return
+
+                val yTop = validPos.map { it.yDirAdj }.average().toFloat()
+                val xLeft = validPos.minOf { it.xDirAdj }
+                val xRight = validPos.maxOf { it.xDirAdj + it.widthDirAdj }
+                val height = validPos.maxOf { if (it.heightDir > 0f) it.heightDir else it.fontSizeInPt }
+                val maxFontSize = validPos.maxOf { if (it.fontSizeInPt > 0f) it.fontSizeInPt else it.yScale }
+                val isBold = validPos.any { tp ->
+                    val fn = (tp.font?.name.orEmpty() + " " + (tp.font?.fontDescriptor?.fontName.orEmpty()))
+                    fn.contains("Bold", true) ||
+                        fn.contains("Bd", true) ||
+                        fn.contains("Semibold", true) ||
+                        fn.contains("Medium", true) ||
+                        fn.contains("Heavy", true) ||
+                        fn.contains("Black", true) ||
+                        (tp.font?.fontDescriptor?.fontWeight ?: 400f) >= 600f ||
+                        tp.font?.fontDescriptor?.isForceBold == true
                 }
+                currentPageChunks.add(
+                    WordChunk(
+                        text = trimmed,
+                        yTop = yTop,
+                        xLeft = xLeft,
+                        xRight = xRight,
+                        height = height,
+                        maxFontSize = maxFontSize,
+                        isBold = isBold
+                    )
+                )
             }
 
             override fun endPage(page: PDPage) {
                 val pZero = currentPageNo - 1
-                if (currentPagePositions.isEmpty()) {
+                if (currentPageChunks.isEmpty()) {
                     resultMap[pZero] = emptyList()
                     return
                 }
 
-                // 1. Sort the collected TextPosition list by yDirAdj ascending, then xDirAdj ascending
-                val sortedPositions = currentPagePositions.sortedWith(
-                    compareBy<TextPosition> { it.yDirAdj }
-                        .thenBy { it.xDirAdj }
+                // 1. Sort currentPageChunks by yTop ascending, then xLeft ascending
+                val sortedChunks = currentPageChunks.sortedWith(
+                    compareBy<WordChunk> { it.yTop }
+                        .thenBy { it.xLeft }
                 )
 
-                // 2. Group consecutive TextPositions into horizontal line clusters
-                val clusters = mutableListOf<MutableList<TextPosition>>()
-                for (tp in sortedPositions) {
+                // 2. Group WordChunks into horizontal visual line clusters: a chunk belongs to currentCluster if abs(chunk.yTop - clusterAvgY) <= maxOf(4.2f, clusterMaxHeight * 0.55f).
+                val clusters = mutableListOf<MutableList<WordChunk>>()
+                for (chunk in sortedChunks) {
                     val currentCluster = clusters.lastOrNull()
                     if (currentCluster == null) {
-                        clusters.add(mutableListOf(tp))
+                        clusters.add(mutableListOf(chunk))
                     } else {
-                        val clusterAvgY = currentCluster.map { it.yDirAdj }.average().toFloat()
-                        val clusterMaxHeight = currentCluster.maxOf {
-                            val h = it.heightDir
-                            if (h > 0f) h else it.fontSizeInPt
-                        }
-                        if (abs(tp.yDirAdj - clusterAvgY) <= maxOf(3.8f, clusterMaxHeight * 0.48f)) {
-                            currentCluster.add(tp)
+                        val clusterAvgY = currentCluster.map { it.yTop }.average().toFloat()
+                        val clusterMaxHeight = currentCluster.maxOf { it.height }
+                        if (abs(chunk.yTop - clusterAvgY) <= maxOf(4.2f, clusterMaxHeight * 0.55f)) {
+                            currentCluster.add(chunk)
                         } else {
-                            clusters.add(mutableListOf(tp))
+                            clusters.add(mutableListOf(chunk))
                         }
                     }
                 }
@@ -815,53 +882,30 @@ object PdfNativeRenderer {
 
                 for (cluster in clusters) {
                     if (cluster.isEmpty()) continue
-                    val linePositions = cluster.sortedBy { it.xDirAdj }
-                    val sb = StringBuilder()
-                    var prevEndX = Float.NaN
+                    val rawLineText = cluster.sortedBy { it.xLeft }.joinToString(" ") { it.text }.replace(Regex("\\s+"), " ").trim()
+                    val lineText = rawLineText.replace(Regex("(?i)\\b(bab|chapter|bagian|part|act)(\\d+)"), "$1 $2")
+                    if (lineText.isEmpty()) continue
 
-                    for (tp in linePositions) {
-                        val u = tp.unicode.orEmpty()
-                        if (u.isEmpty()) continue
-                        if (!prevEndX.isNaN()) {
-                            val gap = tp.xDirAdj - prevEndX
-                            val threshold = maxOf(tp.widthOfSpace * 0.28f, tp.fontSizeInPt * 0.12f)
-                            if (gap > threshold && !sb.endsWith(" ") && !sb.endsWith("-") && !sb.endsWith("–") && !sb.endsWith("—")) {
-                                sb.append(" ")
-                            }
-                        }
-                        sb.append(u)
-                        prevEndX = tp.xDirAdj + tp.widthDirAdj
-                    }
-
-                    val xLeft = linePositions.first().xDirAdj
-                    val xRight = linePositions.maxOf { it.xDirAdj + it.widthDirAdj }
-                    val yTop = linePositions.map { it.yDirAdj }.average().toFloat()
-                    val maxFontSize = linePositions.maxOf { it.fontSizeInPt }
-                    val isBold = linePositions.any {
-                        val fn = it.font?.name.orEmpty()
-                        fn.contains("Bold", true) ||
-                            fn.contains("Semibold", true) ||
-                            fn.contains("Medium", true) ||
-                            (it.font?.fontDescriptor?.fontWeight ?: 400f) >= 600f
-                    }
+                    val xLeft = cluster.minOf { it.xLeft }
+                    val xRight = cluster.maxOf { it.xRight }
+                    val yTop = cluster.map { it.yTop }.average().toFloat()
+                    val maxFontSize = cluster.maxOf { it.maxFontSize }
+                    val isBold = cluster.any { it.isBold }
                     val lineW = (xRight - xLeft).coerceAtLeast(0f)
                     val midX = (xLeft + xRight) / 2f
                     val isCentered = lineW < pageW * 0.82f && abs(midX - pageW / 2f) <= pageW * 0.18f
-                    val cleanText = sb.toString().replace(Regex("\\s+"), " ").trim()
 
-                    if (cleanText.isNotEmpty()) {
-                        lines.add(
-                            VisualLine(
-                                text = cleanText,
-                                yTop = yTop,
-                                xLeft = xLeft,
-                                xRight = xRight,
-                                maxFontSize = maxFontSize,
-                                isBold = isBold,
-                                isCentered = isCentered
-                            )
+                    lines.add(
+                        VisualLine(
+                            text = lineText,
+                            yTop = yTop,
+                            xLeft = xLeft,
+                            xRight = xRight,
+                            maxFontSize = maxFontSize,
+                            isBold = isBold,
+                            isCentered = isCentered
                         )
-                    }
+                    )
                 }
 
                 resultMap[pZero] = lines.sortedBy { it.yTop }
@@ -1124,6 +1168,7 @@ object PdfNativeRenderer {
                     val pdPage = runCatching { document.getPage(p) }.getOrNull()
                     val mediaBox = pdPage?.mediaBox ?: pdPage?.cropBox
                     val pageH = (mediaBox?.height ?: 800f).coerceAtLeast(1f)
+                    val pageW = (mediaBox?.width ?: 600f).coerceAtLeast(1f)
                     val rawVLines = visualLinesMap[p] ?: emptyList()
                     if (rawVLines.isEmpty()) continue
 
@@ -1199,8 +1244,73 @@ object PdfNativeRenderer {
                         }
                     }
 
-                    // Pattern C — Unnumbered Daftar Isi / Table of Contents Title Match
-                    if (!patternAMatched && !patternBMatched && p > tocMaxPage && unnumberedTocCandidatesMap.isNotEmpty()) {
+                    var patternCenteredMatched = false
+                    // Pattern C — Top-of-Page Centered Heading (1 or 2 Lines, e.g. Permintaan dari Horikita dan permintaan dari / Ayanokouji)
+                    if (!patternAMatched && !patternBMatched && contentLines.size >= 3) {
+                        val bodySample = if (contentLines.size >= 5) contentLines.drop(2) else contentLines
+                        val colLeft = bodySample.minOf { it.xLeft }
+                        val colRight = bodySample.maxOf { it.xRight }.coerceAtLeast(colLeft + 100f)
+                        val colWidth = (colRight - colLeft).coerceAtLeast(1f)
+                        val colMidX = (colLeft + colRight) / 2f
+                        val pageMidX = pageW / 2f
+
+                        fun isLineCentered(l: VisualLine): Boolean {
+                            val lineW = l.xRight - l.xLeft
+                            val mid = (l.xLeft + l.xRight) / 2f
+                            return lineW <= maxOf(pageW * 0.84f, colWidth * 0.90f) &&
+                                l.xLeft >= colLeft + 12f &&
+                                (abs(mid - colMidX) <= colWidth * 0.16f || abs(mid - pageMidX) <= pageW * 0.15f)
+                        }
+
+                        val firstLine = contentLines.firstOrNull()
+                        if (firstLine != null && firstLine.yTop <= pageH * 0.35f && isLineCentered(firstLine)) {
+                            val secondLine = contentLines.getOrNull(1)
+                            val secondLineIsHeading = secondLine != null &&
+                                isLineCentered(secondLine) &&
+                                (secondLine.yTop - firstLine.yTop) in 2f..42f &&
+                                !secondLine.text.endsWith(".")
+                            val lastHeadingIdx = if (secondLineIsHeading) 1 else 0
+                            val lastHeadingLine = contentLines[lastHeadingIdx]
+                            val firstBodyLine = contentLines.getOrNull(lastHeadingIdx + 1)
+
+                            if (firstBodyLine != null && !isLineCentered(firstBodyLine)) {
+                                val bodyLines = contentLines.drop(lastHeadingIdx + 1)
+                                val bodyMedianStep = if (bodyLines.size >= 2) {
+                                    val steps = bodyLines.zipWithNext { a, b -> b.yTop - a.yTop }.filter { it > 0f }.sorted()
+                                    if (steps.isNotEmpty()) steps[steps.size / 2] else 16f
+                                } else 16f
+                                val bodyFontSizes = bodyLines.map { it.maxFontSize }.sorted()
+                                val bodyMedianFontSize = if (bodyFontSizes.isNotEmpty()) bodyFontSizes[bodyFontSizes.size / 2] else pageMedianFontSize
+
+                                val prominenceSignal = firstLine.isBold || lastHeadingLine.isBold ||
+                                    firstLine.maxFontSize >= bodyMedianFontSize + 0.4f ||
+                                    (firstBodyLine.yTop - lastHeadingLine.yTop) >= bodyMedianStep * 1.22f
+
+                                if (prominenceSignal) {
+                                    val combinedHeading = if (secondLineIsHeading) "${firstLine.text} ${secondLine!!.text}" else firstLine.text
+                                    val cleanHeading = sanitizeChapterTitle(combinedHeading.replace(LEADING_BULLET_REGEX, ""))
+                                    val words = cleanHeading.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val dialogueStartQuotes = setOf('"', '“', '‘', '\'', '「', '『', '(')
+                                    val sentenceEndPunct = setOf('.', ',', ';', '!', '"', '”', '」', '』')
+
+                                    val isValid = cleanHeading.length in 4..105 &&
+                                        words.size in 1..15 &&
+                                        cleanHeading.firstOrNull()?.let { it.isUpperCase() || it.isDigit() } == true &&
+                                        cleanHeading.firstOrNull() !in dialogueStartQuotes &&
+                                        cleanHeading.lastOrNull() !in sentenceEndPunct
+
+                                    if (isValid) {
+                                        val bm = PdfBookmark(cleanHeading, p)
+                                        additiveBookmarks.add(bm)
+                                        patternCenteredMatched = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Pattern D (TOC Match) — Unnumbered Daftar Isi / Table of Contents Title Match
+                    if (!patternAMatched && !patternBMatched && !patternCenteredMatched && p > tocMaxPage && unnumberedTocCandidatesMap.isNotEmpty()) {
                         for (line in candidateTopLines) {
                             val n = norm(line.text)
                             val matchedCand = unnumberedTocCandidatesMap[n]

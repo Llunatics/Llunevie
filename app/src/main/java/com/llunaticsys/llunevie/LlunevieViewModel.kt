@@ -140,7 +140,7 @@ class LlunevieViewModel(
 ) : ViewModel() {
 
     companion object {
-        const val CURRENT_PDF_TOC_VERSION = 8
+        const val CURRENT_PDF_TOC_VERSION = 9
     }
 
     private val _previewOverrides = MutableStateFlow<UserPreferencesState?>(null)
@@ -1065,7 +1065,7 @@ class LlunevieViewModel(
                         }
                     }
 
-                    val needsPdfIndexing = !book.tocIndexed || book.tocIndexVersion < CURRENT_PDF_TOC_VERSION
+                    val needsPdfIndexing = !book.tocIndexed || book.tocIndexVersion < PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
                     if (needsPdfIndexing && _pdfIndexingState.value[bookId] == null) {
                         indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
                     }
@@ -1098,11 +1098,6 @@ class LlunevieViewModel(
         }
     }
 
-    private fun isFallbackSectionTitle(title: String): Boolean {
-        val t = title.trim()
-        return Regex("(?i)^(Section|Bagian)\\s+\\d+\\s*\\((?:pp\\.|Hal)\\s*\\d+[–-]\\d+\\)$").matches(t)
-    }
-
     fun forceReindexCurrentPdfBook() {
         val bookId = _uiState.value.activeBookId ?: return
         if (_pdfIndexingState.value[bookId] != null) return
@@ -1128,13 +1123,6 @@ class LlunevieViewModel(
                     }
                 }.getOrDefault(book.pagesCount)
 
-                val existingChapters = dao.getChaptersForBook(book.id)
-                val hasOnlyFallbackSections = existingChapters.isNotEmpty() && existingChapters.all { ce ->
-                    isFallbackSectionTitle(ce.title) ||
-                    ce.title.startsWith("Section ", ignoreCase = true) ||
-                    ce.title.startsWith("Bagian ", ignoreCase = true) ||
-                    ce.title.equals(book.title, ignoreCase = true)
-                }
                 val isEn = preferences.value.lang == "en"
                 _pdfIndexingState.update { it + (book.id to 5) }
                 _uiState.update { it.copy(pdfIndexingState = it.pdfIndexingState + (book.id to 5)) }
@@ -1147,7 +1135,7 @@ class LlunevieViewModel(
                     totalPages = actualPageCount,
                     defaultTitle = book.title,
                     isEn = isEn,
-                    existingChapters = if (book.tocIndexed && book.tocIndexVersion >= CURRENT_PDF_TOC_VERSION && !hasOnlyFallbackSections && existingChapters.isNotEmpty()) existingChapters else null,
+                    existingChapters = null,
                     onProgress = { pct ->
                         currentProgress = pct
                         _pdfIndexingState.update { it + (book.id to pct) }
