@@ -47,8 +47,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,10 +60,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -113,6 +119,7 @@ fun AddBookSheet(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
+    val haptic = LocalHapticFeedback.current
 
     Box(
         modifier = modifier
@@ -258,7 +265,9 @@ fun AddBookSheet(
                                 .togetherWith(slideOutHorizontally(tween(150, easing = FastOutSlowInEasing)) { w -> -dir * (w / 4) } + fadeOut(tween(130)))
                         },
                         label = "addBookTabTransition",
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
                     ) { currentTab ->
                         if (currentTab == "manual") {
                             // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
@@ -807,33 +816,55 @@ fun AddBookSheet(
 
                     Spacer(modifier = Modifier.height(12.dp))
                     // Bottom Dashed Pill Button: "Impor EPUB / PDF Lokal" (`#shelveItYourselfBtn`)
-                    val dashColor = palette.textMuted.copy(alpha = 0.7f)
+                    val dashedStrokeColor = palette.accent.copy(alpha = 0.35f)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(48.dp)
                             .clip(CircleShape)
-                            .background(palette.bgSurface)
-                            .clickable { onPickLocalFile() },
+                            .background(palette.accent.copy(alpha = 0.08f))
+                            .drawWithCache {
+                                val stroke = Stroke(
+                                    width = 1.5.dp.toPx(),
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                                )
+                                val radius = size.height / 2f
+                                onDrawBehind {
+                                    drawRoundRect(
+                                        color = dashedStrokeColor,
+                                        cornerRadius = CornerRadius(radius, radius),
+                                        style = stroke
+                                    )
+                                }
+                            }
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onPickLocalFile()
+                            },
                         contentAlignment = Alignment.Center
                     ) {
-                        Canvas(modifier = Modifier.matchParentSize()) {
-                            drawRoundRect(
-                                color = dashColor,
-                                style = Stroke(
-                                    width = 1.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                                ),
-                                cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.FileUpload,
+                                contentDescription = null,
+                                tint = palette.accent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = strings.importEpubPdfBtn,
+                                style = TextStyle(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = palette.accent
+                                )
                             )
                         }
-                        Text(
-                            text = strings.importEpubPdfBtn,
-                            color = palette.textMain,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
                     }
                 }
             }

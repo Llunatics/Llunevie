@@ -249,6 +249,7 @@ fun HomeScreen(
                         // Book Cover (50x72dp)
                         BookCoverCard(
                             book = book,
+                            coverStyle = prefs.libCoverStyle,
                             showTitleInsideFallback = false,
                             importProgress = importingBooksProgress[book.id],
                             modifier = Modifier
@@ -591,6 +592,7 @@ fun HomeScreen(
                                     ) {
                                         BookCoverCard(
                                             book = book,
+                                            coverStyle = prefs.libCoverStyle,
                                             showTitleInsideFallback = false,
                                             importProgress = importingBooksProgress[book.id],
                                             modifier = Modifier.fillMaxWidth()
@@ -638,6 +640,7 @@ fun HomeScreen(
                                 ) {
                                     BookCoverCard(
                                         book = book,
+                                        coverStyle = prefs.libCoverStyle,
                                         showTitleInsideFallback = false,
                                         importProgress = impPct,
                                         modifier = Modifier.width(48.dp)

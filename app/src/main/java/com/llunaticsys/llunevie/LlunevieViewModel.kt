@@ -636,6 +636,10 @@ class LlunevieViewModel(
         viewModelScope.launch { prefsRepo.updateLibraryViewPrefs(viewMode = mode) }
     }
 
+    fun setLibraryCoverStyle(style: String) {
+        viewModelScope.launch { prefsRepo.setLibraryCoverStyle(style) }
+    }
+
     fun setHomeRecentMode(mode: String) {
         viewModelScope.launch { prefsRepo.updateLibraryViewPrefs(homeRecentMode = mode) }
     }

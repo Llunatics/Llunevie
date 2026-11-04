@@ -36,14 +36,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,9 +67,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -81,6 +87,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -89,6 +96,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.llunaticsys.llunevie.data.parser.SpineColorExtractor
 import com.llunaticsys.llunevie.LlunevieUiState
@@ -126,6 +134,7 @@ fun LibraryScreen(
     onSetSort: (LibrarySortOption) -> Unit,
     onSetFilter: (String) -> Unit,
     onSetStatus: (String) -> Unit = {},
+    onSetCoverStyle: (String) -> Unit = {},
     onSetShelf: (String) -> Unit,
     onSetGenre: (String) -> Unit = {},
     onAddCustomGenre: (String) -> Unit = {},
@@ -187,6 +196,32 @@ fun LibraryScreen(
         }
     }
 
+    val spineColorCache = remember { mutableStateMapOf<String, Color>() }
+    val shelvesRows = remember(filteredBooks) {
+        val rows = mutableListOf<List<Pair<Int, BookEntity>>>()
+        var currentRow = mutableListOf<Pair<Int, BookEntity>>()
+        var currentWidthDp = 0
+        filteredBooks.forEachIndexed { globalIdx, b ->
+            val pages = b.pagesCount.coerceIn(80, 950)
+            val wDp = 30 + ((pages - 80) * 34) / (950 - 80)
+            val footprint = wDp + if (currentRow.isNotEmpty()) 4 else 0
+            if (currentRow.isNotEmpty() && currentWidthDp + footprint > 328) {
+                rows.add(currentRow)
+                currentRow = mutableListOf()
+                currentWidthDp = 0
+            }
+            currentRow.add(globalIdx to b)
+            currentWidthDp += footprint
+        }
+        if (currentRow.isNotEmpty()) rows.add(currentRow)
+        rows
+    }
+
+    val gridCols = if (prefs.libGridCols in 2..5) prefs.libGridCols else if (prefs.libViewMode == LibraryViewMode.COVERS) 3 else 2
+    val gridRows = remember(filteredBooks, gridCols) {
+        filteredBooks.chunked(gridCols)
+    }
+
     val hasActiveFilterDot = prefs.libFilter != "all" || prefs.libStatus != "all" || prefs.libSort != LibrarySortOption.RECENT || (prefs.libShelf != "all" && prefs.libShelf.isNotBlank()) || (prefs.libGenre != "all" && prefs.libGenre.isNotBlank())
 
     var showBatchOrganizeDialog by remember { mutableStateOf(false) }
@@ -214,345 +249,357 @@ fun LibraryScreen(
                 .fillMaxSize()
                 .then(backgroundBlurModifier)
         ) {
-            Column(
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .navigationBarsPadding()
-                    .padding(horizontal = 20.dp)
-                    .padding(top = 16.dp, bottom = 108.dp)
+                    .navigationBarsPadding(),
+                contentPadding = PaddingValues(top = 16.dp, bottom = 108.dp, start = 20.dp, end = 20.dp)
             ) {
-            // 1. Header + 4 View Modes Switcher (`#viewLibrary` in `llunevie_prototype.html`)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = strings.libHeader,
-                            color = palette.textMain,
-                            fontSize = 26.sp,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = strings.libSub,
-                        color = palette.textMuted,
-                        fontSize = 12.sp
-                    )
-                }
+                item(key = "library_top_header", contentType = "header") {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // 1. Header + 4 View Modes Switcher (`#viewLibrary` in `llunevie_prototype.html`)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = strings.libHeader,
+                                        color = palette.textMain,
+                                        fontSize = 26.sp,
+                                        fontFamily = FontFamily.Serif,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = strings.libSub,
+                                    color = palette.textMuted,
+                                    fontSize = 12.sp
+                                )
+                            }
 
-                // 4 View Mode Pills (Spine, Grid, Full Cover, List) with exact 1:1 prototype SVG icons
-                Surface(
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft)
-                ) {
-                    Row(modifier = Modifier.padding(4.dp)) {
-                        val modes = listOf(
-                            Pair(LibraryViewMode.SPINE, PrototypeIconType.SPINE_SHELF),
-                            Pair(LibraryViewMode.GRID, PrototypeIconType.GRID_2X2),
-                            Pair(LibraryViewMode.COVERS, PrototypeIconType.FULL_COVER),
-                            Pair(LibraryViewMode.LIST, PrototypeIconType.LIST_BULLETS)
-                        )
-                        modes.forEach { (mode, iconType) ->
-                            val active = prefs.libViewMode == mode
+                            // 4 View Mode Pills (Spine, Grid, Full Cover, List) with exact 1:1 prototype SVG icons
                             Surface(
                                 shape = CircleShape,
-                                color = if (active) palette.pillActiveBg else Color.Transparent,
-                                shadowElevation = if (active) 1.dp else 0.dp,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .clickable { onSetViewMode(mode) }
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    PrototypeSvgIcon(
-                                        type = iconType,
-                                        tint = if (active) palette.textMain else palette.textMuted,
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidthDp = 1.8f
+                                Row(modifier = Modifier.padding(4.dp)) {
+                                    val modes = listOf(
+                                        Pair(LibraryViewMode.SPINE, PrototypeIconType.SPINE_SHELF),
+                                        Pair(LibraryViewMode.GRID, PrototypeIconType.GRID_2X2),
+                                        Pair(LibraryViewMode.COVERS, PrototypeIconType.FULL_COVER),
+                                        Pair(LibraryViewMode.LIST, PrototypeIconType.LIST_BULLETS)
                                     )
+                                    modes.forEach { (mode, iconType) ->
+                                        val active = prefs.libViewMode == mode
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = if (active) palette.pillActiveBg else Color.Transparent,
+                                            shadowElevation = if (active) 1.dp else 0.dp,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .clickable { onSetViewMode(mode) }
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                PrototypeSvgIcon(
+                                                    type = iconType,
+                                                    tint = if (active) palette.textMain else palette.textMuted,
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidthDp = 1.8f
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
-            }
 
-            // 2. Search Bar + Sort (Direct 1-Click Cycle, Zero Popup!) & Filter Capsule
-            Spacer(modifier = Modifier.height(14.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        PrototypeSvgIcon(
-                            type = PrototypeIconType.SEARCH,
-                            tint = palette.textMuted.copy(alpha = 0.65f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        LlunevieCenteredTextField(
-                            value = uiState.libSearchQuery,
-                            onValueChange = onSearchQueryChange,
-                            placeholder = strings.searchHint,
-                            fontSize = 13.sp,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        )
-                        if (uiState.libSearchQuery.isNotEmpty()) {
-                            Text(
-                                text = "✕",
-                                color = palette.textMuted,
-                                fontSize = 12.sp,
-                                modifier = Modifier
-                                    .clickable { onSearchQueryChange("") }
-                                    .padding(horizontal = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Combined Sort + Filter Capsule (`#libSortBtn` + `#libFilterDropdownBtn`)
-                Surface(
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Direct 1-click sort cycle button (NO popup!)
+                        // 2. Search Bar + Sort (Direct 1-Click Cycle, Zero Popup!) & Filter Capsule
+                        Spacer(modifier = Modifier.height(14.dp))
                         Row(
-                            modifier = Modifier
-                                .height(32.dp)
-                                .clip(CircleShape)
-                                .clickable { onCycleSort() }
-                                .padding(horizontal = 10.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.SORT_DESC,
-                                tint = palette.textMain,
-                                modifier = Modifier.size(14.dp),
-                                strokeWidthDp = 1.8f
-                            )
-                            Text(
-                                text = prefs.libSort.localizedLabel(prefs.lang),
-                                color = palette.textMain,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Medium
-                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    PrototypeSvgIcon(
+                                        type = PrototypeIconType.SEARCH,
+                                        tint = palette.textMuted.copy(alpha = 0.65f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    LlunevieCenteredTextField(
+                                        value = uiState.libSearchQuery,
+                                        onValueChange = onSearchQueryChange,
+                                        placeholder = strings.searchHint,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                    )
+                                    if (uiState.libSearchQuery.isNotEmpty()) {
+                                        Text(
+                                            text = "✕",
+                                            color = palette.textMuted,
+                                            fontSize = 12.sp,
+                                            modifier = Modifier
+                                                .clickable { onSearchQueryChange("") }
+                                                .padding(horizontal = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Combined Sort + Filter Capsule (`#libSortBtn` + `#libFilterDropdownBtn`)
+                            Surface(
+                                shape = CircleShape,
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Direct 1-click sort cycle button (NO popup!)
+                                    Row(
+                                        modifier = Modifier
+                                            .height(32.dp)
+                                            .clip(CircleShape)
+                                            .clickable { onCycleSort() }
+                                            .padding(horizontal = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        PrototypeSvgIcon(
+                                            type = PrototypeIconType.SORT_DESC,
+                                            tint = palette.textMain,
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidthDp = 1.8f
+                                        )
+                                        Text(
+                                            text = prefs.libSort.localizedLabel(prefs.lang),
+                                            color = palette.textMain,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .width(1.dp)
+                                            .height(16.dp)
+                                            .background(palette.borderSoft)
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .clickable { onToggleFilterSheet(true) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        PrototypeSvgIcon(
+                                            type = PrototypeIconType.FILTER_FUNNEL,
+                                            tint = palette.textMain,
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidthDp = 1.8f
+                                        )
+                                        if (hasActiveFilterDot) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(top = 6.dp, end = 6.dp)
+                                                    .size(7.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFF59E0B))
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .width(1.dp)
-                                .height(16.dp)
-                                .background(palette.borderSoft)
-                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
 
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .clickable { onToggleFilterSheet(true) },
-                            contentAlignment = Alignment.Center
+                // 3. Empty Shelf State or Books Content
+                if (filteredBooks.isEmpty()) {
+                    item(key = "library_empty_state", contentType = "empty") {
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = palette.bgCard,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.FILTER_FUNNEL,
-                                tint = palette.textMain,
-                                modifier = Modifier.size(16.dp),
-                                strokeWidthDp = 1.8f
-                            )
-                            if (hasActiveFilterDot) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(top = 6.dp, end = 6.dp)
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFF59E0B))
+                            Column(
+                                modifier = Modifier.padding(32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = strings.emptyShelfTitle,
+                                    color = palette.textMain,
+                                    fontSize = 18.sp,
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = strings.emptyShelfSub,
+                                    color = palette.textMuted,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
                     }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 3. Empty Shelf State
-            if (filteredBooks.isEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = palette.bgCard,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = strings.emptyShelfTitle,
-                            color = palette.textMain,
-                            fontSize = 18.sp,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = strings.emptyShelfSub,
-                            color = palette.textMuted,
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            } else {
-                AnimatedContent(
-                    targetState = prefs.libViewMode,
-                    transitionSpec = {
-                        (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
-                            .togetherWith(fadeOut(tween(140)))
-                    },
-                    label = "libraryViewModeTransition"
-                ) { viewMode ->
-                    when (viewMode) {
-                        // 1. SPINE SHELF MODE (1:1 with `llunevie_prototype.html`: ✦ top, vertical title, page count, vertical author first name, 3D spine gradient, swipe wave lift, 14dp rounded-full plank)
+                } else {
+                    when (prefs.libViewMode) {
+                        // 1. SPINE SHELF MODE
                         LibraryViewMode.SPINE -> {
-                        val spineColorCache = remember { mutableStateMapOf<String, Color>() }
-                        val shelvesRows = remember(filteredBooks) {
-                            val rows = mutableListOf<List<Pair<Int, BookEntity>>>()
-                            var currentRow = mutableListOf<Pair<Int, BookEntity>>()
-                            var currentWidthDp = 0
-                            filteredBooks.forEachIndexed { globalIdx, b ->
-                                val pages = b.pagesCount.coerceIn(80, 950)
-                                val wDp = 30 + ((pages - 80) * 34) / (950 - 80)
-                                val footprint = wDp + if (currentRow.isNotEmpty()) 4 else 0
-                                if (currentRow.isNotEmpty() && currentWidthDp + footprint > 328) {
-                                    rows.add(currentRow)
-                                    currentRow = mutableListOf()
-                                    currentWidthDp = 0
-                                }
-                                currentRow.add(globalIdx to b)
-                                currentWidthDp += footprint
+                            item(key = "spine_top_cap", contentType = "spine_frame") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(10.dp)
+                                        .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                                        .background(Color(0xFF4A3520).copy(alpha = 0.7f))
+                                )
                             }
-                            if (currentRow.isNotEmpty()) rows.add(currentRow)
-                            rows
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                            shelvesRows.forEach { shelfRow ->
+                            itemsIndexed(
+                                items = shelvesRows,
+                                key = { rowIdx, row -> "spine_row_${rowIdx}_${row.first().second.id}" },
+                                contentType = { _, _ -> "spine_row" }
+                            ) { rowIdx, shelfRow ->
                                 var rowHoverX by remember { mutableStateOf<Float?>(null) }
                                 val rowSpineBoundsMap = remember { mutableMapOf<Int, Pair<Float, Float>>() }
 
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(248.dp)
-                                            .padding(horizontal = 12.dp)
-                                            .pointerInput(shelfRow, uiState.libSelectMode) {
-                                                if (uiState.libSelectMode) return@pointerInput
-                                                detectHorizontalDragGestures(
-                                                    onDragStart = { offset ->
-                                                        rowHoverX = offset.x
-                                                    },
-                                                    onHorizontalDrag = { change, _ ->
-                                                        rowHoverX = change.position.x
-                                                    },
-                                                    onDragEnd = { rowHoverX = null },
-                                                    onDragCancel = { rowHoverX = null }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFF0A0806).copy(alpha = 0.65f))
+                                        .drawBehind {
+                                            val frameW = 4.dp.toPx()
+                                            val frameColor = Color(0xFF4A3520).copy(alpha = 0.5f)
+                                            drawRect(color = frameColor, topLeft = Offset.Zero, size = Size(frameW, size.height))
+                                            drawRect(color = frameColor, topLeft = Offset(size.width - frameW, 0f), size = Size(frameW, size.height))
+                                        }
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(248.dp)
+                                                .padding(horizontal = 8.dp)
+                                                .pointerInput(shelfRow, uiState.libSelectMode) {
+                                                    if (uiState.libSelectMode) return@pointerInput
+                                                    detectHorizontalDragGestures(
+                                                        onDragStart = { offset ->
+                                                            rowHoverX = offset.x
+                                                        },
+                                                        onHorizontalDrag = { change, _ ->
+                                                            rowHoverX = change.position.x
+                                                        },
+                                                        onDragEnd = { rowHoverX = null },
+                                                        onDragCancel = { rowHoverX = null }
+                                                    )
+                                                },
+                                            verticalAlignment = Alignment.Bottom,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)
+                                        ) {
+                                            shelfRow.forEach { (globalIdx, book) ->
+                                                val pages = book.pagesCount.coerceIn(80, 950)
+                                                val wDp = (38 + ((pages - 80) * 16) / (950 - 80)).dp.coerceIn(38.dp, 54.dp)
+                                                val hDp = remember(book.id, book.heightCm) {
+                                                    if (book.heightCm > 0f) {
+                                                        val clampedCm = book.heightCm.coerceIn(14f, 30f)
+                                                        (176f + ((clampedCm - 14f) / 16f) * 76f).dp
+                                                    } else {
+                                                        (208 + (abs(book.id.hashCode()) % 28)).dp
+                                                    }
+                                                }
+                                                val isSelected = uiState.libSelectedIds.contains(book.id)
+
+                                                val isScrubbingOrSelected = rowHoverX != null || isSelected
+                                                val isHovered = if (rowHoverX != null) {
+                                                    rowSpineBoundsMap[globalIdx]?.let { (left, right) -> rowHoverX!! in left..right } == true
+                                                } else false
+
+                                                val liftOffset: Dp
+                                                val scaleAnim: Float
+                                                if (isScrubbingOrSelected) {
+                                                    val targetLift = when {
+                                                        isHovered || isSelected -> (-18).dp
+                                                        else -> 0.dp
+                                                    }
+                                                    val targetScale = when {
+                                                        isHovered -> 1.03f
+                                                        else -> 1f
+                                                    }
+                                                    val animLift by animateDpAsState(
+                                                        targetValue = targetLift,
+                                                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                                        label = "spineLift"
+                                                    )
+                                                    val animScale by animateFloatAsState(
+                                                        targetValue = targetScale,
+                                                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                                        label = "spineScale"
+                                                    )
+                                                    liftOffset = animLift
+                                                    scaleAnim = animScale
+                                                } else {
+                                                    liftOffset = 0.dp
+                                                    scaleAnim = 1f
+                                                }
+
+                                                val spineShape = RoundedCornerShape(
+                                                    topStart = 5.dp,
+                                                    topEnd = 5.dp,
+                                                    bottomStart = 3.dp,
+                                                    bottomEnd = 3.dp
                                                 )
-                                            },
-                                        verticalAlignment = Alignment.Bottom,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)
-                                    ) {
-                                          shelfRow.forEach { (globalIdx, book) ->
-                                               val pages = book.pagesCount.coerceIn(80, 950)
-                                               val wDp = (38 + ((pages - 80) * 16) / (950 - 80)).dp.coerceIn(38.dp, 54.dp)
-                                               val hDp = remember(book.id, book.heightCm) {
-                                                   if (book.heightCm > 0f) {
-                                                       val clampedCm = book.heightCm.coerceIn(14f, 30f)
-                                                       (176f + ((clampedCm - 14f) / 16f) * 76f).dp // Maps 14cm..30cm -> 176.dp..252.dp
-                                                   } else {
-                                                       (208 + (abs(book.id.hashCode()) % 28)).dp
-                                                   }
-                                               }
-                                               val isSelected = uiState.libSelectedIds.contains(book.id)
+                                                val spineTextColor = Color(book.spineTextColorHex)
+                                                val shortTitle = remember(book.title) {
+                                                    book.title.substringBefore(":").trim().ifBlank { book.title }
+                                                }
+                                                val firstAuthor = remember(book.author) {
+                                                    book.author.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
+                                                }
 
-                                               val isHovered = rowHoverX?.let { x ->
-                                                   rowSpineBoundsMap[globalIdx]?.let { (left, right) -> x in left..right }
-                                               } == true
-                                               val targetLift = when {
-                                                   isHovered || isSelected -> (-18).dp
-                                                   else -> 0.dp
-                                               }
-                                               val targetScale = when {
-                                                   isHovered -> 1.03f
-                                                   else -> 1f
-                                               }
-                                               val liftOffset by animateDpAsState(
-                                                   targetValue = targetLift,
-                                                   animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                                                   label = "spineLift"
-                                               )
-                                               val scaleAnim by animateFloatAsState(
-                                                   targetValue = targetScale,
-                                                   animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                                                   label = "spineScale"
-                                               )
+                                                val hasSavedColor = book.spineColorHex != 0L && book.spineColorHex != 0xFF2B3A4AL
+                                                val effectiveSpineColor = remember(book.spineColorHex) {
+                                                    if (hasSavedColor) Color(book.spineColorHex) else Color(0xFF2B3A4A)
+                                                }
 
-                                               val spineShape = RoundedCornerShape(
-                                                   topStart = 5.dp,
-                                                   topEnd = 5.dp,
-                                                   bottomStart = 3.dp,
-                                                   bottomEnd = 3.dp
-                                               )
-                                               val spineTextColor = Color(book.spineTextColorHex)
-                                               val shortTitle = remember(book.title) {
-                                                   book.title.substringBefore(":").trim().ifBlank { book.title }
-                                               }
-                                               val firstAuthor = remember(book.author) {
-                                                   book.author.trim().split(Regex("\\s+")).firstOrNull()?.uppercase().orEmpty()
-                                               }
-
-                                               val spineContext = LocalContext.current
-                                               val effectiveSpineColor = remember(book.spineColorHex) {
-                                                   if (book.spineColorHex != 0L) Color(book.spineColorHex) else Color(0xFF2B3A4A)
-                                               }
-                                               
-                                               // Only extract spine color if not already set
-                                               LaunchedEffect(book.id, book.coverImagePath) {
-                                                   val coverPath = book.coverImagePath
-                                                   if (book.spineColorHex == 0L && !coverPath.isNullOrBlank() && !coverPath.startsWith("http", ignoreCase = true)) {
-                                                       withContext(Dispatchers.IO) {
-                                                           runCatching {
-                                                               val opts = BitmapFactory.Options().apply { inSampleSize = 8 }
-                                                               val bmp = BitmapFactory.decodeFile(coverPath, opts)
+                                                if (!hasSavedColor && !book.coverImagePath.isNullOrBlank() && !book.coverImagePath.startsWith("http", ignoreCase = true)) {
+                                                    LaunchedEffect(book.id, book.coverImagePath) {
+                                                        val coverPath = book.coverImagePath
+                                                        withContext(Dispatchers.IO) {
+                                                            runCatching {
+                                                                val opts = BitmapFactory.Options().apply {
+                                                                    inSampleSize = 8
+                                                                    inPreferredConfig = Bitmap.Config.RGB_565
+                                                                }
+                                                                val bmp = BitmapFactory.decodeFile(coverPath, opts)
                                                                 if (bmp != null) {
                                                                     val extracted = SpineColorExtractor.extractDominantSpineHex(bmp)
                                                                     bmp.recycle()
@@ -566,166 +613,177 @@ fun LibraryScreen(
 
                                                 val displaySpineColor = spineColorCache[book.id] ?: effectiveSpineColor
 
-                                               Box(
-                                                   modifier = Modifier
-                                                       .width(wDp)
-                                                       .height(hDp)
-                                                       .zIndex(if (isHovered || isSelected) 25f else 1f)
-                                                       .offset(y = liftOffset)
-                                                       .scale(scaleAnim)
-                                                       .onGloballyPositioned { coords ->
-                                                           val left = coords.positionInParent().x
-                                                           rowSpineBoundsMap[globalIdx] = Pair(left, left + coords.size.width)
-                                                       }
-                                                     .shadow(if (isHovered || isSelected) 14.dp else 6.dp, spineShape)
-                                                     .clip(spineShape)
-                                                     .background(displaySpineColor)
-                                                     .background(
-                                                         Brush.horizontalGradient(
-                                                             colors = listOf(
-                                                                 Color.White.copy(alpha = 0.28f),
-                                                                 Color.White.copy(alpha = 0.06f),
-                                                                 Color.Black.copy(alpha = 0.04f),
-                                                                 Color.Black.copy(alpha = 0.22f)
-                                                             )
-                                                         )
-                                                     )
-                                                     .border(
-                                                         width = if (isSelected) 2.5.dp else 1.dp,
-                                                         color = if (isSelected) palette.textMain else Color.Black.copy(alpha = 0.12f),
-                                                         shape = spineShape
-                                                     )
-                                                     .combinedClickable(
-                                                         onClick = {
-                                                             if (uiState.libSelectMode) onToggleSelectBook(book.id)
-                                                             else onOpenBook(book.id)
-                                                         },
-                                                         onLongClick = { onToggleSelectBook(book.id) }
-                                                     )
-                                             ) {
-                                                 // Left edge book-crease texture (5dp)
-                                                 Box(
-                                                     modifier = Modifier
-                                                         .width(5.dp)
-                                                         .fillMaxHeight()
-                                                         .align(Alignment.CenterStart)
-                                                         .background(
-                                                             Brush.horizontalGradient(
-                                                                 colors = listOf(
-                                                                     Color.Black.copy(alpha = 0.24f),
-                                                                     Color.White.copy(alpha = 0.14f),
-                                                                     Color.Transparent
-                                                                 )
-                                                             )
-                                                         )
-                                                 )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .width(wDp)
+                                                        .height(hDp)
+                                                        .zIndex(if (isHovered || isSelected) 25f else 1f)
+                                                        .offset(y = liftOffset)
+                                                        .scale(scaleAnim)
+                                                        .onGloballyPositioned { coords ->
+                                                            val left = coords.positionInParent().x
+                                                            rowSpineBoundsMap[globalIdx] = Pair(left, left + coords.size.width)
+                                                        }
+                                                        .shadow(if (isHovered || isSelected) 14.dp else 6.dp, spineShape)
+                                                        .clip(spineShape)
+                                                        .background(displaySpineColor)
+                                                        .background(
+                                                            Brush.horizontalGradient(
+                                                                colors = listOf(
+                                                                    Color.White.copy(alpha = 0.28f),
+                                                                    Color.White.copy(alpha = 0.06f),
+                                                                    Color.Black.copy(alpha = 0.04f),
+                                                                    Color.Black.copy(alpha = 0.22f)
+                                                                )
+                                                            )
+                                                        )
+                                                        .border(
+                                                            width = if (isSelected) 2.5.dp else 1.dp,
+                                                            color = if (isSelected) palette.textMain else Color.Black.copy(alpha = 0.12f),
+                                                            shape = spineShape
+                                                        )
+                                                        .combinedClickable(
+                                                            onClick = {
+                                                                if (uiState.libSelectMode) onToggleSelectBook(book.id)
+                                                                else onOpenBook(book.id)
+                                                            },
+                                                            onLongClick = { onToggleSelectBook(book.id) }
+                                                        )
+                                                ) {
+                                                    // Left edge book-crease texture (5dp)
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .width(5.dp)
+                                                            .fillMaxHeight()
+                                                            .align(Alignment.CenterStart)
+                                                            .background(
+                                                                Brush.horizontalGradient(
+                                                                    colors = listOf(
+                                                                        Color.Black.copy(alpha = 0.24f),
+                                                                        Color.White.copy(alpha = 0.14f),
+                                                                        Color.Transparent
+                                                                    )
+                                                                )
+                                                            )
+                                                    )
 
-                                                 // Ribbon bookmark tag if finished reading
-                                                 if (book.progress >= 100 || book.completedAllPages) {
-                                                     Box(
-                                                         modifier = Modifier
-                                                             .align(Alignment.TopEnd)
-                                                             .padding(end = 5.dp)
-                                                             .width(6.dp)
-                                                             .height(18.dp)
-                                                             .clip(RoundedCornerShape(bottomStart = 2.dp, bottomEnd = 2.dp))
-                                                             .background(Color(0xFFD4A74A))
-                                                     )
-                                                 }
+                                                    // Ribbon bookmark tag if finished reading
+                                                    if (book.progress >= 100 || book.completedAllPages) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .align(Alignment.TopEnd)
+                                                                .padding(end = 5.dp)
+                                                                .width(6.dp)
+                                                                .height(18.dp)
+                                                                .clip(RoundedCornerShape(bottomStart = 2.dp, bottomEnd = 2.dp))
+                                                                .background(Color(0xFFD4A74A))
+                                                        )
+                                                    }
 
-                                                 Column(
-                                                     modifier = Modifier
-                                                         .fillMaxSize()
-                                                         .padding(vertical = 10.dp, horizontal = 2.dp),
-                                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                                     verticalArrangement = Arrangement.SpaceBetween
-                                                 ) {
-                                                     if (uiState.libSelectMode) {
-                                                         SelectionCheckBadge(
-                                                             selected = isSelected,
-                                                             sizeDp = 16.dp
-                                                         )
-                                                     } else {
-                                                         Text(
-                                                             text = "✦",
-                                                             color = spineTextColor.copy(alpha = 0.6f),
-                                                             fontSize = 8.sp,
-                                                             fontFamily = FontFamily.Monospace
-                                                         )
-                                                     }
+                                                    Column(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .padding(vertical = 10.dp, horizontal = 2.dp),
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        verticalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        if (uiState.libSelectMode) {
+                                                            SelectionCheckBadge(
+                                                                selected = isSelected,
+                                                                sizeDp = 16.dp
+                                                            )
+                                                        } else {
+                                                            Text(
+                                                                text = "✦",
+                                                                color = spineTextColor.copy(alpha = 0.6f),
+                                                                fontSize = 8.sp,
+                                                                fontFamily = FontFamily.Monospace
+                                                            )
+                                                        }
 
-                                                     // Vertical Rotated Book Title (matching `writing-mode: vertical-rl` in prototype)
-                                                     Box(
-                                                         modifier = Modifier
-                                                             .weight(1f)
-                                                             .fillMaxWidth(),
-                                                         contentAlignment = Alignment.Center
-                                                     ) {
-                                                         VerticalRotatedText(
-                                                             text = shortTitle,
-                                                             color = spineTextColor,
-                                                             fontSizeSp = 11.5f,
-                                                             fontFamily = FontFamily.Serif,
-                                                             fontWeight = FontWeight.Medium
-                                                         )
-                                                     }
+                                                        // Vertical Rotated Book Title (matching `writing-mode: vertical-rl` in prototype)
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .fillMaxWidth(),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            VerticalRotatedText(
+                                                                text = shortTitle,
+                                                                color = spineTextColor,
+                                                                fontSizeSp = 11.5f,
+                                                                fontFamily = FontFamily.Serif,
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                        }
 
-                                                     // Page Count + Author First Name at Bottom of Spine
-                                                     Column(
-                                                         horizontalAlignment = Alignment.CenterHorizontally,
-                                                         verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                     ) {
-                                                         Text(
-                                                             text = pages.toString(),
-                                                             color = spineTextColor.copy(alpha = 0.72f),
-                                                             fontSize = 8.5.sp,
-                                                             fontFamily = FontFamily.Monospace
-                                                         )
-                                                         Box(
-                                                             modifier = Modifier.height(44.dp),
-                                                             contentAlignment = Alignment.Center
-                                                         ) {
-                                                             VerticalRotatedText(
-                                                                 text = firstAuthor.take(8),
-                                                                 color = spineTextColor.copy(alpha = 0.75f),
-                                                                 fontSizeSp = 8f,
-                                                                 fontFamily = FontFamily.Monospace,
-                                                                 fontWeight = FontWeight.Medium
-                                                             )
-                                                         }
-                                                     }
-                                                 }
-                                             }
-                                         }
+                                                        // Page Count + Author First Name at Bottom of Spine
+                                                        Column(
+                                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = pages.toString(),
+                                                                color = spineTextColor.copy(alpha = 0.72f),
+                                                                fontSize = 8.5.sp,
+                                                                fontFamily = FontFamily.Monospace
+                                                            )
+                                                            Box(
+                                                                modifier = Modifier.height(44.dp),
+                                                                contentAlignment = Alignment.Center
+                                                            ) {
+                                                                VerticalRotatedText(
+                                                                    text = firstAuthor.take(8),
+                                                                    color = spineTextColor.copy(alpha = 0.75f),
+                                                                    fontSizeSp = 8f,
+                                                                    fontFamily = FontFamily.Monospace,
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Flush Shelf Plank (`h-3.5 w-full rounded-full shadow-inner lg-surface`)
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = palette.bgSurface,
+                                            border = BorderStroke(1.dp, palette.borderSoft),
+                                            shadowElevation = 2.dp,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(14.dp)
+                                        ) {}
                                     }
-                                    // Flush Shelf Plank (`h-3.5 w-full rounded-full shadow-inner lg-surface`)
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = palette.bgSurface,
-                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                        shadowElevation = 2.dp,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(14.dp)
-                                    ) {}
                                 }
                             }
+                            item(key = "spine_bottom_base", contentType = "spine_frame") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(14.dp)
+                                        .clip(RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
+                                        .background(Color(0xFF4A3520).copy(alpha = 0.7f))
+                                )
+                            }
                         }
-                    }
 
-                    // 2. GRID MODE & 3. FULL COVER MODE (Novel 2:3 Aspect Ratio + 3dp Progress Bar in Grid Mode)
-                    LibraryViewMode.GRID, LibraryViewMode.COVERS -> {
-                        val isCoversOnly = viewMode == LibraryViewMode.COVERS
-                        val cols = if (prefs.libGridCols in 2..5) prefs.libGridCols else if (isCoversOnly) 3 else 2
-                        val rows = filteredBooks.chunked(cols)
-
-                        Column(verticalArrangement = Arrangement.spacedBy(if (isCoversOnly) 12.dp else 14.dp)) {
-                            rows.forEach { rowItems ->
+                        // 2. GRID MODE & 3. FULL COVER MODE (Novel 2:3 Aspect Ratio + 3dp Progress Bar in Grid Mode)
+                        LibraryViewMode.GRID, LibraryViewMode.COVERS -> {
+                            val isCoversOnly = prefs.libViewMode == LibraryViewMode.COVERS
+                            itemsIndexed(
+                                items = gridRows,
+                                key = { rowIdx, row -> "grid_row_${rowIdx}_${row.first().id}" },
+                                contentType = { _, _ -> "grid_row" }
+                            ) { _, rowBooks ->
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(if (isCoversOnly) 12.dp else 14.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = if (isCoversOnly) 14.dp else 18.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
-                                    rowItems.forEach { book ->
+                                    rowBooks.forEach { book ->
                                         val isSelected = uiState.libSelectedIds.contains(book.id)
                                         val importPct = uiState.importingBooksProgress[book.id]
                                         Column(
@@ -743,6 +801,7 @@ fun LibraryScreen(
                                             Box {
                                                 BookCoverCard(
                                                     book = book,
+                                                    coverStyle = prefs.libCoverStyle,
                                                     showTitleInsideFallback = isCoversOnly,
                                                     importProgress = importPct,
                                                     modifier = Modifier.fillMaxWidth()
@@ -788,126 +847,131 @@ fun LibraryScreen(
                                             }
                                         }
                                     }
-                                    repeat(cols - rowItems.size) {
+                                    repeat(gridCols - rowBooks.size) {
                                         Spacer(modifier = Modifier.weight(1f))
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // 4. LIST MODE (1:1 with `renderLibrary` list mode in `llunevie_prototype.html`)
-                    LibraryViewMode.LIST -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            filteredBooks.forEach { book ->
+                        // 4. LIST MODE (1:1 with `renderLibrary` list mode in `llunevie_prototype.html`)
+                        LibraryViewMode.LIST -> {
+                            items(
+                                items = filteredBooks,
+                                key = { book -> "list_book_${book.id}" },
+                                contentType = { "list_book" }
+                            ) { book ->
                                 val isSelected = uiState.libSelectedIds.contains(book.id)
                                 val importPct = uiState.importingBooksProgress[book.id]
-                                Surface(
-                                    shape = RoundedCornerShape(24.dp),
-                                    color = palette.bgCard,
-                                    border = BorderStroke(
-                                        width = if (isSelected) 2.dp else 1.dp,
-                                        color = if (isSelected) palette.textMain else palette.borderSoft
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(24.dp))
-                                        .combinedClickable(
-                                            onClick = {
-                                                if (uiState.libSelectMode) onToggleSelectBook(book.id)
-                                                else onOpenBook(book.id)
-                                            },
-                                            onLongClick = { onToggleSelectBook(book.id) }
-                                        )
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(14.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                Box(modifier = Modifier.padding(bottom = 12.dp)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(24.dp),
+                                        color = palette.bgCard,
+                                        border = BorderStroke(
+                                            width = if (isSelected) 2.dp else 1.dp,
+                                            color = if (isSelected) palette.textMain else palette.borderSoft
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(24.dp))
+                                            .combinedClickable(
+                                                onClick = {
+                                                    if (uiState.libSelectMode) onToggleSelectBook(book.id)
+                                                    else onOpenBook(book.id)
+                                                },
+                                                onLongClick = { onToggleSelectBook(book.id) }
+                                            )
                                     ) {
-                                        BookCoverCard(
-                                            book = book,
-                                            showTitleInsideFallback = false,
-                                            importProgress = importPct,
-                                            modifier = Modifier.width(56.dp)
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = book.title,
-                                                color = palette.textMain,
-                                                fontSize = 15.5.sp,
-                                                fontFamily = FontFamily.Serif,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
+                                        Row(
+                                            modifier = Modifier.padding(14.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                        ) {
+                                            BookCoverCard(
+                                                book = book,
+                                                coverStyle = prefs.libCoverStyle,
+                                                showTitleInsideFallback = false,
+                                                importProgress = importPct,
+                                                modifier = Modifier.width(56.dp)
                                             )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = book.author,
-                                                color = palette.textMuted,
-                                                fontSize = 12.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            val metaText = remember(book.year, book.pagesCount, book.shelf, book.genres, strings.pagesUnit) {
-                                                val base = "${book.year} · ${book.pagesCount} ${strings.pagesUnit} · ${strings.localizeShelfName(book.shelf)}"
-                                                if (book.genres.isNotBlank()) "$base · ${book.genreList().take(3).joinToString(", ")}" else base
-                                            }
-                                            Text(
-                                                text = metaText,
-                                                color = palette.textMuted,
-                                                fontSize = 10.5.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.height(10.dp))
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                LinearProgressIndicator(
-                                                    progress = { (book.progress / 100f).coerceIn(0f, 1f) },
-                                                    color = palette.textMain,
-                                                    trackColor = palette.borderSoft,
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .height(6.dp)
-                                                        .clip(CircleShape)
-                                                )
+                                            Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = "${book.progress}% ${strings.readSuffix}",
-                                                    color = palette.textMuted,
-                                                    fontSize = 10.sp,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontWeight = FontWeight.Medium
+                                                    text = book.title,
+                                                    color = palette.textMain,
+                                                    fontSize = 15.5.sp,
+                                                    fontFamily = FontFamily.Serif,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = book.author,
+                                                    color = palette.textMuted,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                val metaText = remember(book.year, book.pagesCount, book.shelf, book.genres, strings.pagesUnit) {
+                                                    val base = "${book.year} · ${book.pagesCount} ${strings.pagesUnit} · ${strings.localizeShelfName(book.shelf)}"
+                                                    if (book.genres.isNotBlank()) "$base · ${book.genreList().take(3).joinToString(", ")}" else base
+                                                }
+                                                Text(
+                                                    text = metaText,
+                                                    color = palette.textMuted,
+                                                    fontSize = 10.5.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(10.dp))
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                ) {
+                                                    LinearProgressIndicator(
+                                                        progress = { (book.progress / 100f).coerceIn(0f, 1f) },
+                                                        color = palette.textMain,
+                                                        trackColor = palette.borderSoft,
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .height(6.dp)
+                                                            .clip(CircleShape)
+                                                    )
+                                                    Text(
+                                                        text = "${book.progress}% ${strings.readSuffix}",
+                                                        color = palette.textMuted,
+                                                        fontSize = 10.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
                                             }
-                                        }
-                                        if (uiState.libSelectMode) {
-                                            SelectionCheckBadge(selected = isSelected)
+                                            if (uiState.libSelectMode) {
+                                                SelectionCheckBadge(selected = isSelected)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+
+                    item(key = "library_footer", contentType = "footer") {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text(
+                            text = "${filteredBooks.size} ${strings.booksUnit} · ${strings.localizeShelfName(prefs.libShelf).uppercase()}",
+                            color = palette.textMuted,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.6.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
-        }
-
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(
-                text = "${filteredBooks.size} ${strings.booksUnit} · ${strings.localizeShelfName(prefs.libShelf).uppercase()}",
-                color = palette.textMuted,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 1.6.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
 
         // FLOATING MULTI-SELECT TOP ACTION PILL (`#libSelectionBar` in `llunevie_prototype.html`)
         AnimatedVisibility(
@@ -1607,6 +1671,29 @@ fun LibraryScreen(
                                     }
                                 }
                             }
+                        }
+
+                        // 2.5 GAYA SAMPUL BUKU (BOOK COVER STYLE) Segmented Control
+                        Column {
+                            Text(
+                                text = if (strings.isId) "GAYA SAMPUL BUKU" else "BOOK COVER STYLE",
+                                color = palette.textMuted,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            val coverStyleOptions = listOf(
+                                "rounded" to (if (strings.isId) "Membulat" else "Rounded"),
+                                "flat_crease" to (if (strings.isId) "Buku 2D" else "Flat Crease"),
+                                "book_3d" to (if (strings.isId) "Buku 3D" else "3D Pages")
+                            )
+                            ClassicGlassSegmentedControl(
+                                items = coverStyleOptions,
+                                selectedItem = prefs.libCoverStyle,
+                                onItemSelected = onSetCoverStyle
+                            )
                         }
 
                         // 3. STATUS BACA (READING STATUS) Segmented Control

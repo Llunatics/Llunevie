@@ -411,6 +411,7 @@ private fun LlunevieMainContainer(
                     onSetSort = { viewModel.setLibrarySort(it) },
                     onSetFilter = { viewModel.setLibraryFilter(it) },
                     onSetStatus = { viewModel.setLibraryStatus(it) },
+                    onSetCoverStyle = { viewModel.setLibraryCoverStyle(it) },
                     onSetShelf = { viewModel.setLibraryShelf(it) },
                     onSetGenre = { viewModel.setLibraryGenre(it) },
                     onAddCustomGenre = { viewModel.addCustomGenre(it) },

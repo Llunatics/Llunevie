@@ -52,6 +52,7 @@ data class UserPreferencesState(
     val pageMarginDp: Int = 24,
     val paraIndent: Boolean = false,
     val libViewMode: LibraryViewMode = LibraryViewMode.SPINE,
+    val libCoverStyle: String = "rounded",
     val libShelf: String = "all",
     val libFilter: String = "all",
     val libStatus: String = "all",
@@ -135,6 +136,7 @@ class UserPreferencesRepository(private val context: Context) {
         val PAGE_MARGIN = intPreferencesKey("page_margin")
         val PARA_INDENT = booleanPreferencesKey("para_indent")
         val LIB_VIEW_MODE = stringPreferencesKey("lib_view_mode")
+        val LIB_COVER_STYLE = stringPreferencesKey("lib_cover_style")
         val LIB_SHELF = stringPreferencesKey("lib_shelf")
         val LIB_FILTER = stringPreferencesKey("lib_filter")
         val LIB_STATUS = stringPreferencesKey("lib_status")
@@ -199,6 +201,7 @@ class UserPreferencesRepository(private val context: Context) {
             pageMarginDp = prefs[Keys.PAGE_MARGIN] ?: 24,
             paraIndent = prefs[Keys.PARA_INDENT] ?: false,
             libViewMode = LibraryViewMode.fromKey(prefs[Keys.LIB_VIEW_MODE]),
+            libCoverStyle = prefs[Keys.LIB_COVER_STYLE] ?: "rounded",
             libShelf = prefs[Keys.LIB_SHELF] ?: "all",
             libFilter = prefs[Keys.LIB_FILTER] ?: "all",
             libStatus = prefs[Keys.LIB_STATUS] ?: "all",
@@ -352,6 +355,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setLibraryGenre(genre: String) {
         context.llunevieDataStore.edit { it[Keys.LIB_GENRE] = genre.trim() }
+    }
+
+    suspend fun setLibraryCoverStyle(style: String) {
+        context.llunevieDataStore.edit { it[Keys.LIB_COVER_STYLE] = style }
     }
 
     suspend fun addCustomGenre(genre: String) {
