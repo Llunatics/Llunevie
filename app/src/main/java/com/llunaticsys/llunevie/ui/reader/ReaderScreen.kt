@@ -2079,13 +2079,17 @@ fun ReaderScreen(
         }
 
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
-        if (showReaderChrome) {
+        AnimatedVisibility(
+            visible = showReaderChrome,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { -it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+        ) {
             val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
             val topBarStartPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
             val topBarEndPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .windowInsetsPadding(WindowInsets.displayCutout)
@@ -2489,7 +2493,12 @@ fun ReaderScreen(
         }
 
         // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
-        if (showReaderChrome && !isTwoPageSpread) {
+        AnimatedVisibility(
+            visible = showReaderChrome && !isTwoPageSpread,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+        ) {
             val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
             val pageIndicatorLabel = when (prefs.readingFlowMode) {
                 ReadingFlowMode.WEBTOON -> {
@@ -2514,7 +2523,6 @@ fun ReaderScreen(
 
             Row(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .padding(horizontal = 20.dp)
@@ -3019,17 +3027,28 @@ fun ReaderScreen(
         }
 
         // HIGHLIGHT & NOTE POPOVER (`#highlightPopover`)
-        selectedQuoteForPopover?.let { quote ->
+        var cachedQuoteForPopover by remember { mutableStateOf<String?>(null) }
+        if (selectedQuoteForPopover != null) {
+            cachedQuoteForPopover = selectedQuoteForPopover
+        }
+
+        AnimatedVisibility(
+            visible = selectedQuoteForPopover != null,
+            enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)),
+            exit = fadeOut(tween(130)) + scaleOut(targetScale = 0.94f, animationSpec = tween(130)),
+            modifier = Modifier
+                .align(if (selectedPopoverInUpperHalf) Alignment.BottomCenter else Alignment.TopCenter)
+                .padding(horizontal = 16.dp, vertical = 52.dp)
+                .fillMaxWidth()
+        ) {
+            val quote = cachedQuoteForPopover ?: selectedQuoteForPopover.orEmpty()
             val existingHl = bookHighlights.find { it.quoteText.equals(quote, ignoreCase = true) }
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = palette.sheetBg.copy(alpha = 0.97f),
                 border = BorderStroke(1.dp, palette.borderSoft),
                 shadowElevation = 16.dp,
-                modifier = Modifier
-                    .align(if (selectedPopoverInUpperHalf) Alignment.BottomCenter else Alignment.TopCenter)
-                    .padding(horizontal = 16.dp, vertical = 52.dp)
-                    .fillMaxWidth()
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
@@ -3561,8 +3580,40 @@ fun ReaderScreen(
         }
 
         // IN-BOOK SEARCH OVERLAY (`#inBookSearchDrawer`)
-        inBookSearchQuery?.let { initialQuery ->
-            var currentQuery by remember { mutableStateOf(initialQuery) }
+        var cachedSearchQuery by remember { mutableStateOf<String?>(null) }
+        if (inBookSearchQuery != null) {
+            cachedSearchQuery = inBookSearchQuery
+        }
+
+        // Search Scrim
+        AnimatedVisibility(
+            visible = inBookSearchQuery != null,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160)),
+            modifier = Modifier.zIndex(90f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { inBookSearchQuery = null }
+            )
+        }
+
+        // Search Panel
+        AnimatedVisibility(
+            visible = inBookSearchQuery != null,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(91f)
+        ) {
+            val initialQuery = cachedSearchQuery ?: inBookSearchQuery.orEmpty()
+            var currentQuery by remember(cachedSearchQuery) { mutableStateOf(initialQuery) }
             val searchResults = remember(currentQuery, chapters) {
                 val q = currentQuery.trim()
                 if (q.length < 2) emptyList()
@@ -3587,30 +3638,19 @@ fun ReaderScreen(
                 }
             }
 
-            Box(
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.72f)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
-                    ) { inBookSearchQuery = null }
-                    .zIndex(90f)
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.72f)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -3773,23 +3813,27 @@ fun ReaderScreen(
                     }
                 }
             }
-        }
 
         val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
         // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
-        if (uiState.showReaderTypeSheet) {
-            val scrimAlpha by animateFloatAsState(
-                targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
-                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-                label = "settingsScrimAlpha"
-            )
-            val nonActiveAlpha by animateFloatAsState(
-                targetValue = if (activeDraggingSliderKey != null) 0f else 1f,
-                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-                label = "nonActiveAlpha"
-            )
+        val scrimAlpha by animateFloatAsState(
+            targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
+            animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+            label = "settingsScrimAlpha"
+        )
+        val nonActiveAlpha by animateFloatAsState(
+            targetValue = if (activeDraggingSliderKey != null) 0f else 1f,
+            animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+            label = "nonActiveAlpha"
+        )
 
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showReaderTypeSheet,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -3798,22 +3842,30 @@ fun ReaderScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleTypeSheet(false, null) }
+            )
+        }
+
+        // Bottom Sheet Panel
+        AnimatedVisibility(
+            visible = uiState.showReaderTypeSheet,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = palette.bgSurface.copy(alpha = nonActiveAlpha),
+                border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = nonActiveAlpha)),
+                shadowElevation = (8f * nonActiveAlpha).dp,
+                modifier = Modifier
+                    .widthIn(min = 340.dp, max = 420.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = if (isLandscape) 310.dp else 460.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = palette.bgSurface.copy(alpha = nonActiveAlpha),
-                    border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = nonActiveAlpha)),
-                    shadowElevation = (8f * nonActiveAlpha).dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .widthIn(min = 340.dp, max = 420.dp)
-                        .fillMaxWidth()
-                        .heightIn(max = if (isLandscape) 310.dp else 460.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -3917,15 +3969,38 @@ fun ReaderScreen(
 
                         val currentTabKey = if (isPdfBook && uiState.activeReaderSheetTab == "text") "turn" else uiState.activeReaderSheetTab
 
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            when (currentTabKey) {
-                                // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
-                                "text" -> {
+                        AnimatedContent(
+                            targetState = currentTabKey,
+                            transitionSpec = {
+                                val tabOrder = listOf("text", "page", "turn")
+                                val initialIdx = when (initialState) {
+                                    "text", "type" -> 0
+                                    "page" -> 1
+                                    "turn" -> 2
+                                    else -> 0
+                                }
+                                val targetIdx = when (targetState) {
+                                    "text", "type" -> 0
+                                    "page" -> 1
+                                    "turn" -> 2
+                                    else -> 0
+                                }
+                                val dir = if (targetIdx >= initialIdx) 1 else -1
+                                (slideInHorizontally(spring(dampingRatio = 0.88f, stiffness = 420f)) { w -> dir * (w / 3) } + fadeIn(tween(180)))
+                                    .togetherWith(slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { w -> -dir * (w / 3) } + fadeOut(tween(140)))
+                            },
+                            modifier = Modifier.animateContentSize(spring(dampingRatio = 0.88f, stiffness = 420f)),
+                            label = "readerTypeTabContent"
+                        ) { tab ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                when (tab) {
+                                    // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
+                                    "text", "type" -> {
                                     Column(
                                         modifier = Modifier.alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "FONT_SIZE") 1f else nonActiveAlpha)
                                     ) {
@@ -4521,7 +4596,12 @@ fun ReaderScreen(
             }
 
         // 5. LEFT SIDEBAR TOC & ILLUSTRATIONS DRAWER (`#readerTocDrawer` with Footer Progress Bar!)
-        if (uiState.showReaderTocDrawer) {
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showReaderTocDrawer,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(180))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -4530,21 +4610,30 @@ fun ReaderScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleTocDrawer(false) }
+            )
+        }
+
+        // Left Drawer Panel
+        AnimatedVisibility(
+            visible = uiState.showReaderTocDrawer,
+            enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { -it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(160)),
+            modifier = Modifier.align(Alignment.CenterStart)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.82f)
+                    .widthIn(max = 300.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.82f)
-                        .widthIn(max = 300.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -5256,15 +5345,14 @@ fun ReaderScreen(
                     }
                 }
             }
-        }
 
         // 6. RIGHT SAVED NOTES & HIGHLIGHTS DRAWER (`#readerNotesDrawer`)
-        if (uiState.showReaderNotesDrawer) {
-            var isAddingManualNote by remember { mutableStateOf(false) }
-            var manualNoteText by remember { mutableStateOf("") }
-            var manualQuoteText by remember { mutableStateOf("") }
-            var selectedNoteColor by remember { mutableStateOf(HighlightColorKey.GOLD) }
-
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showReaderNotesDrawer,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(180))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -5273,22 +5361,35 @@ fun ReaderScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleNotesDrawer(false) }
+            )
+        }
+
+        // Right Drawer Panel
+        AnimatedVisibility(
+            visible = uiState.showReaderNotesDrawer,
+            enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(160)),
+            modifier = Modifier.align(Alignment.CenterEnd)
+        ) {
+            var isAddingManualNote by remember { mutableStateOf(false) }
+            var manualNoteText by remember { mutableStateOf("") }
+            var manualQuoteText by remember { mutableStateOf("") }
+            var selectedNoteColor by remember { mutableStateOf(HighlightColorKey.GOLD) }
+
+            Surface(
+                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.84f)
+                    .widthIn(max = 300.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.84f)
-                        .widthIn(max = 300.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -5731,12 +5832,16 @@ fun ReaderScreen(
             }
         }
     }
-        }
 
         // 7. OPAQUE ILLUSTRATION VIEWER MODAL (`#illustViewerModal`)
-        if (uiState.showIllustViewer && uiState.activeBookIllustrations.isNotEmpty()) {
+        AnimatedVisibility(
+            visible = uiState.showIllustViewer && uiState.activeBookIllustrations.isNotEmpty(),
+            enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.95f, animationSpec = tween(200)),
+            exit = fadeOut(tween(160)) + scaleOut(targetScale = 0.95f, animationSpec = tween(160)),
+            modifier = Modifier.fillMaxSize()
+        ) {
             val illusts = uiState.activeBookIllustrations
-            val activeItem = illusts.getOrElse(uiState.activeIllustIndex) { illusts.first() }
+            val activeItem = illusts.getOrElse(uiState.activeIllustIndex) { illusts.firstOrNull() ?: return@AnimatedVisibility }
             var manualScale by remember(uiState.activeIllustIndex) { mutableFloatStateOf(1f) }
             var panOffset by remember(uiState.activeIllustIndex) { mutableStateOf(Offset.Zero) }
             val currentZoom = manualScale.coerceIn(1f, 4f)

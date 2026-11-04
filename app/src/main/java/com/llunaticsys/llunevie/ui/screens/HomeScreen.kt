@@ -1,5 +1,10 @@
 package com.llunaticsys.llunevie.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -561,98 +566,108 @@ fun HomeScreen(
                     )
                 }
             }
-        } else if (prefs.homeRecentMode == "grid") {
-            val rows = books.take(6).chunked(3)
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                rows.forEach { rowBooks ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        rowBooks.forEach { book ->
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .clickable { onOpenBook(book.id) }
+        } else {
+            AnimatedContent(
+                targetState = prefs.homeRecentMode,
+                transitionSpec = {
+                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                },
+                label = "homeRecentModeTransition"
+            ) { mode ->
+                if (mode == "grid") {
+                    val rows = books.take(6).chunked(3)
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        rows.forEach { rowBooks ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                BookCoverCard(
-                                    book = book,
-                                    showTitleInsideFallback = false,
-                                    importProgress = importingBooksProgress[book.id],
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = book.title,
-                                    color = palette.textMain,
-                                    fontSize = 13.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = book.displayCollectionTag(strings.isEn),
-                                    color = palette.textMuted,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                rowBooks.forEach { book ->
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable { onOpenBook(book.id) }
+                                    ) {
+                                        BookCoverCard(
+                                            book = book,
+                                            showTitleInsideFallback = false,
+                                            importProgress = importingBooksProgress[book.id],
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = book.title,
+                                            color = palette.textMain,
+                                            fontSize = 13.sp,
+                                            fontFamily = FontFamily.Serif,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = book.displayCollectionTag(strings.isEn),
+                                            color = palette.textMuted,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                                repeat(3 - rowBooks.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
                             }
-                        }
-                        repeat(3 - rowBooks.size) {
-                            Spacer(modifier = Modifier.weight(1f))
                         }
                     }
-                }
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                books.take(8).forEach { book ->
-                    val impPct = importingBooksProgress[book.id]
-                    Surface(
-                        onClick = { onOpenBook(book.id) },
-                        shape = RoundedCornerShape(22.dp),
-                        color = palette.bgCard,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            BookCoverCard(
-                                book = book,
-                                showTitleInsideFallback = false,
-                                importProgress = impPct,
-                                modifier = Modifier.width(48.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = book.title,
-                                    color = palette.textMain,
-                                    fontSize = 14.5.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "${book.displayAuthor(strings.isEn)} · ${book.year} · ${book.displayCollectionTag(strings.isEn)}",
-                                    color = palette.textMuted,
-                                    fontSize = 11.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        books.take(8).forEach { book ->
+                            val impPct = importingBooksProgress[book.id]
+                            Surface(
+                                onClick = { onOpenBook(book.id) },
+                                shape = RoundedCornerShape(22.dp),
+                                color = palette.bgCard,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    BookCoverCard(
+                                        book = book,
+                                        showTitleInsideFallback = false,
+                                        importProgress = impPct,
+                                        modifier = Modifier.width(48.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = book.title,
+                                            color = palette.textMain,
+                                            fontSize = 14.5.sp,
+                                            fontFamily = FontFamily.Serif,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${book.displayAuthor(strings.isEn)} · ${book.year} · ${book.displayCollectionTag(strings.isEn)}",
+                                            color = palette.textMuted,
+                                            fontSize = 11.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Text(
+                                        text = "${book.progress}%",
+                                        color = palette.textMuted,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                             }
-                            Text(
-                                text = "${book.progress}%",
-                                color = palette.textMuted,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
                         }
                     }
                 }

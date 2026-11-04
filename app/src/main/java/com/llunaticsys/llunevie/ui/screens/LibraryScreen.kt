@@ -1,9 +1,21 @@
 package com.llunaticsys.llunevie.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -184,8 +196,14 @@ fun LibraryScreen(
         uiState.showDeleteConfirmDialog ||
         showBatchOrganizeDialog
 
-    val backgroundBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOpenInLibrary) {
-        Modifier.blur(10.dp)
+    val targetBlur = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOpenInLibrary) 10.dp else 0.dp
+    val animatedBlur by animateDpAsState(
+        targetValue = targetBlur,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "libraryBackdropBlur"
+    )
+    val backgroundBlurModifier = if (Build.VERSION.SDK_INT >= 31 && animatedBlur > 0.5.dp) {
+        Modifier.blur(animatedBlur)
     } else {
         Modifier
     }
@@ -414,9 +432,17 @@ fun LibraryScreen(
                     }
                 }
             } else {
-                when (prefs.libViewMode) {
-                    // 1. SPINE SHELF MODE (1:1 with `llunevie_prototype.html`: ✦ top, vertical title, page count, vertical author first name, 3D spine gradient, swipe wave lift, 14dp rounded-full plank)
-                    LibraryViewMode.SPINE -> {
+                AnimatedContent(
+                    targetState = prefs.libViewMode,
+                    transitionSpec = {
+                        (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
+                            .togetherWith(fadeOut(tween(140)))
+                    },
+                    label = "libraryViewModeTransition"
+                ) { viewMode ->
+                    when (viewMode) {
+                        // 1. SPINE SHELF MODE (1:1 with `llunevie_prototype.html`: ✦ top, vertical title, page count, vertical author first name, 3D spine gradient, swipe wave lift, 14dp rounded-full plank)
+                        LibraryViewMode.SPINE -> {
                         val spineColorCache = remember { mutableStateMapOf<String, Color>() }
                         val shelvesRows = remember(filteredBooks) {
                             val rows = mutableListOf<List<Pair<Int, BookEntity>>>()
@@ -689,7 +715,7 @@ fun LibraryScreen(
 
                     // 2. GRID MODE & 3. FULL COVER MODE (Novel 2:3 Aspect Ratio + 3dp Progress Bar in Grid Mode)
                     LibraryViewMode.GRID, LibraryViewMode.COVERS -> {
-                        val isCoversOnly = prefs.libViewMode == LibraryViewMode.COVERS
+                        val isCoversOnly = viewMode == LibraryViewMode.COVERS
                         val cols = if (prefs.libGridCols in 2..5) prefs.libGridCols else if (isCoversOnly) 3 else 2
                         val rows = filteredBooks.chunked(cols)
 
@@ -869,6 +895,7 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
 
             Spacer(modifier = Modifier.height(24.dp))
             Text(
@@ -883,16 +910,21 @@ fun LibraryScreen(
         }
 
         // FLOATING MULTI-SELECT TOP ACTION PILL (`#libSelectionBar` in `llunevie_prototype.html`)
-        if (uiState.libSelectMode) {
+        AnimatedVisibility(
+            visible = uiState.libSelectMode,
+            enter = expandVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .fillMaxWidth()
+        ) {
             Surface(
                 shape = CircleShape,
                 color = palette.sheetBg,
                 border = BorderStroke(1.dp, palette.borderSoft),
                 shadowElevation = 14.dp,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .fillMaxWidth()
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1028,13 +1060,12 @@ fun LibraryScreen(
         }
 
         // 4. 1:1 LIBRARY FILTER & SHELVES BOTTOM SHEET (`#libDropdownMenu` in `llunevie_prototype.html`)
-        if (uiState.showLibFilterSheet) {
-            var showManageShelves by remember { mutableStateOf(false) }
-            var newShelfText by remember { mutableStateOf("") }
-            var shelfPendingDelete by remember { mutableStateOf<String?>(null) }
-            var showManageGenres by remember { mutableStateOf(false) }
-            var newGenreText by remember { mutableStateOf("") }
-
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showLibFilterSheet,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1043,21 +1074,35 @@ fun LibraryScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleFilterSheet(false) }
+            )
+        }
+
+        // Filter Sheet Panel
+        AnimatedVisibility(
+            visible = uiState.showLibFilterSheet,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            var showManageShelves by remember { mutableStateOf(false) }
+            var newShelfText by remember { mutableStateOf("") }
+            var shelfPendingDelete by remember { mutableStateOf<String?>(null) }
+            var showManageGenres by remember { mutableStateOf(false) }
+            var newGenreText by remember { mutableStateOf("") }
+
+            Surface(
+                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1678,7 +1723,6 @@ fun LibraryScreen(
                 }
             }
         }
-    }
 
     // 5. EDIT BOOK DETAILS MODAL (`#editBookDetailModal` in `llunevie_prototype.html`)
     uiState.editingBook?.let { editing ->

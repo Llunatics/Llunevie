@@ -1,11 +1,22 @@
 package com.llunaticsys.llunevie.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -239,31 +250,41 @@ fun AddBookSheet(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    if (uiState.addModalTab == "manual") {
-                        // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
-                        var title by remember { mutableStateOf("") }
-                        var author by remember { mutableStateOf("") }
-                        var pagesStr by remember { mutableStateOf("320") }
-                        var category by remember { mutableStateOf("Light Novel") }
-                        var format by remember { mutableStateOf("PHYSICAL") }
-                        var showAdvance by remember { mutableStateOf(false) }
-                        var publisher by remember { mutableStateOf("") }
-                        var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
-                        var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
-                        var coverUrl by remember { mutableStateOf("") }
-                        var lengthCm by remember { mutableStateOf("") }
-                        var widthCm by remember { mutableStateOf("") }
-                        var weightKg by remember { mutableStateOf("") }
-                        var synopsis by remember { mutableStateOf("") }
-                        var selectedGenres by remember { mutableStateOf(setOf<String>()) }
-                        var inlineNewGenre by remember { mutableStateOf("") }
+                    AnimatedContent(
+                        targetState = uiState.addModalTab,
+                        transitionSpec = {
+                            val dir = if (targetState == "manual") 1 else -1
+                            (slideInHorizontally(spring(dampingRatio = 0.88f, stiffness = 400f)) { w -> dir * (w / 4) } + fadeIn(tween(180)))
+                                .togetherWith(slideOutHorizontally(tween(150, easing = FastOutSlowInEasing)) { w -> -dir * (w / 4) } + fadeOut(tween(130)))
+                        },
+                        label = "addBookTabTransition",
+                        modifier = Modifier.weight(1f)
+                    ) { currentTab ->
+                        if (currentTab == "manual") {
+                            // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
+                            var title by remember { mutableStateOf("") }
+                            var author by remember { mutableStateOf("") }
+                            var pagesStr by remember { mutableStateOf("320") }
+                            var category by remember { mutableStateOf("Light Novel") }
+                            var format by remember { mutableStateOf("PHYSICAL") }
+                            var showAdvance by remember { mutableStateOf(false) }
+                            var publisher by remember { mutableStateOf("") }
+                            var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
+                            var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
+                            var coverUrl by remember { mutableStateOf("") }
+                            var lengthCm by remember { mutableStateOf("") }
+                            var widthCm by remember { mutableStateOf("") }
+                            var weightKg by remember { mutableStateOf("") }
+                            var synopsis by remember { mutableStateOf("") }
+                            var selectedGenres by remember { mutableStateOf(setOf<String>()) }
+                            var inlineNewGenre by remember { mutableStateOf("") }
 
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
                             PrototypeFormInput(
                                 label = if (strings.isId) "JUDUL BUKU / LIGHT NOVEL" else "BOOK / LIGHT NOVEL TITLE",
                                 value = title,
@@ -574,7 +595,7 @@ fun AddBookSheet(
                         }
                     } else {
                         // SUB-VIEW A: UNIFIED PARALLEL SEARCH (`#addTabSearchView` in `llunevie_prototype.html`)
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.fillMaxSize()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -815,24 +836,44 @@ fun AddBookSheet(
                         )
                     }
                 }
+            }
 
                 // SLIDE-UP BOOK DETAIL SHEET (`#bookDetailSheet` in `llunevie_prototype.html`)
-                uiState.selectedCatalogBookDetail?.let { detail ->
-                    Surface(
-                        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                        color = palette.sheetBg,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        shadowElevation = 24.dp,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .heightIn(max = 620.dp)
-                            .navigationBarsPadding()
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {}
-                    ) {
+                var cachedCatalogDetail by remember { mutableStateOf<CatalogBookCandidate?>(null) }
+                if (uiState.selectedCatalogBookDetail != null) {
+                    cachedCatalogDetail = uiState.selectedCatalogBookDetail
+                }
+
+                AnimatedVisibility(
+                    visible = uiState.selectedCatalogBookDetail != null,
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+                    exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
+                    val candidateDetail = cachedCatalogDetail ?: uiState.selectedCatalogBookDetail
+                    if (candidateDetail != null) {
+                        AnimatedContent(
+                            targetState = candidateDetail,
+                            transitionSpec = {
+                                (fadeIn(tween(180)) + slideInHorizontally(spring(0.88f, 400f)) { w -> w / 6 })
+                                    .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(140)) { w -> -w / 6 })
+                            },
+                            label = "catalogBookDetailTransition"
+                        ) { detail ->
+                            Surface(
+                                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                                color = palette.sheetBg,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                shadowElevation = 24.dp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 620.dp)
+                                    .navigationBarsPadding()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {}
+                            ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1064,6 +1105,8 @@ fun AddBookSheet(
                         }
                     }
                 }
+            }
+        }
             }
         }
     }

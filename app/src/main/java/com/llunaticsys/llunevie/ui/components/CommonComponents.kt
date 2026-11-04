@@ -746,10 +746,14 @@ fun <T> ClassicGlassSegmentedControl(
         ) {
             items.forEach { (item, label) ->
                 val isSelected = item == selectedItem
+                val targetBg = if (isSelected) palette.accentDark else Color.Transparent
+                val animatedBg by animateColorAsState(targetValue = targetBg, animationSpec = tween(160), label = "segmentBg")
+                val targetText = if (isSelected) palette.bgApp else palette.textMuted
+                val animatedText by animateColorAsState(targetValue = targetText, animationSpec = tween(160), label = "segmentText")
                 Surface(
                     onClick = { onItemSelected(item) },
                     shape = RoundedCornerShape(8.dp),
-                    color = if (isSelected) palette.accentDark else Color.Transparent,
+                    color = animatedBg,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
@@ -757,7 +761,7 @@ fun <T> ClassicGlassSegmentedControl(
                     Box(contentAlignment = Alignment.Center) {
                         Text(
                             text = label,
-                            color = if (isSelected) palette.bgApp else palette.textMuted,
+                            color = animatedText,
                             fontSize = 11.5.sp,
                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                             maxLines = 1,
@@ -928,13 +932,26 @@ fun BottomFloatingNavDock(
                         label = "iconBounce"
                     )
 
+                    val targetBtnBg = if (isSelected) activePillBg else Color.Transparent
+                    val animatedBtnBg by animateColorAsState(
+                        targetValue = targetBtnBg,
+                        animationSpec = tween(180),
+                        label = "dockBtnBg"
+                    )
+                    val tabScale by animateFloatAsState(
+                        targetValue = if (isSelected) 1.0f else 0.95f,
+                        animationSpec = spring(dampingRatio = 0.75f, stiffness = 500f),
+                        label = "dockTabScale"
+                    )
+
                     Surface(
                         shape = RoundedCornerShape(25.dp),
-                        color = if (isSelected) activePillBg else Color.Transparent,
+                        color = animatedBtnBg,
                         border = if (isSelected) BorderStroke(1.dp, activePillBorder) else null,
                         shadowElevation = if (isSelected) 1.5.dp else 0.dp,
                         modifier = Modifier
                             .fillMaxHeight()
+                            .scale(tabScale)
                             .clip(RoundedCornerShape(25.dp))
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
