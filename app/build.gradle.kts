@@ -13,8 +13,8 @@ android {
         applicationId = "com.llunaticsys.llunevie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 49
-        versionName = "0.3.0-beta.4"
+        versionCode = 50
+        versionName = "0.3.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
