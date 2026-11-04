@@ -250,12 +250,12 @@ fun HomeScreen(
                         BookCoverCard(
                             book = book,
                             coverStyle = prefs.libCoverStyle,
+                            cornerRadius = 8.dp,
                             showTitleInsideFallback = false,
                             importProgress = importingBooksProgress[book.id],
                             modifier = Modifier
                                 .width(50.dp)
                                 .height(72.dp)
-                                .clip(RoundedCornerShape(8.dp))
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         // Right Content Column — DO NOT use Arrangement.SpaceBetween!
@@ -587,7 +587,6 @@ fun HomeScreen(
                                     Column(
                                         modifier = Modifier
                                             .weight(1f)
-                                            .clip(RoundedCornerShape(14.dp))
                                             .clickable { onOpenBook(book.id) }
                                     ) {
                                         BookCoverCard(

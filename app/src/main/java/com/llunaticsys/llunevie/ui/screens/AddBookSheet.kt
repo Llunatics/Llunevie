@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -268,6 +269,7 @@ fun AddBookSheet(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            .clipToBounds()
                     ) { currentTab ->
                         if (currentTab == "manual") {
                             // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
@@ -816,53 +818,42 @@ fun AddBookSheet(
 
                     Spacer(modifier = Modifier.height(12.dp))
                     // Bottom Dashed Pill Button: "Impor EPUB / PDF Lokal" (`#shelveItYourselfBtn`)
-                    val dashedStrokeColor = palette.accent.copy(alpha = 0.35f)
+                    val dashColor = palette.textMuted.copy(alpha = 0.7f)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .height(44.dp)
                             .clip(CircleShape)
-                            .background(palette.accent.copy(alpha = 0.08f))
+                            .background(palette.bgSurface)
                             .drawWithCache {
                                 val stroke = Stroke(
-                                    width = 1.5.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                                    width = 1.dp.toPx(),
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
                                 )
                                 val radius = size.height / 2f
-                                onDrawBehind {
+                                onDrawWithContent {
+                                    drawContent()
                                     drawRoundRect(
-                                        color = dashedStrokeColor,
+                                        color = dashColor,
                                         cornerRadius = CornerRadius(radius, radius),
                                         style = stroke
                                     )
                                 }
                             }
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onPickLocalFile()
-                            },
+                            .clickable { onPickLocalFile() },
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Outlined.FileUpload,
-                                contentDescription = null,
-                                tint = palette.accent,
-                                modifier = Modifier.size(16.dp)
-                            )
                             Text(
                                 text = strings.importEpubPdfBtn,
-                                style = TextStyle(
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
-                                    color = palette.accent
-                                )
+                                color = palette.textMain,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
                             )
                         }
                     }

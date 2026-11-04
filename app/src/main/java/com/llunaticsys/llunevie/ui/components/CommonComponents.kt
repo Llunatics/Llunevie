@@ -35,7 +35,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -579,14 +582,14 @@ fun <T> CustomThemeDropdown(
 @Composable
 fun BookCoverCard(
     book: BookEntity,
-    modifier: Modifier = Modifier,
-    cornerRadius: Dp = 16.dp,
-    coverStyle: String = "rounded",
     showTitleInsideFallback: Boolean = false,
     importProgress: Int? = null,
-    overlay: @Composable BoxScope.() -> Unit = {}
+    coverStyle: String = "rounded",
+    cornerRadius: Dp = 16.dp,
+    modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
+    val context = LocalContext.current
     val bgColor = Color(book.spineColorHex)
     val textColor = Color(book.spineTextColorHex)
     val initials = remember(book.title) {
@@ -597,15 +600,18 @@ fun BookCoverCard(
             .ifBlank { "L" }
     }
 
-    val context = LocalContext.current
     val imageRequest = remember(book.coverImagePath) {
         val path = book.coverImagePath
         if (path.isNullOrBlank()) null
         else {
-            val dataModel: Any = if (path.startsWith("http") || path.startsWith("content://")) path else File(path)
+            val dataModel: Any = if (path.startsWith("http", ignoreCase = true) || path.startsWith("content://", ignoreCase = true)) {
+                path
+            } else {
+                File(path)
+            }
             coil.request.ImageRequest.Builder(context)
                 .data(dataModel)
-                .size(360, 540)
+                .size(420, 630)
                 .precision(coil.size.Precision.INEXACT)
                 .memoryCacheKey("cover_thumb_$path")
                 .diskCacheKey("cover_thumb_$path")
@@ -613,226 +619,254 @@ fun BookCoverCard(
                 .build()
         }
     }
-    var loadFailed by remember(book.coverImagePath) { mutableStateOf(false) }
 
     Column(modifier = modifier) {
         when (coverStyle) {
             "flat_crease" -> {
-                val shape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = 3.dp, bottomEnd = 3.dp)
+                // MOON+ READER 2D PAPERBACK STYLE: Crisp 0.dp RectangleShape + Natural Subtle Left Spine Crease
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(2f / 3f)
-                        .shadow(5.dp, shape)
-                        .clip(shape)
+                        .shadow(5.dp, androidx.compose.ui.graphics.RectangleShape, clip = false)
+                        .clip(androidx.compose.ui.graphics.RectangleShape)
                         .background(bgColor)
+                        .drawWithContent {
+                            drawContent()
+                            val w = size.width
+                            val h = size.height
+                            val creaseW = (w * 0.088f).coerceIn(8.dp.toPx(), 18.dp.toPx())
+
+                            // Single continuous multi-stop photographic paperback crease gradient
+                            val creaseBrush = Brush.horizontalGradient(
+                                0.00f to Color.Black.copy(alpha = 0.26f),
+                                0.16f to Color.Black.copy(alpha = 0.05f),
+                                0.34f to Color.White.copy(alpha = 0.16f),
+                                0.50f to Color.White.copy(alpha = 0.02f),
+                                0.68f to Color.Black.copy(alpha = 0.13f),
+                                0.84f to Color.White.copy(alpha = 0.05f),
+                                1.00f to Color.Transparent,
+                                startX = 0f,
+                                endX = creaseW
+                            )
+                            drawRect(
+                                brush = creaseBrush,
+                                topLeft = Offset.Zero,
+                                size = androidx.compose.ui.geometry.Size(creaseW, h)
+                            )
+
+                            // Ultra-fine 0.5dp natural paper rim around sharp edges
+                            drawRect(
+                                color = Color.White.copy(alpha = 0.09f),
+                                topLeft = Offset.Zero,
+                                size = size,
+                                style = Stroke(width = 0.5.dp.toPx())
+                            )
+                        }
                 ) {
-                    BookCoverContent(
+                    BookCoverInnerContent(
                         book = book,
-                        imageRequest = imageRequest,
-                        loadFailed = loadFailed,
-                        onLoadFailed = { loadFailed = true },
-                        showTitleInsideFallback = showTitleInsideFallback,
+                        bgColor = bgColor,
                         textColor = textColor,
-                        initials = initials
+                        initials = initials,
+                        showTitleInsideFallback = showTitleInsideFallback,
+                        imageRequest = imageRequest,
+                        contentScale = ContentScale.Crop
                     )
-                    // Foreground book-hinge lighting & crease overlay
-                    Spacer(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .drawWithCache {
-                                val w1 = 2.5.dp.toPx()
-                                val w2 = 5.5.dp.toPx()
-                                val w3 = 9.5.dp.toPx()
-                                val w4 = 12.dp.toPx()
-                                val rimStroke = 0.75.dp.toPx()
-                                val rimColor = Color.White.copy(alpha = 0.14f)
-
-                                val brush1 = Brush.horizontalGradient(
-                                    colors = listOf(Color.Black.copy(alpha = 0.48f), Color.Black.copy(alpha = 0.10f)),
-                                    startX = 0f,
-                                    endX = w1
-                                )
-                                val brush2 = Brush.horizontalGradient(
-                                    colors = listOf(Color.White.copy(alpha = 0.52f), Color.White.copy(alpha = 0.06f)),
-                                    startX = w1,
-                                    endX = w2
-                                )
-                                val brush3 = Brush.horizontalGradient(
-                                    colors = listOf(Color.Black.copy(alpha = 0.34f), Color.Transparent),
-                                    startX = w2,
-                                    endX = w3
-                                )
-                                val brush4 = Brush.horizontalGradient(
-                                    colors = listOf(Color.White.copy(alpha = 0.16f), Color.Transparent),
-                                    startX = w3,
-                                    endX = w4
-                                )
-
-                                onDrawBehind {
-                                    drawRect(brush = brush1, topLeft = Offset(0f, 0f), size = Size(w1, size.height))
-                                    drawRect(brush = brush2, topLeft = Offset(w1, 0f), size = Size(w2 - w1, size.height))
-                                    drawRect(brush = brush3, topLeft = Offset(w2, 0f), size = Size(w3 - w2, size.height))
-                                    drawRect(brush = brush4, topLeft = Offset(w3, 0f), size = Size(w4 - w3, size.height))
-
-                                    // Subtle top/right/bottom 0.75.dp rim highlight
-                                    drawLine(color = rimColor, start = Offset(0f, rimStroke / 2f), end = Offset(size.width, rimStroke / 2f), strokeWidth = rimStroke)
-                                    drawLine(color = rimColor, start = Offset(size.width - rimStroke / 2f, 0f), end = Offset(size.width - rimStroke / 2f, size.height), strokeWidth = rimStroke)
-                                    drawLine(color = rimColor, start = Offset(0f, size.height - rimStroke / 2f), end = Offset(size.width, size.height - rimStroke / 2f), strokeWidth = rimStroke)
-                                }
-                            }
-                    )
-                    overlay()
                 }
             }
+
             "book_3d" -> {
-                val pageDepth = 9.dp
-                val bottomDepth = 3.dp
+                // PHOTOREALISTIC 3D STANDING BOOK WITH PERSPECTIVE & PAPER PAGE BLOCK (Vagabond Reference 1:1)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(2f / 3f)
                         .drawWithCache {
-                            val coverRight = size.width - pageDepth.toPx()
-                            val coverBottom = size.height - bottomDepth.toPx()
+                            val totalW = size.width
+                            val totalH = size.height
+                            val pageDepth = (totalW * 0.095f).coerceIn(7.dp.toPx(), 16.dp.toPx())
+                            val bottomShadowSpace = (totalH * 0.032f).coerceIn(4.dp.toPx(), 9.dp.toPx())
+                            val coverW = totalW - pageDepth
+                            val coverH = totalH - bottomShadowSpace
+                            val topTilt = (coverH * 0.032f).coerceIn(3.dp.toPx(), 8.dp.toPx())
+                            val bottomTilt = (coverH * 0.038f).coerceIn(3.5.dp.toPx(), 9.dp.toPx())
 
-                            val pageBlockPath = Path().apply {
-                                moveTo(coverRight - 1.dp.toPx(), 3.dp.toPx())
-                                lineTo(size.width - 1.dp.toPx(), 6.dp.toPx())
-                                lineTo(size.width - 1.dp.toPx(), coverBottom - 1.dp.toPx())
-                                lineTo(coverRight - 1.dp.toPx(), coverBottom)
+                            val pageTopRightY = topTilt * 0.85f
+                            val pageBottomRightY = coverH - bottomTilt * 0.78f
+                            val pageRightX = totalW - 1.dp.toPx()
+
+                            val pageBlockPath = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(coverW - 0.5f, 0.5.dp.toPx())
+                                lineTo(pageRightX, pageTopRightY)
+                                lineTo(pageRightX, pageBottomRightY)
+                                lineTo(coverW - 0.5f, coverH - 0.5.dp.toPx())
                                 close()
                             }
 
-                            val paperGradient = Brush.horizontalGradient(
-                                colors = listOf(Color(0xFFF6F2E8), Color(0xFFE2DBD0), Color(0xFFC9C0B2)),
-                                startX = coverRight - 1.dp.toPx(),
-                                endX = size.width - 1.dp.toPx()
+                            val backCoverPath = androidx.compose.ui.graphics.Path().apply {
+                                val rimW = 1.1.dp.toPx()
+                                moveTo(pageRightX - rimW, pageTopRightY - 0.5.dp.toPx())
+                                lineTo(totalW, pageTopRightY)
+                                lineTo(totalW, pageBottomRightY)
+                                lineTo(pageRightX - rimW, pageBottomRightY + 0.5.dp.toPx())
+                                close()
+                            }
+
+                            val paperBaseBrush = Brush.horizontalGradient(
+                                0.00f to Color(0xFFD8CFC0),
+                                0.22f to Color(0xFFF5F0E6),
+                                0.65f to Color(0xFFE6DECF),
+                                0.92f to Color(0xFFCBC0B0),
+                                1.00f to Color(0xFFB5A998),
+                                startX = coverW,
+                                endX = pageRightX
                             )
 
-                            val shadowColor = Color.Black.copy(alpha = 0.36f)
-                            val striationColor = Color(0xFF8C8275).copy(alpha = 0.35f)
-                            val backCoverLipColor = Color(0xFF2A2622).copy(alpha = 0.75f)
+                            val overhangShadowBrush = Brush.horizontalGradient(
+                                listOf(
+                                    Color.Black.copy(alpha = 0.22f),
+                                    Color.Black.copy(alpha = 0.05f),
+                                    Color.Transparent
+                                ),
+                                startX = coverW,
+                                endX = coverW + pageDepth * 0.35f
+                            )
 
                             onDrawBehind {
-                                // 1. Ambient 3D Drop Shadow under the bottom and right page block
-                                drawRoundRect(
-                                    color = shadowColor,
-                                    topLeft = Offset(4.dp.toPx(), coverBottom - 1.dp.toPx()),
-                                    size = Size(size.width - 4.dp.toPx(), size.height - coverBottom + 1.dp.toPx()),
-                                    cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+                                // 1. Soft Ground Cast Shadow under bottom-right corner & page block
+                                val shadowLeft = coverW * 0.12f
+                                val shadowTop = coverH - bottomTilt * 1.1f
+                                drawOval(
+                                    brush = Brush.radialGradient(
+                                        0.0f to Color.Black.copy(alpha = 0.36f),
+                                        0.55f to Color.Black.copy(alpha = 0.16f),
+                                        1.0f to Color.Transparent,
+                                        center = Offset(coverW * 0.88f, coverH - 1.dp.toPx()),
+                                        radius = (totalW - shadowLeft) * 0.62f
+                                    ),
+                                    topLeft = Offset(shadowLeft, shadowTop),
+                                    size = androidx.compose.ui.geometry.Size(totalW - shadowLeft, totalH - shadowTop)
                                 )
 
-                                // 2. Right-Side 3D Paper Pages Block
-                                drawPath(path = pageBlockPath, brush = paperGradient)
+                                // 2. Back cover board subtle rim behind paper block
+                                val darkenedSpine = Color(
+                                    red = (bgColor.red * 0.65f).coerceIn(0f, 1f),
+                                    green = (bgColor.green * 0.65f).coerceIn(0f, 1f),
+                                    blue = (bgColor.blue * 0.65f).coerceIn(0f, 1f),
+                                    alpha = 1f
+                                )
+                                drawPath(path = backCoverPath, color = darkenedSpine)
 
-                                // 4 vertical paper-sheet striation lines spaced evenly across page block
-                                val pLeft = coverRight - 1.dp.toPx()
-                                val pRight = size.width - 1.dp.toPx()
-                                for (i in 1..4) {
-                                    val frac = i / 5f
-                                    val sx = pLeft + frac * (pRight - pLeft)
-                                    val sy = 3.dp.toPx() + frac * (6.dp.toPx() - 3.dp.toPx())
-                                    val ey = coverBottom + frac * (-1.dp.toPx())
+                                // 3. 3D Paper Page Block base fill
+                                drawPath(path = pageBlockPath, brush = paperBaseBrush)
+
+                                // 4. 10 Ultra-fine paper sheet micro-striation lines following perspective slope
+                                val sheetLines = 10
+                                for (i in 1..sheetLines) {
+                                    val t = i.toFloat() / (sheetLines + 1).toFloat()
+                                    val x = coverW + (pageRightX - coverW) * t
+                                    val topY = 0.8.dp.toPx() + (pageTopRightY - 0.8.dp.toPx()) * t
+                                    val botY = (coverH - 0.8.dp.toPx()) + (pageBottomRightY - (coverH - 0.8.dp.toPx())) * t
+                                    val lineColor = if (i % 2 == 0) {
+                                        Color(0xFF786E60).copy(alpha = 0.13f)
+                                    } else {
+                                        Color.White.copy(alpha = 0.18f)
+                                    }
                                     drawLine(
-                                        color = striationColor,
-                                        start = Offset(sx, sy),
-                                        end = Offset(sx, ey),
-                                        strokeWidth = 1f
+                                        color = lineColor,
+                                        start = Offset(x, topY),
+                                        end = Offset(x, botY),
+                                        strokeWidth = 0.5.dp.toPx()
                                     )
                                 }
 
-                                // Thin dark back-cover board lip along the very rightmost 1.2.dp edge
-                                val lipW = 1.2.dp.toPx()
-                                drawLine(
-                                    color = backCoverLipColor,
-                                    start = Offset(size.width - lipW / 2f, 6.dp.toPx()),
-                                    end = Offset(size.width - lipW / 2f, coverBottom - 1.dp.toPx()),
-                                    strokeWidth = lipW
-                                )
+                                // 5. Front cover overhang contact shadow onto the paper block
+                                drawPath(path = pageBlockPath, brush = overhangShadowBrush)
                             }
                         }
                 ) {
-                    val frontShape = RoundedCornerShape(2.dp)
+                    // Front Cover Face warped via Matrix.setPolyToPoly so 0% of cover artwork is cropped!
+                    val perspectiveMatrix = remember { android.graphics.Matrix() }
+                    val srcPts = remember { FloatArray(8) }
+                    val dstPts = remember { FloatArray(8) }
+
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(end = pageDepth, bottom = bottomDepth)
-                            .shadow(3.dp, frontShape)
-                            .clip(frontShape)
-                            .background(bgColor)
+                            .drawWithContent {
+                                val totalW = size.width
+                                val totalH = size.height
+                                val pageDepth = (totalW * 0.095f).coerceIn(7.dp.toPx(), 16.dp.toPx())
+                                val bottomShadowSpace = (totalH * 0.032f).coerceIn(4.dp.toPx(), 9.dp.toPx())
+                                val coverW = totalW - pageDepth
+                                val coverH = totalH - bottomShadowSpace
+                                val topTilt = (coverH * 0.032f).coerceIn(3.dp.toPx(), 8.dp.toPx())
+                                val bottomTilt = (coverH * 0.038f).coerceIn(3.5.dp.toPx(), 9.dp.toPx())
+
+                                // Map full (0..totalW, 0..totalH) child content onto the 3D perspective front cover quad!
+                                srcPts[0] = 0f;     srcPts[1] = 0f
+                                srcPts[2] = totalW; srcPts[3] = 0f
+                                srcPts[4] = totalW; srcPts[5] = totalH
+                                srcPts[6] = 0f;     srcPts[7] = totalH
+
+                                dstPts[0] = 0f;     dstPts[1] = topTilt
+                                dstPts[2] = coverW; dstPts[3] = 0f
+                                dstPts[4] = coverW; dstPts[5] = coverH
+                                dstPts[6] = 0f;     dstPts[7] = coverH - bottomTilt
+
+                                perspectiveMatrix.reset()
+                                perspectiveMatrix.setPolyToPoly(srcPts, 0, dstPts, 0, 4)
+
+                                val nativeCanvas = drawContext.canvas.nativeCanvas
+                                val saveCount = nativeCanvas.save()
+                                nativeCanvas.concat(perspectiveMatrix)
+
+                                // Draw 100% uncropped cover content inside the perspective quad
+                                drawContent()
+
+                                // Subtle natural left spine hinge lighting on the 3D cover
+                                val creaseW = (totalW * 0.075f).coerceIn(6.dp.toPx(), 15.dp.toPx())
+                                val creaseBrush = Brush.horizontalGradient(
+                                    0.00f to Color.Black.copy(alpha = 0.24f),
+                                    0.22f to Color.White.copy(alpha = 0.15f),
+                                    0.58f to Color.Black.copy(alpha = 0.11f),
+                                    1.00f to Color.Transparent,
+                                    startX = 0f,
+                                    endX = creaseW
+                                )
+                                drawRect(
+                                    brush = creaseBrush,
+                                    topLeft = Offset.Zero,
+                                    size = androidx.compose.ui.geometry.Size(creaseW, totalH)
+                                )
+
+                                // Crisp front-cover right fore-edge paper-board rim highlight
+                                drawLine(
+                                    color = Color(0xFFF5F0E6).copy(alpha = 0.45f),
+                                    start = Offset(totalW - 0.6.dp.toPx(), 0f),
+                                    end = Offset(totalW - 0.6.dp.toPx(), totalH),
+                                    strokeWidth = 0.8.dp.toPx()
+                                )
+
+                                nativeCanvas.restoreToCount(saveCount)
+                            }
                     ) {
-                        BookCoverContent(
+                        BookCoverInnerContent(
                             book = book,
-                            imageRequest = imageRequest,
-                            loadFailed = loadFailed,
-                            onLoadFailed = { loadFailed = true },
-                            showTitleInsideFallback = showTitleInsideFallback,
+                            bgColor = bgColor,
                             textColor = textColor,
-                            initials = initials
+                            initials = initials,
+                            showTitleInsideFallback = showTitleInsideFallback,
+                            imageRequest = imageRequest,
+                            contentScale = ContentScale.FillBounds
                         )
-                        // Left spine hinge & specular highlight overlay + 1.dp right-edge cover lip shadow
-                        Spacer(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .drawWithCache {
-                                    val w1 = 2.5.dp.toPx()
-                                    val w2 = 5.5.dp.toPx()
-                                    val w3 = 9.5.dp.toPx()
-                                    val w4 = 12.dp.toPx()
-                                    val rimStroke = 0.75.dp.toPx()
-                                    val rimColor = Color.White.copy(alpha = 0.14f)
-
-                                    val brush1 = Brush.horizontalGradient(
-                                        colors = listOf(Color.Black.copy(alpha = 0.48f), Color.Black.copy(alpha = 0.10f)),
-                                        startX = 0f,
-                                        endX = w1
-                                    )
-                                    val brush2 = Brush.horizontalGradient(
-                                        colors = listOf(Color.White.copy(alpha = 0.52f), Color.White.copy(alpha = 0.06f)),
-                                        startX = w1,
-                                        endX = w2
-                                    )
-                                    val brush3 = Brush.horizontalGradient(
-                                        colors = listOf(Color.Black.copy(alpha = 0.34f), Color.Transparent),
-                                        startX = w2,
-                                        endX = w3
-                                    )
-                                    val brush4 = Brush.horizontalGradient(
-                                        colors = listOf(Color.White.copy(alpha = 0.16f), Color.Transparent),
-                                        startX = w3,
-                                        endX = w4
-                                    )
-
-                                    val lipShadowW = 1.dp.toPx()
-                                    val lipBrush = Brush.horizontalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.28f)),
-                                        startX = size.width - lipShadowW,
-                                        endX = size.width
-                                    )
-
-                                    onDrawBehind {
-                                        drawRect(brush = brush1, topLeft = Offset(0f, 0f), size = Size(w1, size.height))
-                                        drawRect(brush = brush2, topLeft = Offset(w1, 0f), size = Size(w2 - w1, size.height))
-                                        drawRect(brush = brush3, topLeft = Offset(w2, 0f), size = Size(w3 - w2, size.height))
-                                        drawRect(brush = brush4, topLeft = Offset(w3, 0f), size = Size(w4 - w3, size.height))
-
-                                        // 1.dp right-edge cover lip shadow where front cover overhangs pages
-                                        drawRect(brush = lipBrush, topLeft = Offset(size.width - lipShadowW, 0f), size = Size(lipShadowW, size.height))
-
-                                        // Subtle top/right/bottom rim highlight
-                                        drawLine(color = rimColor, start = Offset(0f, rimStroke / 2f), end = Offset(size.width, rimStroke / 2f), strokeWidth = rimStroke)
-                                        drawLine(color = rimColor, start = Offset(size.width - rimStroke / 2f, 0f), end = Offset(size.width - rimStroke / 2f, size.height), strokeWidth = rimStroke)
-                                        drawLine(color = rimColor, start = Offset(0f, size.height - rimStroke / 2f), end = Offset(size.width, size.height - rimStroke / 2f), strokeWidth = rimStroke)
-                                    }
-                                }
-                        )
-                        overlay()
                     }
                 }
             }
+
             else -> {
-                // "rounded" (Default)
+                // DEFAULT "rounded" STYLE
                 val shape = RoundedCornerShape(cornerRadius)
                 Box(
                     modifier = Modifier
@@ -841,18 +875,17 @@ fun BookCoverCard(
                         .shadow(6.dp, shape)
                         .clip(shape)
                         .background(bgColor)
-                        .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
+                        .border(1.dp, Color.White.copy(alpha = 0.16f), shape)
                 ) {
-                    BookCoverContent(
+                    BookCoverInnerContent(
                         book = book,
-                        imageRequest = imageRequest,
-                        loadFailed = loadFailed,
-                        onLoadFailed = { loadFailed = true },
-                        showTitleInsideFallback = showTitleInsideFallback,
+                        bgColor = bgColor,
                         textColor = textColor,
-                        initials = initials
+                        initials = initials,
+                        showTitleInsideFallback = showTitleInsideFallback,
+                        imageRequest = imageRequest,
+                        contentScale = ContentScale.Crop
                     )
-                    overlay()
                 }
             }
         }
@@ -873,84 +906,82 @@ fun BookCoverCard(
 }
 
 @Composable
-private fun BookCoverContent(
+private fun BoxScope.BookCoverInnerContent(
     book: BookEntity,
-    imageRequest: coil.request.ImageRequest?,
-    loadFailed: Boolean,
-    onLoadFailed: () -> Unit,
-    showTitleInsideFallback: Boolean,
+    bgColor: Color,
     textColor: Color,
-    initials: String
+    initials: String,
+    showTitleInsideFallback: Boolean,
+    imageRequest: coil.request.ImageRequest?,
+    contentScale: ContentScale
 ) {
-    val shouldShowFallback = imageRequest == null || loadFailed
-    if (shouldShowFallback) {
-        if (showTitleInsideFallback) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(10.dp)
-                    .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-                Text(
-                    text = book.title,
-                    color = textColor,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
+    if (showTitleInsideFallback) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+                .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
                 .padding(10.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = book.category.uppercase(),
-                    color = textColor.copy(alpha = 0.7f),
-                    fontSize = 7.5.sp,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1
-                )
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = initials,
-                        color = textColor,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Text(
-                    text = book.year,
-                    color = textColor.copy(alpha = 0.7f),
-                    fontSize = 8.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+            Text(
+                text = book.title,
+                color = textColor,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
         }
     } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = book.category.uppercase(),
+                color = textColor.copy(alpha = 0.7f),
+                fontSize = 7.5.sp,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1
+            )
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = initials,
+                    color = textColor,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Text(
+                text = book.year,
+                color = textColor.copy(alpha = 0.7f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+
+    if (imageRequest != null) {
         AsyncImage(
             model = imageRequest,
             contentDescription = book.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-            onError = { onLoadFailed() }
+            contentScale = contentScale,
+            modifier = Modifier.fillMaxSize()
         )
     }
 }

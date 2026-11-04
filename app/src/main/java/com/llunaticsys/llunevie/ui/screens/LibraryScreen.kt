@@ -105,6 +105,7 @@ import com.llunaticsys.llunevie.data.local.DEFAULT_CURATED_GENRES
 import com.llunaticsys.llunevie.data.local.ShelfEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import com.llunaticsys.llunevie.model.LibrarySortOption
 import com.llunaticsys.llunevie.model.LibraryViewMode
 import com.llunaticsys.llunevie.ui.components.BookCoverCard
@@ -789,7 +790,6 @@ fun LibraryScreen(
                                         Column(
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clip(RoundedCornerShape(16.dp))
                                                 .combinedClickable(
                                                     onClick = {
                                                         if (uiState.libSelectMode) onToggleSelectBook(book.id)
@@ -1214,15 +1214,32 @@ fun LibraryScreen(
                                     onClick = onResetFilters,
                                     shape = CircleShape,
                                     color = palette.bgSurface,
-                                    border = BorderStroke(1.dp, palette.borderSoft)
+                                    border = BorderStroke(1.dp, palette.borderSoft),
+                                    modifier = Modifier.height(32.dp)
                                 ) {
-                                    Text(
-                                        text = strings.resetBtn,
-                                        color = palette.textMain,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .padding(horizontal = 14.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = strings.resetBtn,
+                                            color = palette.textMain,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 12.sp,
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                )
+                                            )
+                                        )
+                                    }
                                 }
                                 Surface(
                                     onClick = { onToggleFilterSheet(false) },
@@ -1243,7 +1260,7 @@ fun LibraryScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(26.dp),
+                                    .heightIn(min = 28.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1258,15 +1275,32 @@ fun LibraryScreen(
                                     onClick = { showManageShelves = !showManageShelves },
                                     shape = CircleShape,
                                     color = if (showManageShelves) palette.accentDark else palette.bgSurface,
-                                    border = BorderStroke(1.dp, if (showManageShelves) palette.accentDark else palette.borderSoft)
+                                    border = BorderStroke(1.dp, if (showManageShelves) palette.accentDark else palette.borderSoft),
+                                    modifier = Modifier.height(26.dp)
                                 ) {
-                                    Text(
-                                        text = strings.manageShelvesBtn,
-                                        color = if (showManageShelves) palette.bgApp else palette.textMain,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .padding(horizontal = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = strings.manageShelvesBtn,
+                                            color = if (showManageShelves) palette.bgApp else palette.textMain,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 10.5.sp,
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                )
+                                            )
+                                        )
+                                    }
                                 }
                             }
                             Spacer(modifier = Modifier.height(6.dp))
@@ -1505,7 +1539,7 @@ fun LibraryScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(26.dp),
+                                    .heightIn(min = 28.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1520,15 +1554,32 @@ fun LibraryScreen(
                                     onClick = { showManageGenres = !showManageGenres },
                                     shape = CircleShape,
                                     color = if (showManageGenres) palette.accentDark else palette.bgSurface,
-                                    border = BorderStroke(1.dp, if (showManageGenres) palette.accentDark else palette.borderSoft)
+                                    border = BorderStroke(1.dp, if (showManageGenres) palette.accentDark else palette.borderSoft),
+                                    modifier = Modifier.height(26.dp)
                                 ) {
-                                    Text(
-                                        text = if (strings.isId) "Kelola Genre" else "Manage Genres",
-                                        color = if (showManageGenres) palette.bgApp else palette.textMain,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .padding(horizontal = 12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (strings.isId) "Kelola Genre" else "Manage Genres",
+                                            color = if (showManageGenres) palette.bgApp else palette.textMain,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeight = 10.5.sp,
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both
+                                                )
+                                            )
+                                        )
+                                    }
                                 }
                             }
                             Spacer(modifier = Modifier.height(6.dp))
