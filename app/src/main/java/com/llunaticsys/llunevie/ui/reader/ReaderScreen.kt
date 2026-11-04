@@ -465,14 +465,9 @@ fun ReaderScreen(
     var pdfPageBlocksMap by remember { mutableStateOf<Map<Int, List<PdfNativeRenderer.PdfParagraphBlock>>>(emptyMap()) }
     var pageTranslationMap by remember { mutableStateOf<Map<Int, List<Pair<String, String?>>>>(emptyMap()) }
     var isTranslatingPage by remember { mutableStateOf(false) }
-    val translatedPdfBitmapCache = remember {
-        object : LruCache<String, Bitmap>(16) {
-            override fun sizeOf(key: String, value: Bitmap): Int = 1
-        }
-    }
 
     val getEffectivePdfPageBitmap: (Int, Bitmap?) -> Bitmap? = { pageZero, origBmp ->
-        if (!isPdfBook || !isPageTranslationActive || peekOriginalPdfPage || origBmp == null) {
+        if (!isPdfBook || !isPageTranslationActive || peekOriginalPdfPage) {
             origBmp
         } else {
             val blocks = pdfPageBlocksMap[pageZero]
@@ -481,19 +476,39 @@ fun ReaderScreen(
                 origBmp
             } else {
                 val transTexts = transList.map { it.second ?: it.first }
-                val cacheKey = "${book.id}:$pageZero:${prefs.translatorDisplayMode}:${prefs.translatorTargetLang}:${transTexts.hashCode()}"
-                val cached = translatedPdfBitmapCache.get(cacheKey)
-                if (cached != null && !cached.isRecycled) {
-                    cached
-                } else {
-                    val rendered = PdfNativeRenderer.renderTranslatedPdfPageBitmap(
-                        origBmp = origBmp,
+                val path = book.localFilePath.orEmpty()
+                val targetW = if (isSpread) 540 else 1080
+                val isIllust = pageZero in indexedIllustrationPages
+                if (path.isNotBlank()) {
+                    PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
+                        pdfFilePath = path,
+                        pageIndex = pageZero,
                         blocks = blocks,
                         translatedTexts = transTexts,
-                        displayMode = prefs.translatorDisplayMode
-                    )
-                    translatedPdfBitmapCache.put(cacheKey, rendered)
-                    rendered
+                        displayMode = prefs.translatorDisplayMode,
+                        targetWidthPx = targetW,
+                        isIllustrationPage = isIllust,
+                        targetLang = prefs.translatorTargetLang,
+                        engine = prefs.translatorEngine
+                    ) ?: origBmp
+                } else if (origBmp != null) {
+                    val cacheKey = "$path|$pageZero|${prefs.translatorTargetLang}|${prefs.translatorEngine}|${prefs.translatorDisplayMode}|$targetW"
+                    val cached = PdfNativeRenderer.getCachedTranslatedBitmap(cacheKey)
+                    if (cached != null && !cached.isRecycled) {
+                        cached
+                    } else {
+                        val rendered = PdfNativeRenderer.renderTranslatedPdfPageBitmap(
+                            origBmp = origBmp,
+                            blocks = blocks,
+                            translatedTexts = transTexts,
+                            displayMode = prefs.translatorDisplayMode,
+                            isIllustrationPage = isIllust
+                        )
+                        PdfNativeRenderer.translatedPdfBitmapCache.put(cacheKey, rendered)
+                        rendered
+                    }
+                } else {
+                    null
                 }
             }
         }
@@ -541,7 +556,24 @@ fun ReaderScreen(
                             val texts = blocks.map { it.text }
                             val res = translationRepo.translateParagraphList(texts, prefs, context)
                             if (res.isSuccess) {
-                                pageTranslationMap = pageTranslationMap + (pZero to res.getOrThrow())
+                                val transList = res.getOrThrow()
+                                withContext(Dispatchers.Default) {
+                                    val targetW = if (isSpread) 540 else 1080
+                                    val isIllust = pZero in indexedIllustrationPages
+                                    val transTexts = transList.map { it.second ?: it.first }
+                                    PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
+                                        pdfFilePath = path,
+                                        pageIndex = pZero,
+                                        blocks = blocks,
+                                        translatedTexts = transTexts,
+                                        displayMode = prefs.translatorDisplayMode,
+                                        targetWidthPx = targetW,
+                                        isIllustrationPage = isIllust,
+                                        targetLang = prefs.translatorTargetLang,
+                                        engine = prefs.translatorEngine
+                                    )
+                                }
+                                pageTranslationMap = pageTranslationMap + (pZero to transList)
                             }
                         } else {
                             pageTranslationMap = pageTranslationMap + (pZero to emptyList())
@@ -565,7 +597,24 @@ fun ReaderScreen(
                             val nextTexts = nextBlocks.map { it.text }
                             val res = translationRepo.translateParagraphList(nextTexts, prefs, context)
                             if (res.isSuccess) {
-                                pageTranslationMap = pageTranslationMap + (nextP to res.getOrThrow())
+                                val nextTransList = res.getOrThrow()
+                                withContext(Dispatchers.Default) {
+                                    val targetW = if (isSpread) 540 else 1080
+                                    val isIllust = nextP in indexedIllustrationPages
+                                    val transTexts = nextTransList.map { it.second ?: it.first }
+                                    PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
+                                        pdfFilePath = path,
+                                        pageIndex = nextP,
+                                        blocks = nextBlocks,
+                                        translatedTexts = transTexts,
+                                        displayMode = prefs.translatorDisplayMode,
+                                        targetWidthPx = targetW,
+                                        isIllustrationPage = isIllust,
+                                        targetLang = prefs.translatorTargetLang,
+                                        engine = prefs.translatorEngine
+                                    )
+                                }
+                                pageTranslationMap = pageTranslationMap + (nextP to nextTransList)
                             }
                         } else {
                             pageTranslationMap = pageTranslationMap + (nextP to emptyList())
@@ -1131,6 +1180,19 @@ fun ReaderScreen(
                                 }
                             }
 
+                            LaunchedEffect(
+                                pageTranslationMap[curZero],
+                                pageTranslationMap[nextLeftIdx],
+                                pageTranslationMap[prevLeftIdx],
+                                prefs.translatorDisplayMode,
+                                prefs.translatorTargetLang,
+                                isPageTranslationActive,
+                                peekOriginalPdfPage
+                            ) {
+                                committedCurrentBmp = null
+                                lockedCurrBmp = null
+                            }
+
                             val curPdfColorFilter = pdfFilterForPage(curLeftIdx)
                             val nextPdfColorFilter = pdfFilterForPage(nextLeftIdx)
                             val prevPdfColorFilter = pdfFilterForPage(prevLeftIdx)
@@ -1503,8 +1565,9 @@ fun ReaderScreen(
                                     val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
                                     val curPInCh = curTriple?.second ?: uiState.activePageIndex
 
-                                    val isBilingualActive = isPageTranslationActive && prefs.translatorDisplayMode == "bilingual" && pageTranslationMap.containsKey(curZero)
-                                    val contentModifier = if (isBilingualActive) {
+                                    val hasActivePageTranslation = isPageTranslationActive && !pageTranslationMap[curZero].isNullOrEmpty()
+                                    val isBilingualActive = hasActivePageTranslation && prefs.translatorDisplayMode == "bilingual"
+                                    val contentModifier = if (hasActivePageTranslation) {
                                         Modifier.fillMaxSize().background(if (isSpread) palette.bgCard else palette.bgApp)
                                     } else {
                                         Modifier.fillMaxSize()
@@ -1536,7 +1599,7 @@ fun ReaderScreen(
                                             isCoverPage = (curZero == 0),
                                             bookTitle = book.title,
                                             fontScale = 1f,
-                                            transparentTextForFlipbook = (activeBmp != null && !isBilingualActive),
+                                            transparentTextForFlipbook = (activeBmp != null && !hasActivePageTranslation),
                                             topClearanceDp = topClearanceDp,
                                             bottomClearanceDp = bottomClearanceDp,
                                             onSelectionActiveChanged = { active, start, end ->
