@@ -1106,7 +1106,13 @@ object PdfNativeRenderer {
             cachedDoc = null
             cachedDocPath = null
             pageParagraphBlocksCache.evictAll()
+            translatedPdfBitmapCache.evictAll()
         }
+    }
+
+    fun clearTranslatedPdfBitmaps() {
+        translatedPdfBitmapCache.evictAll()
+        pageParagraphBlocksCache.evictAll()
     }
 
     fun extractPdfPageParagraphBlocks(
@@ -1136,6 +1142,19 @@ object PdfNativeRenderer {
             val pageW = (mediaBox?.width ?: 600f).coerceAtLeast(1f)
             val pageH = (mediaBox?.height ?: 800f).coerceAtLeast(1f)
 
+            val fontSizes = allLines.map { it.maxFontSize }.sorted()
+            val bodyMedianFontSize = if (fontSizes.isNotEmpty()) fontSizes[fontSizes.size / 2] else 12f
+
+            val allPositiveYDiffs = mutableListOf<Float>()
+            for (i in 1 until allLines.size) {
+                val diff = allLines[i].yTop - allLines[i - 1].yTop
+                if (diff > 0f) allPositiveYDiffs.add(diff)
+            }
+            allPositiveYDiffs.sort()
+            val normalLineStep = if (allPositiveYDiffs.isNotEmpty()) {
+                allPositiveYDiffs[allPositiveYDiffs.size / 4]
+            } else 14f
+
             val titleClean = bookTitle.trim().lowercase()
             val bodyLines = allLines.filter { vl ->
                 val txt = vl.text.trim()
@@ -1147,11 +1166,18 @@ object PdfNativeRenderer {
                     return@filter false
                 }
 
-                // Top header zone: yTop < pageH * 0.095f
-                if (vl.yTop < pageH * 0.095f) {
-                    if (titleClean.length >= 3 && (lower == titleClean || lower.contains(titleClean))) return@filter false
-                    if (txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))) return@filter false
-                    if (vl.isCentered || lower.contains("translation") || lower.contains("volume") || lower.contains("chapter")) return@filter false
+                // Top header zone: yTop < pageH * 0.088f
+                if (vl.yTop < pageH * 0.088f) {
+                    val isTitleMatch = titleClean.length >= 3 && (lower == titleClean || lower.contains(titleClean))
+                    val isPageNum = txt.matches(Regex("""^(?:[\-–—#\s]*\d+[\-–—#\s]*|page\s*\d+|\d+\s*\|\s*\d+)$""", RegexOption.IGNORE_CASE))
+                    val isVolumeOrTrans = lower.contains("translation") || (lower.contains("volume") && (lower.contains("|") || lower.contains("vol")))
+                    val isDistantSmallFirstLine = allLines.indexOf(vl) == 0 && allLines.size >= 2 &&
+                        vl.maxFontSize < bodyMedianFontSize - 0.6f &&
+                        (allLines[1].yTop - vl.yTop) > normalLineStep * 1.65f
+
+                    if (isTitleMatch || isPageNum || isVolumeOrTrans || isDistantSmallFirstLine) {
+                        return@filter false
+                    }
                 }
 
                 // Bottom footer zone: yTop > pageH * 0.885f
@@ -1289,6 +1315,11 @@ object PdfNativeRenderer {
                     pageWidthPt = pageW,
                     pageHeightPt = pageH
                 )
+            }
+
+            val transPrefix = "$pdfFilePath|$pageIndexZero|"
+            translatedPdfBitmapCache.snapshot().keys.filter { it.startsWith(transPrefix) }.forEach {
+                translatedPdfBitmapCache.remove(it)
             }
 
             pageParagraphBlocksCache.put(cacheKey, blocks)
@@ -2545,7 +2576,7 @@ object PdfNativeRenderer {
         return !isTrueIllustrationPageBitmap(bmp)
     }
 
-    private fun buildBookChaptersFromBookmarks(
+    fun buildBookChaptersFromBookmarks(
         bookId: String,
         bookmarks: List<PdfBookmark>,
         totalPages: Int,

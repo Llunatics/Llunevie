@@ -23,6 +23,10 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -4651,6 +4655,32 @@ fun ReaderScreen(
                                 }
                             }
 
+                            var isManualTocEditExpanded by remember { mutableStateOf(false) }
+                            var inlineEditingChIdx by remember { mutableStateOf<Int?>(null) }
+                            var inlineEditTitle by remember { mutableStateOf("") }
+                            var inlineEditPageStr by remember { mutableStateOf("") }
+                            var newChapterTitle by remember { mutableStateOf("") }
+                            var newChapterPageStr by remember(metrics.currentGlobalPage) { mutableStateOf(metrics.currentGlobalPage.toString()) }
+
+                            val chapterStartPages = remember(chapters, isPdfBook) {
+                                var cum = 0
+                                chapters.map { ch ->
+                                    val pageOne = if (isPdfBook) {
+                                        val first = ch.pages.firstOrNull().orEmpty()
+                                        val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(first)
+                                        if (match != null) {
+                                            (match.groupValues[1].toIntOrNull() ?: cum) + 1
+                                        } else {
+                                            cum + 1
+                                        }
+                                    } else {
+                                        cum + 1
+                                    }
+                                    cum += ch.pages.size.coerceAtLeast(1)
+                                    pageOne
+                                }
+                            }
+
                             LazyColumn(
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -4658,50 +4688,453 @@ fun ReaderScreen(
                                 // Section 1: Pure chapter rows
                                 itemsIndexed(chapters, key = { idx, _ -> "toc_ch_$idx" }) { idx, ch ->
                                     val active = idx == uiState.activeChapterIndex
+                                    val startPage = chapterStartPages.getOrElse(idx) { 1 }
+                                    val isRowSelected = active && !isManualTocEditExpanded
                                     Surface(
                                         onClick = {
-                                            onJumpToChapterAndPage(idx, 0)
-                                            onToggleTocDrawer(false)
+                                            if (isManualTocEditExpanded) {
+                                                if (inlineEditingChIdx == idx) {
+                                                    inlineEditingChIdx = null
+                                                } else {
+                                                    inlineEditingChIdx = idx
+                                                    inlineEditTitle = ch.title
+                                                    inlineEditPageStr = startPage.toString()
+                                                }
+                                            } else {
+                                                onJumpToChapterAndPage(idx, 0)
+                                                onToggleTocDrawer(false)
+                                            }
                                         },
                                         shape = RoundedCornerShape(16.dp),
-                                        color = if (active) palette.textMain else palette.bgSurface,
-                                        border = BorderStroke(1.dp, if (active) palette.textMain else palette.borderSoft),
+                                        color = if (isRowSelected) palette.textMain else palette.bgSurface,
+                                        border = BorderStroke(1.dp, if (isRowSelected) palette.textMain else if (inlineEditingChIdx == idx) palette.textMain.copy(alpha = 0.5f) else palette.borderSoft),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
+                                        Column(modifier = Modifier.fillMaxWidth()) {
                                             Row(
-                                                modifier = Modifier.weight(1f),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
+                                                Row(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Text(
+                                                        text = String.format("%02d", idx + 1),
+                                                        color = if (isRowSelected) palette.bgApp.copy(alpha = 0.70f) else palette.textMuted.copy(alpha = 0.65f),
+                                                        fontSize = 10.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                    Text(
+                                                        text = sanitizeBookOrChapterText(localizeChapterTitle(ch.title, strings.isEn)),
+                                                        color = if (isRowSelected) palette.bgApp else palette.textMain,
+                                                        fontSize = 13.5.sp,
+                                                        fontFamily = FontFamily.Serif,
+                                                        fontWeight = if (isRowSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "${if (strings.isEn) "p." else "Hal"} $startPage · ${ch.pages.size} ${strings.pagesUnit}",
+                                                        color = if (isRowSelected) palette.bgApp.copy(alpha = 0.8f) else palette.textMuted,
+                                                        fontSize = 10.sp,
+                                                        fontFamily = FontFamily.Monospace
+                                                    )
+                                                    if (isManualTocEditExpanded) {
+                                                        PrototypeSvgIcon(
+                                                            type = if (inlineEditingChIdx == idx) PrototypeIconType.CHEVRON_UP else PrototypeIconType.EDIT_PEN,
+                                                            tint = if (isRowSelected) palette.bgApp else palette.textMuted,
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            AnimatedVisibility(
+                                                visible = isManualTocEditExpanded && inlineEditingChIdx == idx,
+                                                enter = expandVertically() + fadeIn(),
+                                                exit = shrinkVertically() + fadeOut()
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(start = 14.dp, end = 14.dp, bottom = 12.dp)
+                                                ) {
+                                                    HorizontalDivider(color = palette.borderSoft.copy(alpha = 0.5f))
+                                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                                    // Row 1 (Title Edit)
+                                                    Surface(
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        color = palette.bgCard,
+                                                        border = BorderStroke(1.dp, palette.borderSoft),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                                        ) {
+                                                            if (inlineEditTitle.isEmpty()) {
+                                                                Text(
+                                                                    text = if (strings.isEn) "Chapter title..." else "Judul bab...",
+                                                                    fontSize = 12.5.sp,
+                                                                    fontFamily = FontFamily.Serif,
+                                                                    color = palette.textMuted
+                                                                )
+                                                            }
+                                                            BasicTextField(
+                                                                value = inlineEditTitle,
+                                                                onValueChange = { inlineEditTitle = it },
+                                                                textStyle = androidx.compose.ui.text.TextStyle(
+                                                                    fontSize = 12.5.sp,
+                                                                    fontFamily = FontFamily.Serif,
+                                                                    color = palette.textMain
+                                                                ),
+                                                                singleLine = true,
+                                                                modifier = Modifier.fillMaxWidth()
+                                                            )
+                                                        }
+                                                    }
+
+                                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                                    // Row 2 (Page Stepper + Delete + Save)
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        // Left: Start page adjuster capsule [ - ]  Hal [ inlineEditPageStr ]  [ + ]
+                                                        Surface(
+                                                            shape = RoundedCornerShape(10.dp),
+                                                            color = palette.bgCard,
+                                                            border = BorderStroke(1.dp, palette.borderSoft)
+                                                        ) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                                            ) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(26.dp)
+                                                                        .clip(CircleShape)
+                                                                        .clickable {
+                                                                            val cur = inlineEditPageStr.toIntOrNull() ?: startPage
+                                                                            val next = (cur - 1).coerceIn(1, metrics.totalBookPages)
+                                                                            inlineEditPageStr = next.toString()
+                                                                        },
+                                                                    contentAlignment = Alignment.Center
+                                                                ) {
+                                                                    Text("-", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                                }
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                                Text(
+                                                                    text = if (strings.isEn) "p. " else "Hal ",
+                                                                    color = palette.textMuted,
+                                                                    fontSize = 11.sp,
+                                                                    fontFamily = FontFamily.Monospace
+                                                                )
+                                                                BasicTextField(
+                                                                    value = inlineEditPageStr,
+                                                                    onValueChange = { str ->
+                                                                        val filtered = str.filter { it.isDigit() }
+                                                                        inlineEditPageStr = filtered
+                                                                    },
+                                                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                                                        fontSize = 12.sp,
+                                                                        fontFamily = FontFamily.Monospace,
+                                                                        fontWeight = FontWeight.SemiBold,
+                                                                        color = palette.textMain,
+                                                                        textAlign = TextAlign.Center
+                                                                    ),
+                                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                                    singleLine = true,
+                                                                    modifier = Modifier.width(36.dp)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(26.dp)
+                                                                        .clip(CircleShape)
+                                                                        .clickable {
+                                                                            val cur = inlineEditPageStr.toIntOrNull() ?: startPage
+                                                                            val next = (cur + 1).coerceIn(1, metrics.totalBookPages)
+                                                                            inlineEditPageStr = next.toString()
+                                                                        },
+                                                                    contentAlignment = Alignment.Center
+                                                                ) {
+                                                                    Text("+", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Right: Delete + Save
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            if (chapters.size > 1) {
+                                                                Surface(
+                                                                    onClick = {
+                                                                        viewModel?.deleteManualChapter(book.id, idx)
+                                                                        inlineEditingChIdx = null
+                                                                    },
+                                                                    shape = CircleShape,
+                                                                    color = palette.bgCard,
+                                                                    border = BorderStroke(1.dp, palette.borderSoft),
+                                                                    modifier = Modifier.size(30.dp)
+                                                                ) {
+                                                                    Box(contentAlignment = Alignment.Center) {
+                                                                        PrototypeSvgIcon(
+                                                                            type = PrototypeIconType.TRASH_CAN,
+                                                                            tint = palette.textMain,
+                                                                            modifier = Modifier.size(13.dp)
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            Surface(
+                                                                onClick = {
+                                                                    val parsed = inlineEditPageStr.toIntOrNull() ?: startPage
+                                                                    viewModel?.updateManualChapter(book.id, idx, inlineEditTitle, parsed)
+                                                                    inlineEditingChIdx = null
+                                                                },
+                                                                shape = CircleShape,
+                                                                color = palette.textMain,
+                                                                modifier = Modifier.height(30.dp)
+                                                            ) {
+                                                                Box(
+                                                                    contentAlignment = Alignment.Center,
+                                                                    modifier = Modifier.padding(horizontal = 14.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        text = if (strings.isEn) "Save" else "Simpan",
+                                                                        color = palette.bgApp,
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.SemiBold
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Section 1b: Expandable Manual Chapter Editor
+                                item(key = "toc_manual_chapter_editor") {
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = palette.bgSurface,
+                                        border = BorderStroke(1.dp, if (isManualTocEditExpanded) palette.textMain.copy(alpha = 0.5f) else palette.borderSoft),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 4.dp)
+                                    ) {
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            // Collapsed / Header Bar
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        isManualTocEditExpanded = !isManualTocEditExpanded
+                                                        if (!isManualTocEditExpanded) inlineEditingChIdx = null
+                                                    }
+                                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    PrototypeSvgIcon(
+                                                        type = PrototypeIconType.EDIT_PEN,
+                                                        tint = palette.textMain,
+                                                        modifier = Modifier.size(13.dp)
+                                                    )
+                                                    Text(
+                                                        text = if (strings.isEn) "Edit & Manage Chapters" else "Edit & Kelola Bab Manual",
+                                                        color = palette.textMain,
+                                                        fontSize = 12.5.sp,
+                                                        fontFamily = FontFamily.Serif,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
                                                 Text(
-                                                    text = String.format("%02d", idx + 1),
-                                                    color = if (active) palette.bgApp.copy(alpha = 0.70f) else palette.textMuted.copy(alpha = 0.65f),
+                                                    text = if (isManualTocEditExpanded) (if (strings.isEn) "Done ▴" else "Selesai ▴") else (if (strings.isEn) "Expand ▾" else "Kelola ▾"),
                                                     fontSize = 10.sp,
                                                     fontFamily = FontFamily.Monospace,
-                                                    fontWeight = FontWeight.Normal
-                                                )
-                                                Text(
-                                                    text = sanitizeBookOrChapterText(localizeChapterTitle(ch.title, strings.isEn)),
-                                                    color = if (active) palette.bgApp else palette.textMain,
-                                                    fontSize = 13.5.sp,
-                                                    fontFamily = FontFamily.Serif,
-                                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
+                                                    color = palette.textMuted
                                                 )
                                             }
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = "${ch.pages.size} ${strings.pagesUnit}",
-                                                color = if (active) palette.bgApp.copy(alpha = 0.8f) else palette.textMuted,
-                                                fontSize = 10.sp,
-                                                fontFamily = FontFamily.Monospace
-                                            )
+
+                                            // Expanded Inline Panel
+                                            AnimatedVisibility(
+                                                visible = isManualTocEditExpanded,
+                                                enter = expandVertically() + fadeIn(),
+                                                exit = shrinkVertically() + fadeOut()
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+                                                ) {
+                                                    HorizontalDivider(color = palette.borderSoft)
+                                                    Spacer(modifier = Modifier.height(10.dp))
+                                                    Text(
+                                                        text = if (strings.isEn) "Tap any chapter above to rename, adjust its page, or delete it—or add a new chapter below:" else "Ketuk bab di atas untuk ubah judul, sesuaikan halaman, atau hapus—atau tambah bab baru di bawah:",
+                                                        color = palette.textMuted,
+                                                        fontSize = 11.sp,
+                                                        lineHeight = 15.sp
+                                                    )
+                                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                                    // Title Input Field
+                                                    Surface(
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        color = palette.bgCard,
+                                                        border = BorderStroke(1.dp, palette.borderSoft),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                                        ) {
+                                                            if (newChapterTitle.isEmpty()) {
+                                                                Text(
+                                                                    text = if (strings.isEn) "New chapter title (e.g. Chapter 1)..." else "Judul bab baru (mis. Bab 1)...",
+                                                                    fontSize = 12.sp,
+                                                                    fontFamily = FontFamily.Serif,
+                                                                    color = palette.textMuted
+                                                                )
+                                                            }
+                                                            BasicTextField(
+                                                                value = newChapterTitle,
+                                                                onValueChange = { newChapterTitle = it },
+                                                                textStyle = androidx.compose.ui.text.TextStyle(
+                                                                    fontSize = 12.sp,
+                                                                    fontFamily = FontFamily.Serif,
+                                                                    color = palette.textMain
+                                                                ),
+                                                                singleLine = true,
+                                                                modifier = Modifier.fillMaxWidth()
+                                                            )
+                                                        }
+                                                    }
+
+                                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                                    // Page Number + Quick Current Page Pill + + Add Button Row
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        // Left: numeric BasicTextField for newChapterPageStr
+                                                        Surface(
+                                                            shape = RoundedCornerShape(10.dp),
+                                                            color = palette.bgCard,
+                                                            border = BorderStroke(1.dp, palette.borderSoft),
+                                                            modifier = Modifier
+                                                                .width(86.dp)
+                                                                .height(34.dp)
+                                                        ) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier
+                                                                    .fillMaxSize()
+                                                                    .padding(horizontal = 8.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = if (strings.isEn) "p. " else "Hal ",
+                                                                    color = palette.textMuted,
+                                                                    fontSize = 11.sp,
+                                                                    fontFamily = FontFamily.Monospace
+                                                                )
+                                                                BasicTextField(
+                                                                    value = newChapterPageStr,
+                                                                    onValueChange = { str ->
+                                                                        val filtered = str.filter { it.isDigit() }
+                                                                        newChapterPageStr = filtered
+                                                                    },
+                                                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                                                        fontSize = 11.5.sp,
+                                                                        fontFamily = FontFamily.Monospace,
+                                                                        fontWeight = FontWeight.Medium,
+                                                                        color = palette.textMain
+                                                                    ),
+                                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                                    singleLine = true,
+                                                                    modifier = Modifier.weight(1f)
+                                                                )
+                                                            }
+                                                        }
+
+                                                        // Middle: Compact clickable pill
+                                                        Surface(
+                                                            onClick = {
+                                                                newChapterPageStr = metrics.currentGlobalPage.toString()
+                                                            },
+                                                            shape = CircleShape,
+                                                            color = palette.bgCard,
+                                                            border = BorderStroke(1.dp, palette.borderSoft),
+                                                            modifier = Modifier.height(34.dp)
+                                                        ) {
+                                                            Box(
+                                                                contentAlignment = Alignment.Center,
+                                                                modifier = Modifier.padding(horizontal = 10.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = if (strings.isEn) "Current (${metrics.currentGlobalPage})" else "Hal. Ini (${metrics.currentGlobalPage})",
+                                                                    color = palette.textMain,
+                                                                    fontSize = 10.5.sp,
+                                                                    fontFamily = FontFamily.Monospace,
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            }
+                                                        }
+
+                                                        Spacer(modifier = Modifier.weight(1f))
+
+                                                        // Right: + Tambah / + Add Pill Button
+                                                        Surface(
+                                                            onClick = {
+                                                                val pNum = newChapterPageStr.toIntOrNull() ?: metrics.currentGlobalPage
+                                                                viewModel?.addManualChapter(book.id, newChapterTitle, pNum)
+                                                                newChapterTitle = ""
+                                                            },
+                                                            shape = CircleShape,
+                                                            color = palette.textMain,
+                                                            modifier = Modifier.height(34.dp)
+                                                        ) {
+                                                            Box(
+                                                                contentAlignment = Alignment.Center,
+                                                                modifier = Modifier.padding(horizontal = 14.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = if (strings.isEn) "+ Add" else "+ Tambah",
+                                                                    color = palette.bgApp,
+                                                                    fontSize = 11.5.sp,
+                                                                    fontWeight = FontWeight.SemiBold
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

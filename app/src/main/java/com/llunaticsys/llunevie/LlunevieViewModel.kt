@@ -1277,6 +1277,400 @@ class LlunevieViewModel(
         return null
     }
 
+    fun getChapterStartPageOneBased(book: BookEntity?, chapters: List<BookChapter>, chapterIndex: Int): Int {
+        if (chapterIndex !in chapters.indices) return 1
+        val isPdf = book?.format.equals("PDF", true) || book?.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
+        if (isPdf) {
+            val firstPage = chapters[chapterIndex].pages.firstOrNull().orEmpty()
+            val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstPage)
+            if (match != null) {
+                val pZero = match.groupValues[1].toIntOrNull()
+                if (pZero != null) return pZero + 1
+            }
+        }
+        var sum = 0
+        for (i in 0 until chapterIndex) {
+            sum += chapters[i].pages.size.coerceAtLeast(1)
+        }
+        return sum + 1
+    }
+
+    fun addManualChapter(bookId: String, title: String, startPageOneBased: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val book = dao.getBookById(bookId) ?: return@launch
+            val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
+            val currentChapters = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
+                _uiState.value.activeBookChapters
+            } else {
+                dao.getChaptersForBook(bookId).map { ce ->
+                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
+                }
+            }
+
+            if (isPdf) {
+                val totalPages = book.pagesCount.coerceAtLeast(1)
+                var cumZero = 0
+                val bookmarks = currentChapters.map { ch ->
+                    val firstP = ch.pages.firstOrNull().orEmpty()
+                    val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
+                    val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
+                    cumZero += ch.pages.size.coerceAtLeast(1)
+                    PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
+                }.toMutableList()
+                if (bookmarks.isEmpty()) {
+                    bookmarks.add(PdfNativeRenderer.PdfBookmark(book.title, 0))
+                }
+
+                val targetStartZero = (startPageOneBased - 1).coerceIn(0, totalPages - 1)
+                val defaultTitle = if (preferences.value.lang == "en") "Chapter $startPageOneBased" else "Bab $startPageOneBased"
+                val cleanTitle = sanitizeBookOrChapterText(title.trim()).ifBlank { defaultTitle }
+
+                val existingIdx = bookmarks.indexOfFirst { it.startPageZero == targetStartZero }
+                if (existingIdx != -1) {
+                    bookmarks[existingIdx] = bookmarks[existingIdx].copy(title = cleanTitle)
+                } else {
+                    bookmarks.add(PdfNativeRenderer.PdfBookmark(cleanTitle, targetStartZero))
+                }
+                bookmarks.sortBy { it.startPageZero }
+                if (bookmarks.isNotEmpty() && bookmarks.first().startPageZero > 0) {
+                    bookmarks.add(0, PdfNativeRenderer.PdfBookmark(book.title, 0))
+                }
+
+                val illustrations = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
+                    _uiState.value.activeBookIllustrations
+                } else {
+                    dao.getChaptersForBook(bookId).flatMap { ce ->
+                        val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
+                        (0 until arr.length()).mapNotNull { i ->
+                            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                            BookIllustration(
+                                uriOrPath = obj.optString("uriOrPath"),
+                                caption = obj.optString("caption"),
+                                pageIndexInBook = obj.optInt("pageIndexInBook")
+                            )
+                        }
+                    }.distinctBy { it.pageIndexInBook }
+                }
+
+                val isEn = preferences.value.lang == "en"
+                val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
+                    bookId = bookId,
+                    bookmarks = bookmarks,
+                    totalPages = totalPages,
+                    illustrations = illustrations,
+                    defaultTitle = book.title,
+                    isEn = isEn
+                )
+                val updatedBook = book.copy(
+                    tocIndexed = true,
+                    tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
+                )
+                dao.saveBookWithChapters(updatedBook, updatedEntities)
+                applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+            } else {
+                val allPages = currentChapters.flatMap { it.pages }
+                val totalPages = allPages.size.coerceAtLeast(1)
+                val splitZero = (startPageOneBased - 1).coerceIn(0, totalPages - 1)
+                val defaultTitle = if (preferences.value.lang == "en") "Chapter $startPageOneBased" else "Bab $startPageOneBased"
+                val cleanTitle = sanitizeBookOrChapterText(title.trim()).ifBlank { defaultTitle }
+
+                var cum = 0
+                val bookmarks = currentChapters.map { ch ->
+                    val s = cum
+                    cum += ch.pages.size.coerceAtLeast(1)
+                    Pair(ch.title, s)
+                }.toMutableList()
+                if (bookmarks.isEmpty()) {
+                    bookmarks.add(Pair(book.title, 0))
+                }
+
+                val existingIdx = bookmarks.indexOfFirst { it.second == splitZero }
+                if (existingIdx != -1) {
+                    bookmarks[existingIdx] = Pair(cleanTitle, splitZero)
+                } else {
+                    bookmarks.add(Pair(cleanTitle, splitZero))
+                }
+                bookmarks.sortBy { it.second }
+                if (bookmarks.first().second > 0) {
+                    bookmarks.add(0, Pair(book.title, 0))
+                }
+
+                val updatedEntities = mutableListOf<BookChapterEntity>()
+                for (i in bookmarks.indices) {
+                    val bm = bookmarks[i]
+                    val sIdx = bm.second.coerceIn(0, totalPages)
+                    val eIdx = if (i + 1 < bookmarks.size) bookmarks[i + 1].second.coerceIn(sIdx, totalPages) else totalPages
+                    val pagesSlice = if (sIdx < eIdx) allPages.subList(sIdx, eIdx) else listOf("")
+                    val pagesArr = JSONArray()
+                    pagesSlice.forEach { pagesArr.put(it) }
+                    updatedEntities.add(
+                        BookChapterEntity(
+                            bookId = bookId,
+                            chapterIndex = i,
+                            title = bm.first,
+                            pagesJson = pagesArr.toString(),
+                            illustrationsJson = "[]"
+                        )
+                    )
+                }
+                dao.saveBookWithChapters(book, updatedEntities)
+                applyUpdatedChaptersToState(bookId, book, updatedEntities)
+            }
+        }
+    }
+
+    fun updateManualChapter(bookId: String, chapterIndex: Int, newTitle: String, newStartPageOneBased: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val book = dao.getBookById(bookId) ?: return@launch
+            val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
+            val currentChapters = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
+                _uiState.value.activeBookChapters
+            } else {
+                dao.getChaptersForBook(bookId).map { ce ->
+                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
+                }
+            }
+            if (chapterIndex !in currentChapters.indices) return@launch
+
+            if (isPdf) {
+                val totalPages = book.pagesCount.coerceAtLeast(1)
+                var cumZero = 0
+                val bookmarks = currentChapters.map { ch ->
+                    val firstP = ch.pages.firstOrNull().orEmpty()
+                    val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
+                    val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
+                    cumZero += ch.pages.size.coerceAtLeast(1)
+                    PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
+                }.toMutableList()
+
+                val targetStartZero = (newStartPageOneBased - 1).coerceIn(0, totalPages - 1)
+                val cleanTitle = sanitizeBookOrChapterText(newTitle.trim()).ifBlank { bookmarks[chapterIndex].title }
+                bookmarks[chapterIndex] = PdfNativeRenderer.PdfBookmark(cleanTitle, targetStartZero)
+                bookmarks.sortBy { it.startPageZero }
+                if (bookmarks.isNotEmpty() && bookmarks.first().startPageZero > 0) {
+                    bookmarks.add(0, PdfNativeRenderer.PdfBookmark(book.title, 0))
+                }
+
+                val illustrations = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
+                    _uiState.value.activeBookIllustrations
+                } else {
+                    dao.getChaptersForBook(bookId).flatMap { ce ->
+                        val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
+                        (0 until arr.length()).mapNotNull { i ->
+                            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                            BookIllustration(
+                                uriOrPath = obj.optString("uriOrPath"),
+                                caption = obj.optString("caption"),
+                                pageIndexInBook = obj.optInt("pageIndexInBook")
+                            )
+                        }
+                    }.distinctBy { it.pageIndexInBook }
+                }
+
+                val isEn = preferences.value.lang == "en"
+                val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
+                    bookId = bookId,
+                    bookmarks = bookmarks,
+                    totalPages = totalPages,
+                    illustrations = illustrations,
+                    defaultTitle = book.title,
+                    isEn = isEn
+                )
+                val updatedBook = book.copy(
+                    tocIndexed = true,
+                    tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
+                )
+                dao.saveBookWithChapters(updatedBook, updatedEntities)
+                applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+            } else {
+                val allPages = currentChapters.flatMap { it.pages }
+                val totalPages = allPages.size.coerceAtLeast(1)
+                val currentStartOne = getChapterStartPageOneBased(book, currentChapters, chapterIndex)
+                val cleanTitle = sanitizeBookOrChapterText(newTitle.trim()).ifBlank { currentChapters[chapterIndex].title }
+
+                if (newStartPageOneBased == currentStartOne) {
+                    val updatedEntities = currentChapters.mapIndexed { idx, ch ->
+                        val title = if (idx == chapterIndex) cleanTitle else ch.title
+                        val pagesArr = JSONArray()
+                        ch.pages.forEach { pagesArr.put(it) }
+                        BookChapterEntity(
+                            bookId = bookId,
+                            chapterIndex = idx,
+                            title = title,
+                            pagesJson = pagesArr.toString(),
+                            illustrationsJson = "[]"
+                        )
+                    }
+                    dao.saveBookWithChapters(book, updatedEntities)
+                    applyUpdatedChaptersToState(bookId, book, updatedEntities)
+                } else {
+                    val targetStartZero = (newStartPageOneBased - 1).coerceIn(0, totalPages - 1)
+                    var cum = 0
+                    val bookmarks = currentChapters.map { ch ->
+                        val s = cum
+                        cum += ch.pages.size.coerceAtLeast(1)
+                        Pair(ch.title, s)
+                    }.toMutableList()
+
+                    bookmarks[chapterIndex] = Pair(cleanTitle, targetStartZero)
+                    bookmarks.sortBy { it.second }
+                    if (bookmarks.first().second > 0) {
+                        bookmarks.add(0, Pair(book.title, 0))
+                    }
+
+                    val updatedEntities = mutableListOf<BookChapterEntity>()
+                    for (i in bookmarks.indices) {
+                        val bm = bookmarks[i]
+                        val sIdx = bm.second.coerceIn(0, totalPages)
+                        val eIdx = if (i + 1 < bookmarks.size) bookmarks[i + 1].second.coerceIn(sIdx, totalPages) else totalPages
+                        val pagesSlice = if (sIdx < eIdx) allPages.subList(sIdx, eIdx) else listOf("")
+                        val pagesArr = JSONArray()
+                        pagesSlice.forEach { pagesArr.put(it) }
+                        updatedEntities.add(
+                            BookChapterEntity(
+                                bookId = bookId,
+                                chapterIndex = i,
+                                title = bm.first,
+                                pagesJson = pagesArr.toString(),
+                                illustrationsJson = "[]"
+                            )
+                        )
+                    }
+                    dao.saveBookWithChapters(book, updatedEntities)
+                    applyUpdatedChaptersToState(bookId, book, updatedEntities)
+                }
+            }
+        }
+    }
+
+    fun deleteManualChapter(bookId: String, chapterIndex: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val book = dao.getBookById(bookId) ?: return@launch
+            val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
+            val currentChapters = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
+                _uiState.value.activeBookChapters
+            } else {
+                dao.getChaptersForBook(bookId).map { ce ->
+                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
+                }
+            }
+            if (currentChapters.size <= 1 || chapterIndex !in currentChapters.indices) return@launch
+
+            if (isPdf) {
+                val totalPages = book.pagesCount.coerceAtLeast(1)
+                var cumZero = 0
+                val bookmarks = currentChapters.map { ch ->
+                    val firstP = ch.pages.firstOrNull().orEmpty()
+                    val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
+                    val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
+                    cumZero += ch.pages.size.coerceAtLeast(1)
+                    PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
+                }.toMutableList()
+
+                bookmarks.removeAt(chapterIndex)
+                if (bookmarks.isNotEmpty() && bookmarks.first().startPageZero > 0) {
+                    bookmarks[0] = bookmarks[0].copy(startPageZero = 0)
+                }
+
+                val illustrations = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
+                    _uiState.value.activeBookIllustrations
+                } else {
+                    dao.getChaptersForBook(bookId).flatMap { ce ->
+                        val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
+                        (0 until arr.length()).mapNotNull { i ->
+                            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                            BookIllustration(
+                                uriOrPath = obj.optString("uriOrPath"),
+                                caption = obj.optString("caption"),
+                                pageIndexInBook = obj.optInt("pageIndexInBook")
+                            )
+                        }
+                    }.distinctBy { it.pageIndexInBook }
+                }
+
+                val isEn = preferences.value.lang == "en"
+                val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
+                    bookId = bookId,
+                    bookmarks = bookmarks,
+                    totalPages = totalPages,
+                    illustrations = illustrations,
+                    defaultTitle = book.title,
+                    isEn = isEn
+                )
+                val updatedBook = book.copy(
+                    tocIndexed = true,
+                    tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
+                )
+                dao.saveBookWithChapters(updatedBook, updatedEntities)
+                applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+            } else {
+                val newChapters = currentChapters.toMutableList()
+                if (chapterIndex > 0) {
+                    val prev = newChapters[chapterIndex - 1]
+                    val cur = newChapters[chapterIndex]
+                    newChapters[chapterIndex - 1] = prev.copy(pages = prev.pages + cur.pages)
+                    newChapters.removeAt(chapterIndex)
+                } else {
+                    val cur = newChapters[0]
+                    val next = newChapters[1]
+                    newChapters[1] = next.copy(pages = cur.pages + next.pages)
+                    newChapters.removeAt(0)
+                }
+                val updatedEntities = newChapters.mapIndexed { idx, ch ->
+                    val pagesArr = JSONArray()
+                    ch.pages.forEach { pagesArr.put(it) }
+                    BookChapterEntity(
+                        bookId = bookId,
+                        chapterIndex = idx,
+                        title = ch.title,
+                        pagesJson = pagesArr.toString(),
+                        illustrationsJson = "[]"
+                    )
+                }
+                dao.saveBookWithChapters(book, updatedEntities)
+                applyUpdatedChaptersToState(bookId, book, updatedEntities)
+            }
+        }
+    }
+
+    private suspend fun applyUpdatedChaptersToState(
+        bookId: String,
+        updatedBook: BookEntity,
+        updatedEntities: List<BookChapterEntity>
+    ) {
+        if (_uiState.value.activeBookId == bookId) {
+            val liveChs = updatedEntities.map { ce ->
+                val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                BookChapter(index = ce.chapterIndex, title = sanitizeBookOrChapterText(ce.title), pages = pList)
+            }
+            val currentGlobalPage = computeGlobalPageMetrics(
+                _uiState.value.activeBookChapters,
+                _uiState.value.activeChapterIndex,
+                _uiState.value.activePageIndex
+            ).currentGlobalPage
+            val targetGlobalZero = (currentGlobalPage - 1).coerceAtLeast(0)
+            val resolved = getPageContentAtGlobalZeroIndex(liveChs, targetGlobalZero)
+            val resolvedActiveChIdx = (resolved?.first ?: 0).coerceIn(0, (liveChs.size - 1).coerceAtLeast(0))
+            val resolvedActivePgIdx = (resolved?.second ?: 0).coerceIn(0, (liveChs.getOrNull(resolvedActiveChIdx)?.pages?.size ?: 1) - 1)
+
+            _uiState.update {
+                it.copy(
+                    activeBookChapters = liveChs,
+                    activeChapterIndex = resolvedActiveChIdx,
+                    activePageIndex = resolvedActivePgIdx
+                )
+            }
+            dao.updateBook(updatedBook.copy(savedChapterIndex = resolvedActiveChIdx, savedPageIndex = resolvedActivePgIdx))
+        }
+    }
+
     fun turnReaderPage(deltaSteps: Int) {
         val st = _uiState.value
         val chapters = st.activeBookChapters
