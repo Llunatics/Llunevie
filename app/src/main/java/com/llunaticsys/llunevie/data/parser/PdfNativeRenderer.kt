@@ -4,12 +4,22 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.style.ForegroundColorSpan
+import android.text.style.LeadingMarginSpan
+import android.text.style.RelativeSizeSpan
 import android.util.LruCache
 import com.llunaticsys.llunevie.data.local.BookChapterEntity
 import com.llunaticsys.llunevie.data.local.BookEntity
@@ -48,6 +58,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 object PdfNativeRenderer {
 
@@ -69,6 +80,31 @@ object PdfNativeRenderer {
         val isBold: Boolean,
         val isCentered: Boolean
     )
+
+    data class PdfParagraphBlock(
+        val text: String,
+        val bulletPrefix: String,
+        val pdfLeft: Float,
+        val pdfTop: Float,
+        val pdfRight: Float,
+        val pdfBottom: Float,
+        val colRight: Float,
+        val firstLineIndentPdf: Float,
+        val hangingIndentPdf: Float,
+        val avgFontSizePt: Float,
+        val lineSpacingRatio: Float,
+        val isBold: Boolean,
+        val isCentered: Boolean,
+        val pageWidthPt: Float,
+        val pageHeightPt: Float
+    )
+
+    private var cachedDocPath: String? = null
+    private var cachedDoc: PDDocument? = null
+    private val docCacheLock = Any()
+    private val pageParagraphBlocksCache = object : LruCache<String, List<PdfParagraphBlock>>(64) {
+        override fun sizeOf(key: String, value: List<PdfParagraphBlock>): Int = 1
+    }
 
     private data class WordChunk(
         val text: String,
@@ -979,6 +1015,349 @@ object PdfNativeRenderer {
         }
 
         return resultMap
+    }
+
+    fun getOrCreateCachedDoc(context: Context, pdfFilePath: String): PDDocument? {
+        synchronized(docCacheLock) {
+            if (cachedDocPath == pdfFilePath && cachedDoc != null) {
+                return cachedDoc
+            }
+            runCatching { cachedDoc?.close() }
+            cachedDoc = null
+            cachedDocPath = null
+            val file = File(pdfFilePath)
+            if (!file.exists()) return null
+            PDFBoxResourceLoader.init(context.applicationContext)
+            val doc = runCatching { PDDocument.load(file) }.getOrNull()
+            if (doc != null) {
+                cachedDoc = doc
+                cachedDocPath = pdfFilePath
+            }
+            return cachedDoc
+        }
+    }
+
+    fun closeCachedDoc() {
+        synchronized(docCacheLock) {
+            runCatching { cachedDoc?.close() }
+            cachedDoc = null
+            cachedDocPath = null
+            pageParagraphBlocksCache.evictAll()
+        }
+    }
+
+    fun extractPdfPageParagraphBlocks(
+        context: Context,
+        pdfFilePath: String,
+        pageIndexZero: Int,
+        bookTitle: String = ""
+    ): List<PdfParagraphBlock> {
+        val cacheKey = "$pdfFilePath:$pageIndexZero"
+        val cached = pageParagraphBlocksCache.get(cacheKey)
+        if (cached != null) return cached
+
+        val doc = getOrCreateCachedDoc(context, pdfFilePath) ?: return emptyList()
+
+        return synchronized(docCacheLock) {
+            if (pageIndexZero < 0 || pageIndexZero >= doc.numberOfPages) return emptyList()
+
+            val linesMap = extractVisualLinesForPages(doc, pageIndexZero, pageIndexZero)
+            val allLines = linesMap[pageIndexZero].orEmpty()
+            if (allLines.isEmpty()) {
+                pageParagraphBlocksCache.put(cacheKey, emptyList())
+                return emptyList()
+            }
+
+            val pdPage = runCatching { doc.getPage(pageIndexZero) }.getOrNull()
+            val mediaBox = pdPage?.mediaBox ?: pdPage?.cropBox
+            val pageW = (mediaBox?.width ?: 600f).coerceAtLeast(1f)
+            val pageH = (mediaBox?.height ?: 800f).coerceAtLeast(1f)
+
+            val titleClean = bookTitle.trim().lowercase()
+            val bodyLines = allLines.filter { vl ->
+                val txt = vl.text.trim()
+                if (txt.isEmpty()) return@filter false
+                val lower = txt.lowercase()
+
+                if (lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
+                    lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")) {
+                    return@filter false
+                }
+
+                // Top header zone: yTop < pageH * 0.095f
+                if (vl.yTop < pageH * 0.095f) {
+                    if (titleClean.length >= 3 && (lower == titleClean || lower.contains(titleClean))) return@filter false
+                    if (txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))) return@filter false
+                    if (vl.isCentered || lower.contains("translation") || lower.contains("volume") || lower.contains("chapter")) return@filter false
+                }
+
+                // Bottom footer zone: yTop > pageH * 0.885f
+                if (vl.yTop > pageH * 0.885f) {
+                    if (txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))) return@filter false
+                    if (lower.contains("chapter") || lower.contains("bab") || lower.contains("pusat perhatian") || txt.matches(Regex(""".*\b\d+\s*$"""))) return@filter false
+                }
+
+                true
+            }
+
+            if (bodyLines.isEmpty()) {
+                pageParagraphBlocksCache.put(cacheKey, emptyList())
+                return emptyList()
+            }
+
+            val colLeft = bodyLines.minOf { it.xLeft }
+            val colRight = bodyLines.maxOf { it.xRight }
+            val colWidth = (colRight - colLeft).coerceAtLeast(1f)
+
+            val positiveYDiffs = mutableListOf<Float>()
+            for (i in 1 until bodyLines.size) {
+                val diff = bodyLines[i].yTop - bodyLines[i - 1].yTop
+                if (diff > 0f) positiveYDiffs.add(diff)
+            }
+            positiveYDiffs.sort()
+            val normalStep = if (positiveYDiffs.isNotEmpty()) {
+                positiveYDiffs[positiveYDiffs.size / 4]
+            } else 14f
+
+            val BULLET_PREFIX_REGEX = Regex("""^([➢➤•●○◦▪▫■□◆◇❖★☆▸►▶\u25A0-\u27BF\uF000-\uF0FF]+|\d+\.|\([0-9a-zA-Z]+\))\s+""")
+
+            val clusters = mutableListOf<MutableList<VisualLine>>()
+            for (curr in bodyLines) {
+                val currentCluster = clusters.lastOrNull()
+                if (currentCluster == null) {
+                    clusters.add(mutableListOf(curr))
+                } else {
+                    val prev = currentCluster.last()
+                    val vertDist = curr.yTop - prev.yTop
+                    val notNewBullet = !BULLET_PREFIX_REGEX.containsMatchIn(curr.text.trim())
+                    val sameCentered = curr.isCentered == prev.isCentered
+                    val prevTextStartX = if (BULLET_PREFIX_REGEX.containsMatchIn(prev.text)) prev.xLeft + 18f else prev.xLeft
+                    val indentOk = curr.xLeft <= prevTextStartX + 6f
+                    val prevReachedMargin = prev.xRight >= colRight - (colWidth * 0.18f)
+
+                    val sameParagraph = vertDist <= normalStep * 1.34f &&
+                        notNewBullet &&
+                        sameCentered &&
+                        indentOk &&
+                        prevReachedMargin
+
+                    if (sameParagraph) {
+                        currentCluster.add(curr)
+                    } else {
+                        clusters.add(mutableListOf(curr))
+                    }
+                }
+            }
+
+            val blocks = clusters.mapNotNull { cluster ->
+                if (cluster.isEmpty()) return@mapNotNull null
+                val sb = StringBuilder()
+                for (vl in cluster) {
+                    val t = vl.text.trim()
+                    if (t.isEmpty()) continue
+                    if (sb.isEmpty()) {
+                        sb.append(t)
+                    } else {
+                        if (sb.endsWith("-")) {
+                            val beforeHyphen = sb.dropLast(1).toString()
+                            val firstWord = t.substringBefore(" ")
+                            if (beforeHyphen.lastOrNull()?.isLetter() == true && firstWord.firstOrNull()?.isLetter() == true) {
+                                sb.setLength(sb.length - 1)
+                                sb.append(t)
+                            } else {
+                                sb.append(" ").append(t)
+                            }
+                        } else {
+                            sb.append(" ").append(t)
+                        }
+                    }
+                }
+                val fullText = sb.toString().trim()
+                if (fullText.isEmpty()) return@mapNotNull null
+
+                val bulletPrefix = BULLET_PREFIX_REGEX.find(fullText)?.value.orEmpty()
+                val pdfLeft = cluster.minOf { it.xLeft }
+                val pdfRight = cluster.maxOf { it.xRight }
+                val firstLine = cluster.first()
+                val lastLine = cluster.last()
+                val pdfTop = (firstLine.yTop - firstLine.maxFontSize * 0.92f).coerceAtLeast(0f)
+                val pdfBottom = (lastLine.yTop + lastLine.maxFontSize * 0.35f).coerceAtMost(pageH)
+                val firstLineIndentPdf = if (bulletPrefix.isEmpty() && cluster.size > 1) {
+                    (cluster.first().xLeft - cluster.drop(1).minOf { it.xLeft }).coerceAtLeast(0f)
+                } else 0f
+                val hangingIndentPdf = if (bulletPrefix.isNotEmpty() && cluster.size > 1) {
+                    (cluster[1].xLeft - cluster[0].xLeft).coerceIn(10f, 36f)
+                } else if (bulletPrefix.isNotEmpty()) 16f else 0f
+                val avgFontSizePt = cluster.map { it.maxFontSize }.average().toFloat()
+                val lineSpacingRatio = if (cluster.size > 1) {
+                    ((lastLine.yTop - firstLine.yTop) / (cluster.size - 1)) / avgFontSizePt.coerceAtLeast(1f)
+                } else 1.2f
+                val isBold = cluster.count { it.isBold } >= (cluster.size + 1) / 2
+                val isCentered = cluster.all { it.isCentered }
+
+                PdfParagraphBlock(
+                    text = fullText,
+                    bulletPrefix = bulletPrefix,
+                    pdfLeft = pdfLeft,
+                    pdfTop = pdfTop,
+                    pdfRight = pdfRight,
+                    pdfBottom = pdfBottom,
+                    colRight = colRight,
+                    firstLineIndentPdf = firstLineIndentPdf,
+                    hangingIndentPdf = hangingIndentPdf,
+                    avgFontSizePt = avgFontSizePt,
+                    lineSpacingRatio = lineSpacingRatio,
+                    isBold = isBold,
+                    isCentered = isCentered,
+                    pageWidthPt = pageW,
+                    pageHeightPt = pageH
+                )
+            }
+
+            pageParagraphBlocksCache.put(cacheKey, blocks)
+            blocks
+        }
+    }
+
+    fun renderTranslatedPdfPageBitmap(
+        origBmp: Bitmap,
+        blocks: List<PdfParagraphBlock>,
+        translatedTexts: List<String>,
+        displayMode: String
+    ): Bitmap {
+        if (blocks.isEmpty() || translatedTexts.isEmpty()) return origBmp
+
+        val outBmp = origBmp.copy(Bitmap.Config.ARGB_8888, true) ?: return origBmp
+        val canvas = Canvas(outBmp)
+        val firstBlock = blocks.first()
+        val scaleX = outBmp.width.toFloat() / firstBlock.pageWidthPt
+        val scaleY = outBmp.height.toFloat() / firstBlock.pageHeightPt
+
+        val sampleCoords = listOf(
+            Pair((outBmp.width * 0.02f).toInt(), (outBmp.height * 0.02f).toInt()),
+            Pair((outBmp.width * 0.98f).toInt(), (outBmp.height * 0.02f).toInt()),
+            Pair((outBmp.width * 0.02f).toInt(), (outBmp.height * 0.98f).toInt()),
+            Pair((outBmp.width * 0.98f).toInt(), (outBmp.height * 0.98f).toInt()),
+            Pair(outBmp.width / 2, (outBmp.height * 0.02f).toInt())
+        )
+        val validColors = sampleCoords.mapNotNull { (x, y) ->
+            val sx = x.coerceIn(0, outBmp.width - 1)
+            val sy = y.coerceIn(0, outBmp.height - 1)
+            runCatching { outBmp.getPixel(sx, sy) }.getOrNull()
+        }
+        val paperBgColorInt = if (validColors.isNotEmpty()) {
+            validColors.sortedBy { Color.red(it) + Color.green(it) + Color.blue(it) }[validColors.size / 2]
+        } else Color.WHITE
+
+        val lum = Color.red(paperBgColorInt) * 0.299 + Color.green(paperBgColorInt) * 0.587 + Color.blue(paperBgColorInt) * 0.114
+        val isDarkPaper = lum < 128
+        val darkInkColor = if (isDarkPaper) Color.rgb(235, 235, 235) else Color.rgb(24, 24, 26)
+        val mutedInkColor = if (isDarkPaper) Color.rgb(180, 180, 190) else Color.rgb(95, 95, 105)
+        val erasePaint = Paint().apply {
+            style = Paint.Style.FILL
+            color = paperBgColorInt
+        }
+
+        for (i in blocks.indices) {
+            val b = blocks[i]
+            val rawTrans = translatedTexts.getOrNull(i)?.trim().orEmpty()
+            if (rawTrans.isEmpty()) continue
+
+            val transText = if (b.bulletPrefix.isNotEmpty() && !rawTrans.startsWith(b.bulletPrefix.trim())) {
+                b.bulletPrefix + rawTrans
+            } else {
+                rawTrans
+            }
+
+            val leftPx = (b.pdfLeft * scaleX).coerceAtLeast(8f)
+            val topPx = (b.pdfTop * scaleY).coerceAtLeast(4f)
+            val origRightPx = (b.pdfRight * scaleX).coerceAtMost(outBmp.width - 8f)
+            val targetRightPx = (maxOf(b.pdfRight, b.colRight) * scaleX).coerceAtMost(outBmp.width - 8f)
+            val bottomPx = (b.pdfBottom * scaleY).coerceAtMost(outBmp.height - 4f)
+            val nextBlockTopPx = if (i + 1 < blocks.size) {
+                (blocks[i + 1].pdfTop * scaleY - 3f)
+            } else {
+                (bottomPx + 18f * scaleY)
+            }
+            val maxAllowedHeightPx = maxOf(bottomPx - topPx, nextBlockTopPx - topPx).coerceAtLeast(16f)
+
+            // Step A (Cleanly Erase Original Paragraph Text on the PDF Bitmap)
+            canvas.drawRect(RectF(leftPx - 3f, topPx - 2f, origRightPx + 3f, bottomPx + 3f), erasePaint)
+
+            // Step B (Typeset Translated Text Inside the Exact Same Bounding Box)
+            val isBilingual = displayMode == "bilingual"
+            val textToDraw = if (isBilingual) "${b.text}\n$transText" else transText
+
+            val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+                color = darkInkColor
+                typeface = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
+            }
+
+            val spannable = SpannableString(textToDraw)
+            val firstIndentPx = (b.firstLineIndentPdf * scaleX).roundToInt()
+            val restIndentPx = (b.hangingIndentPdf * scaleX).roundToInt()
+            if (firstIndentPx > 0 || restIndentPx > 0) {
+                spannable.setSpan(
+                    LeadingMarginSpan.Standard(firstIndentPx, restIndentPx),
+                    0,
+                    spannable.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            if (isBilingual) {
+                val transStart = b.text.length + 1
+                if (transStart < spannable.length) {
+                    spannable.setSpan(
+                        ForegroundColorSpan(mutedInkColor),
+                        transStart,
+                        spannable.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    spannable.setSpan(
+                        RelativeSizeSpan(0.90f),
+                        transStart,
+                        spannable.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+
+            val layoutWidthPx = (targetRightPx - leftPx).toInt().coerceAtLeast(50)
+            val startFontSizePx = b.avgFontSizePt * scaleY
+            val minFontSizePx = startFontSizePx * 0.65f
+            var currentFontSizePx = startFontSizePx
+            val lineSpacingMultiplier = if (isBilingual) 1.0f else 1.12f
+
+            var staticLayout: StaticLayout? = null
+            while (currentFontSizePx >= minFontSizePx) {
+                textPaint.textSize = currentFontSizePx
+                val sl = StaticLayout.Builder.obtain(spannable, 0, spannable.length, textPaint, layoutWidthPx)
+                    .setAlignment(if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
+                    .setLineSpacing(0f, lineSpacingMultiplier)
+                    .setIncludePad(false)
+                    .build()
+                staticLayout = sl
+                if (sl.height <= maxAllowedHeightPx || currentFontSizePx <= minFontSizePx + 0.5f) {
+                    break
+                }
+                currentFontSizePx -= 0.5f
+            }
+
+            if (staticLayout != null) {
+                // Before drawing staticLayout, also fill RectF with paperBgColor in case it wraps slightly wider
+                canvas.drawRect(
+                    RectF(leftPx - 2f, topPx - 1f, leftPx + layoutWidthPx + 2f, topPx + staticLayout.height + 2f),
+                    erasePaint
+                )
+                canvas.save()
+                canvas.translate(leftPx, topPx)
+                staticLayout.draw(canvas)
+                canvas.restore()
+            }
+        }
+
+        return outBmp
     }
 
     suspend fun extractChaptersWithPdfBox(

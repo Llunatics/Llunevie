@@ -353,15 +353,12 @@ class TranslationRepository private constructor() {
         }
     }
 
-    suspend fun translatePageParagraphs(
-        pageRaw: String,
+    suspend fun translateParagraphList(
+        paragraphs: List<String>,
         prefs: UserPreferencesState,
         context: Context
     ): Result<List<Pair<String, String?>>> = withContext(Dispatchers.IO) {
-        val rawParagraphs = pageRaw.split(Regex("\n\\s*\n"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-
+        val rawParagraphs = paragraphs.map { it.trim() }.filter { it.isNotBlank() }
         if (rawParagraphs.isEmpty()) {
             return@withContext Result.success(emptyList())
         }
@@ -395,14 +392,13 @@ class TranslationRepository private constructor() {
         // For uncached paragraphs: translate them
         val uncachedTexts = uncachedIndices.map { rawParagraphs[it] }
 
-        val translatedUncached: List<String> = if (uncachedTexts.size == 1 || engine == "free") {
-            // Free engine or single paragraph: translate individually
+        val translatedUncached: List<String> = if (uncachedTexts.size == 1) {
             uncachedTexts.map { text ->
                 val tr = translate(text, prefs, context)
                 tr.getOrNull() ?: text
             }
         } else {
-            // AI engines: join with [[PARA_SPLIT]] for coherent page context
+            // Join with [[PARA_SPLIT]] for coherent page context in 1 single network request!
             val joined = uncachedTexts.joinToString("\n[[PARA_SPLIT]]\n")
             val trResult = translate(joined, prefs, context)
             if (trResult.isSuccess) {
@@ -420,7 +416,7 @@ class TranslationRepository private constructor() {
                     }
                     splits
                 } else {
-                    // Fallback to individual translations if token count mismatched
+                    // Fallback to individual translations if split count mismatched
                     uncachedTexts.map { text ->
                         translate(text, prefs, context).getOrDefault(text)
                     }
@@ -442,6 +438,26 @@ class TranslationRepository private constructor() {
         Result.success(resultList)
     }
 
+    suspend fun translatePageParagraphs(
+        pageRaw: String,
+        prefs: UserPreferencesState,
+        context: Context
+    ): Result<List<Pair<String, String?>>> {
+        val rawParagraphs = pageRaw.split(Regex("\n\\s*\n"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        return translateParagraphList(rawParagraphs, prefs, context)
+    }
+
+    suspend fun extractPdfPageParagraphBlocks(
+        context: Context,
+        pdfFilePath: String,
+        pageIndexZero: Int,
+        bookTitle: String = ""
+    ): List<PdfNativeRenderer.PdfParagraphBlock> = withContext(Dispatchers.IO) {
+        PdfNativeRenderer.extractPdfPageParagraphBlocks(context, pdfFilePath, pageIndexZero, bookTitle)
+    }
+
     suspend fun extractPdfPageParagraphs(
         context: Context,
         pdfFilePath: String,
@@ -452,135 +468,10 @@ class TranslationRepository private constructor() {
         val cached = pdfParagraphsCache.get(cacheKey)
         if (cached != null) return@withContext cached
 
-        val file = File(pdfFilePath)
-        if (!file.exists()) return@withContext emptyList()
-
-        runCatching {
-            PDFBoxResourceLoader.init(context.applicationContext)
-            PDDocument.load(file).use { document ->
-                if (pageIndexZero < 0 || pageIndexZero >= document.numberOfPages) {
-                    return@use emptyList<String>()
-                }
-                val visualLines = PdfNativeRenderer.extractVisualLinesForPages(
-                    document,
-                    pageIndexZero,
-                    pageIndexZero
-                )[pageIndexZero].orEmpty()
-
-                if (visualLines.isEmpty()) {
-                    pdfParagraphsCache.put(cacheKey, emptyList())
-                    return@use emptyList<String>()
-                }
-
-                // Filter out running headers, watermarks, standalone page numbers
-                val titleClean = bookTitle.trim().lowercase()
-                val totalLines = visualLines.size
-
-                val filteredLines = visualLines.filterIndexed { idx, line ->
-                    val txt = line.text.trim()
-                    if (txt.isEmpty()) return@filterIndexed false
-                    val lower = txt.lowercase()
-
-                    // Watermarks
-                    if (lower.contains("http://") || lower.contains("https://") || lower.contains("www.")) return@filterIndexed false
-                    if (lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")) return@filterIndexed false
-                    if (titleClean.length >= 3 && lower == titleClean) return@filterIndexed false
-
-                    // Standalone page number at top or bottom (first 2 lines or last 2 lines)
-                    val isNearEdge = idx <= 1 || idx >= totalLines - 2
-                    val isStandalonePageNum = isNearEdge && txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))
-                    if (isStandalonePageNum) return@filterIndexed false
-
-                    // Running header at line 0 if matches title
-                    if (idx == 0 && totalLines > 3 && titleClean.isNotEmpty() && lower.contains(titleClean)) return@filterIndexed false
-
-                    true
-                }
-
-                if (filteredLines.isEmpty()) {
-                    pdfParagraphsCache.put(cacheKey, emptyList())
-                    return@use emptyList<String>()
-                }
-
-                // Compute median vertical line step medianStep and column edges colLeft, colRight
-                val yDiffs = mutableListOf<Float>()
-                for (i in 1 until filteredLines.size) {
-                    val diff = filteredLines[i].yTop - filteredLines[i - 1].yTop
-                    if (diff > 0f) yDiffs.add(diff)
-                }
-                val medianStep = if (yDiffs.isNotEmpty()) {
-                    val sortedDiffs = yDiffs.sorted()
-                    sortedDiffs[sortedDiffs.size / 2]
-                } else 18f
-
-                val sortedLefts = filteredLines.map { it.xLeft }.sorted()
-                val colLeft = if (sortedLefts.size >= 4) sortedLefts[sortedLefts.size / 10] else sortedLefts.first()
-
-                val sortedRights = filteredLines.map { it.xRight }.sorted()
-                val colRight = if (sortedRights.size >= 4) sortedRights[(sortedRights.size * 85) / 100] else sortedRights.last()
-
-                val paragraphs = mutableListOf<String>()
-                var currentParaSb = StringBuilder()
-
-                for (i in filteredLines.indices) {
-                    val line = filteredLines[i]
-                    val prevLine = if (i > 0) filteredLines[i - 1] else null
-
-                    var isNewPara = false
-                    if (prevLine != null) {
-                        val vertGap = line.yTop - prevLine.yTop
-                        val prevText = prevLine.text.trim()
-                        val endsWithPunct = prevText.endsWith(".") ||
-                            prevText.endsWith("?") ||
-                            prevText.endsWith("!") ||
-                            prevText.endsWith("\"") ||
-                            prevText.endsWith("”") ||
-                            prevText.endsWith(":") ||
-                            prevText.endsWith("』") ||
-                            prevText.endsWith("」")
-
-                        if (vertGap > medianStep * 1.25f) {
-                            isNewPara = true
-                        } else if (line.xLeft >= colLeft + 14f) {
-                            isNewPara = true
-                        } else if (endsWithPunct && prevLine.xRight < colRight - 25f) {
-                            isNewPara = true
-                        }
-                    }
-
-                    if (isNewPara && currentParaSb.isNotEmpty()) {
-                        paragraphs.add(currentParaSb.toString().trim())
-                        currentParaSb = StringBuilder()
-                    }
-
-                    val cleanLine = line.text.trim()
-                    if (currentParaSb.isNotEmpty()) {
-                        if (currentParaSb.endsWith("-")) {
-                            val beforeHyphen = currentParaSb.dropLast(1).toString()
-                            val firstWord = cleanLine.substringBefore(" ")
-                            if (beforeHyphen.lastOrNull()?.isLetter() == true && firstWord.firstOrNull()?.isLetter() == true) {
-                                currentParaSb.setLength(currentParaSb.length - 1)
-                                currentParaSb.append(cleanLine)
-                            } else {
-                                currentParaSb.append(" ").append(cleanLine)
-                            }
-                        } else {
-                            currentParaSb.append(" ").append(cleanLine)
-                        }
-                    } else {
-                        currentParaSb.append(cleanLine)
-                    }
-                }
-
-                if (currentParaSb.isNotEmpty()) {
-                    val lastP = currentParaSb.toString().trim()
-                    if (lastP.isNotEmpty()) paragraphs.add(lastP)
-                }
-
-                pdfParagraphsCache.put(cacheKey, paragraphs)
-                paragraphs
-            }
-        }.getOrElse { emptyList() }
+        val blocks = extractPdfPageParagraphBlocks(context, pdfFilePath, pageIndexZero, bookTitle)
+        val paras = blocks.map { it.text }
+        pdfParagraphsCache.put(cacheKey, paras)
+        paras
     }
 
     fun extractPdfPageText(pdfFilePath: String, pageIndexZero: Int): String {
