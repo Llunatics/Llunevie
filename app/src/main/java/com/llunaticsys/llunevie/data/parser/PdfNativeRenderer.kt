@@ -193,7 +193,9 @@ object PdfNativeRenderer {
     }
 
     fun getCachedBitmap(pdfFilePath: String, pageIndex: Int, widthBucket: Int): Bitmap? {
-        return pageBitmapCache.get("$pdfFilePath:$pageIndex:$widthBucket")
+        val bmp = pageBitmapCache.get("$pdfFilePath:$pageIndex:$widthBucket")
+        if (bmp != null && !bmp.isRecycled) return bmp
+        return null
     }
 
     fun getCachedPageAspectRatio(pdfFilePath: String): Float {

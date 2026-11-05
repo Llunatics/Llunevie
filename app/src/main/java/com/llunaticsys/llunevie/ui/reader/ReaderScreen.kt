@@ -731,67 +731,72 @@ fun ReaderScreen(
                         val prevLeftIdx = if (isSpread) spreadStart - 2 else curZero - 1
                         val prevRightIdx = if (isSpread) spreadStart - 1 else curZero
 
+                        val needStagePdfBitmaps = isPdfBook && (
+                            (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) ||
+                            isSpread
+                        )
+
                         val curLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook) {
+                            initialValue = if (needStagePdfBitmaps) {
                                 PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curLeftIdx)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curLeftIdx, book.localFilePath)
                             } else null,
-                            isPdfBook, curLeftIdx, book.localFilePath, stageW
+                            needStagePdfBitmaps, curLeftIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook) PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curLeftIdx, if (isSpread) stageW / 2 else stageW) else null
+                            value = if (needStagePdfBitmaps) PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curLeftIdx, if (isSpread) stageW / 2 else stageW) else null
                         }
                         val curRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && isSpread && curRightIdx < metrics.totalBookPages) {
+                            initialValue = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
                                 PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curRightIdx)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curRightIdx, book.localFilePath)
                             } else null,
-                            isPdfBook, isSpread, curRightIdx, book.localFilePath, stageW
+                            needStagePdfBitmaps, isSpread, curRightIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && isSpread && curRightIdx < metrics.totalBookPages) {
+                            value = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
                                 PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curRightIdx, stageW / 2)
                             } else null
                         }
                         val nextLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && nextLeftIdx < metrics.totalBookPages) {
+                            initialValue = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
                                 PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx, book.localFilePath)
                             } else null,
-                            isPdfBook, nextLeftIdx, book.localFilePath, stageW
+                            needStagePdfBitmaps, nextLeftIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && nextLeftIdx < metrics.totalBookPages) {
+                            value = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
                                 PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextLeftIdx, if (isSpread) stageW / 2 else stageW)
                             } else null
                         }
                         val nextRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && isSpread && nextRightIdx < metrics.totalBookPages) {
+                            initialValue = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
                                 PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextRightIdx)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextRightIdx, book.localFilePath)
                             } else null,
-                            isPdfBook, isSpread, nextRightIdx, book.localFilePath, stageW
+                            needStagePdfBitmaps, isSpread, nextRightIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && isSpread && nextRightIdx < metrics.totalBookPages) {
+                            value = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
                                 PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextRightIdx, stageW / 2)
                             } else null
                         }
                         val prevLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && prevLeftIdx >= 0) {
+                            initialValue = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
                                 PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx, book.localFilePath)
                             } else null,
-                            isPdfBook, prevLeftIdx, book.localFilePath, stageW
+                            needStagePdfBitmaps, prevLeftIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && prevLeftIdx >= 0) {
+                            value = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
                                 PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevLeftIdx, if (isSpread) stageW / 2 else stageW)
                             } else null
                         }
                         val prevRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (isPdfBook && isSpread && prevRightIdx >= 0) {
+                            initialValue = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
                                 PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevRightIdx)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevRightIdx, book.localFilePath)
                             } else null,
-                            isPdfBook, isSpread, prevRightIdx, book.localFilePath, stageW
+                            needStagePdfBitmaps, isSpread, prevRightIdx, book.localFilePath, stageW
                         ) {
-                            value = if (isPdfBook && isSpread && prevRightIdx >= 0) {
+                            value = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
                                 PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevRightIdx, stageW / 2)
                             } else null
                         }
@@ -851,7 +856,7 @@ fun ReaderScreen(
                             val curBitmapInitial = if (isPdfBook && !isSpread) {
                                 (curLeftEffectivePdfBmp
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero))?.asImageBitmap()
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero, book.localFilePath))?.asImageBitmap()
                             } else null
 
                             val curBitmap by produceState<ImageBitmap?>(
@@ -1628,26 +1633,24 @@ fun ReaderScreen(
                                 val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
                                 val rightText = rightTriple?.third.orEmpty()
 
-                                var leftPdfBmp by remember(book.id, leftZero) {
-                                    mutableStateOf(
-                                        if (isPdfBook) {
-                                            viewModel?.getCachedPdfBitmap(book.id, leftZero)
-                                                ?: (if (leftZero == (curZero / 2) * 2) curLeftPdfBmp else null)
-                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
-                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
-                                        } else null
-                                    )
-                                }
-                                var rightPdfBmp by remember(book.id, rightZero) {
-                                    mutableStateOf(
-                                        if (isPdfBook) {
-                                            viewModel?.getCachedPdfBitmap(book.id, rightZero)
-                                                ?: (if (leftZero == (curZero / 2) * 2) curRightPdfBmp else null)
-                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
-                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
-                                        } else null
-                                    )
-                                }
+                                 var leftPdfBmp by remember(book.id, leftZero) {
+                                     mutableStateOf(
+                                         if (isPdfBook) {
+                                             viewModel?.getCachedPdfBitmap(book.id, leftZero, book.localFilePath)
+                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
+                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                         } else null
+                                     )
+                                 }
+                                 var rightPdfBmp by remember(book.id, rightZero) {
+                                     mutableStateOf(
+                                         if (isPdfBook) {
+                                             viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
+                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
+                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                         } else null
+                                     )
+                                 }
 
                                 if (isPdfBook) {
                                     LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero) {
@@ -1714,33 +1717,37 @@ fun ReaderScreen(
                                      val leftZero = (pageZero / 2) * 2
                                      val rightZero = leftZero + 1
                                      RenderSpreadPageForNonFlipbook(leftZero, rightZero)
-                                 } else if (isPdfBook) {
-                                     val effPdfBmp = getEffectivePdfPageBitmap(
-                                         pageZero,
-                                         if (pageZero == curZero) curLeftPdfBmp else (viewModel?.getCachedPdfBitmap(book.id, pageZero) ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, ((stageW / 120) * 120).coerceAtLeast(360)))
-                                     )
-                                     if (viewModel != null) {
-                                         val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
-                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                 pageZero, indexedIllustrationPages
-                                             ))
-                                         PdfPageItemContent(
-                                             bookId = book.id,
-                                             filePath = book.localFilePath!!,
-                                             pageIndex = pageZero,
-                                             viewModel = viewModel,
-                                             modifier = Modifier.fillMaxSize(),
-                                             colorFilter = if (shouldTintPdfPage) pdfThemeColorFilter else null,
-                                             surfaceColor = if (shouldTintPdfPage) palette.bgCard else Color.White,
-                                             overrideBitmap = effPdfBmp
-                                         )
-                                     } else {
-                                         val displayPdfBmp = effPdfBmp ?: curLeftPdfBmp
-                                         val pdfRatio = if (displayPdfBmp != null && displayPdfBmp.height > 0) {
-                                             displayPdfBmp.width.toFloat() / displayPdfBmp.height.toFloat()
-                                         } else {
-                                             PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
-                                         }
+                                  } else if (isPdfBook) {
+                                      val effPdfBmp = if (isPageTranslationActive && !peekOriginalPdfPage) {
+                                          val baseBmp = viewModel?.getCachedPdfBitmap(book.id, pageZero, book.localFilePath)
+                                              ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
+                                              ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, ((stageW / 120) * 120).coerceAtLeast(360))
+                                          getEffectivePdfPageBitmap(pageZero, baseBmp)
+                                      } else null
+                                      if (viewModel != null) {
+                                          val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                              !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                  pageZero, indexedIllustrationPages
+                                              ))
+                                          PdfPageItemContent(
+                                              bookId = book.id,
+                                              filePath = book.localFilePath!!,
+                                              pageIndex = pageZero,
+                                              viewModel = viewModel,
+                                              modifier = Modifier.fillMaxSize(),
+                                              colorFilter = if (shouldTintPdfPage) pdfThemeColorFilter else null,
+                                              surfaceColor = if (shouldTintPdfPage) palette.bgCard else Color.White,
+                                              overrideBitmap = effPdfBmp
+                                          )
+                                      } else {
+                                          val displayPdfBmp = effPdfBmp
+                                              ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
+                                              ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, ((stageW / 120) * 120).coerceAtLeast(360))
+                                          val pdfRatio = if (displayPdfBmp != null && displayPdfBmp.height > 0) {
+                                              displayPdfBmp.width.toFloat() / displayPdfBmp.height.toFloat()
+                                          } else {
+                                              PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
+                                          }
                                          Box(
                                              modifier = Modifier
                                                  .fillMaxSize()
@@ -1810,7 +1817,7 @@ fun ReaderScreen(
                             if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
                                 if (isSpread) {
                                     val totalSpreads = (metrics.totalBookPages + 1) / 2
-                                    val initialSpread = (curZero / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                    val initialSpread = (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
                                     val spreadPagerState = rememberPagerState(
                                         initialPage = initialSpread,
                                         pageCount = { totalSpreads.coerceAtLeast(1) }
@@ -1819,23 +1826,24 @@ fun ReaderScreen(
                                         snapshotFlow { spreadPagerState.settledPage }
                                             .distinctUntilChanged()
                                             .collect { settledSpread ->
-                                                if (!spreadPagerState.isScrollInProgress) {
-                                                    val targetPage = settledSpread * 2
-                                                    if (targetPage / 2 != curZero / 2) {
-                                                        val target = getPageAtGlobalZero(targetPage)
-                                                        if (target != null) {
-                                                            onJumpToChapterAndPage(target.first, target.second)
-                                                        }
+                                                val targetPage = settledSpread * 2
+                                                if (targetPage / 2 != displayPageIndex / 2) {
+                                                    displayPageIndex = targetPage
+                                                    val target = getPageAtGlobalZero(targetPage)
+                                                    if (target != null) {
+                                                        onJumpToChapterAndPage(target.first, target.second)
                                                     }
                                                 }
                                             }
                                     }
-                                    LaunchedEffect(curZero) {
-                                        val targetSpread = curZero / 2
+                                    LaunchedEffect(curZeroFromMetrics) {
+                                        val targetSpread = curZeroFromMetrics / 2
                                         if (!spreadPagerState.isScrollInProgress &&
+                                            spreadPagerState.settledPage != targetSpread &&
                                             spreadPagerState.currentPage != targetSpread &&
                                             spreadPagerState.targetPage != targetSpread
                                         ) {
+                                            displayPageIndex = curZeroFromMetrics
                                             spreadPagerState.animateScrollToPage(
                                                 targetSpread,
                                                 animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
@@ -1844,7 +1852,8 @@ fun ReaderScreen(
                                     }
                                     HorizontalPager(
                                         state = spreadPagerState,
-                                        beyondViewportPageCount = 1,
+                                        beyondViewportPageCount = 2,
+                                        key = { spreadIndex -> "slide_spread_$spreadIndex" },
                                         modifier = Modifier.fillMaxSize()
                                     ) { spreadIndex ->
                                         val spreadLeftPage = spreadIndex * 2
@@ -1853,14 +1862,15 @@ fun ReaderScreen(
                                     }
                                 } else {
                                     val pagerState = rememberPagerState(
-                                        initialPage = curZero.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
+                                        initialPage = displayPageIndex.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
                                         pageCount = { metrics.totalBookPages.coerceAtLeast(1) }
                                     )
                                     LaunchedEffect(pagerState) {
                                         snapshotFlow { pagerState.settledPage }
                                             .distinctUntilChanged()
                                             .collect { settled ->
-                                                if (!pagerState.isScrollInProgress && settled != curZero) {
+                                                if (settled != displayPageIndex) {
+                                                    displayPageIndex = settled
                                                     val target = getPageAtGlobalZero(settled)
                                                     if (target != null) {
                                                         onJumpToChapterAndPage(target.first, target.second)
@@ -1868,20 +1878,23 @@ fun ReaderScreen(
                                                 }
                                             }
                                     }
-                                    LaunchedEffect(curZero) {
+                                    LaunchedEffect(curZeroFromMetrics) {
                                         if (!pagerState.isScrollInProgress &&
-                                            pagerState.currentPage != curZero &&
-                                            pagerState.targetPage != curZero
+                                            pagerState.settledPage != curZeroFromMetrics &&
+                                            pagerState.currentPage != curZeroFromMetrics &&
+                                            pagerState.targetPage != curZeroFromMetrics
                                         ) {
+                                            displayPageIndex = curZeroFromMetrics
                                             pagerState.animateScrollToPage(
-                                                curZero,
+                                                curZeroFromMetrics,
                                                 animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
                                             )
                                         }
                                     }
                                     HorizontalPager(
                                         state = pagerState,
-                                        beyondViewportPageCount = 1,
+                                        beyondViewportPageCount = 2,
+                                        key = { pIdx -> "slide_page_$pIdx" },
                                         modifier = Modifier.fillMaxSize()
                                     ) { pIdx ->
                                         RenderPageForNonFlipbook(pIdx)
@@ -2079,13 +2092,17 @@ fun ReaderScreen(
         }
 
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
-        if (showReaderChrome) {
+        AnimatedVisibility(
+            visible = showReaderChrome,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { -it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+        ) {
             val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
             val topBarStartPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
             val topBarEndPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .windowInsetsPadding(WindowInsets.displayCutout)
@@ -2489,7 +2506,12 @@ fun ReaderScreen(
         }
 
         // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
-        if (showReaderChrome && !isTwoPageSpread) {
+        AnimatedVisibility(
+            visible = showReaderChrome && !isTwoPageSpread,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+        ) {
             val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
             val pageIndicatorLabel = when (prefs.readingFlowMode) {
                 ReadingFlowMode.WEBTOON -> {
@@ -2514,7 +2536,6 @@ fun ReaderScreen(
 
             Row(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .padding(horizontal = 20.dp)
@@ -3019,17 +3040,28 @@ fun ReaderScreen(
         }
 
         // HIGHLIGHT & NOTE POPOVER (`#highlightPopover`)
-        selectedQuoteForPopover?.let { quote ->
+        var cachedQuoteForPopover by remember { mutableStateOf<String?>(null) }
+        if (selectedQuoteForPopover != null) {
+            cachedQuoteForPopover = selectedQuoteForPopover
+        }
+
+        AnimatedVisibility(
+            visible = selectedQuoteForPopover != null,
+            enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)),
+            exit = fadeOut(tween(130)) + scaleOut(targetScale = 0.94f, animationSpec = tween(130)),
+            modifier = Modifier
+                .align(if (selectedPopoverInUpperHalf) Alignment.BottomCenter else Alignment.TopCenter)
+                .padding(horizontal = 16.dp, vertical = 52.dp)
+                .fillMaxWidth()
+        ) {
+            val quote = cachedQuoteForPopover ?: selectedQuoteForPopover.orEmpty()
             val existingHl = bookHighlights.find { it.quoteText.equals(quote, ignoreCase = true) }
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = palette.sheetBg.copy(alpha = 0.97f),
                 border = BorderStroke(1.dp, palette.borderSoft),
                 shadowElevation = 16.dp,
-                modifier = Modifier
-                    .align(if (selectedPopoverInUpperHalf) Alignment.BottomCenter else Alignment.TopCenter)
-                    .padding(horizontal = 16.dp, vertical = 52.dp)
-                    .fillMaxWidth()
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
@@ -3561,8 +3593,40 @@ fun ReaderScreen(
         }
 
         // IN-BOOK SEARCH OVERLAY (`#inBookSearchDrawer`)
-        inBookSearchQuery?.let { initialQuery ->
-            var currentQuery by remember { mutableStateOf(initialQuery) }
+        var cachedSearchQuery by remember { mutableStateOf<String?>(null) }
+        if (inBookSearchQuery != null) {
+            cachedSearchQuery = inBookSearchQuery
+        }
+
+        // Search Scrim
+        AnimatedVisibility(
+            visible = inBookSearchQuery != null,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160)),
+            modifier = Modifier.zIndex(90f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { inBookSearchQuery = null }
+            )
+        }
+
+        // Search Panel
+        AnimatedVisibility(
+            visible = inBookSearchQuery != null,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(91f)
+        ) {
+            val initialQuery = cachedSearchQuery ?: inBookSearchQuery.orEmpty()
+            var currentQuery by remember(cachedSearchQuery) { mutableStateOf(initialQuery) }
             val searchResults = remember(currentQuery, chapters) {
                 val q = currentQuery.trim()
                 if (q.length < 2) emptyList()
@@ -3587,30 +3651,19 @@ fun ReaderScreen(
                 }
             }
 
-            Box(
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.72f)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
-                    ) { inBookSearchQuery = null }
-                    .zIndex(90f)
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.72f)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -3773,23 +3826,27 @@ fun ReaderScreen(
                     }
                 }
             }
-        }
 
         val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
         // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
-        if (uiState.showReaderTypeSheet) {
-            val scrimAlpha by animateFloatAsState(
-                targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
-                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-                label = "settingsScrimAlpha"
-            )
-            val nonActiveAlpha by animateFloatAsState(
-                targetValue = if (activeDraggingSliderKey != null) 0f else 1f,
-                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-                label = "nonActiveAlpha"
-            )
+        val scrimAlpha by animateFloatAsState(
+            targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
+            animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+            label = "settingsScrimAlpha"
+        )
+        val nonActiveAlpha by animateFloatAsState(
+            targetValue = if (activeDraggingSliderKey != null) 0f else 1f,
+            animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+            label = "nonActiveAlpha"
+        )
 
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showReaderTypeSheet,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -3798,22 +3855,30 @@ fun ReaderScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleTypeSheet(false, null) }
+            )
+        }
+
+        // Bottom Sheet Panel
+        AnimatedVisibility(
+            visible = uiState.showReaderTypeSheet,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = palette.bgSurface.copy(alpha = nonActiveAlpha),
+                border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = nonActiveAlpha)),
+                shadowElevation = (8f * nonActiveAlpha).dp,
+                modifier = Modifier
+                    .widthIn(min = 340.dp, max = 420.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = if (isLandscape) 310.dp else 460.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = palette.bgSurface.copy(alpha = nonActiveAlpha),
-                    border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = nonActiveAlpha)),
-                    shadowElevation = (8f * nonActiveAlpha).dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .widthIn(min = 340.dp, max = 420.dp)
-                        .fillMaxWidth()
-                        .heightIn(max = if (isLandscape) 310.dp else 460.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -3917,15 +3982,38 @@ fun ReaderScreen(
 
                         val currentTabKey = if (isPdfBook && uiState.activeReaderSheetTab == "text") "turn" else uiState.activeReaderSheetTab
 
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            when (currentTabKey) {
-                                // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
-                                "text" -> {
+                        AnimatedContent(
+                            targetState = currentTabKey,
+                            transitionSpec = {
+                                val tabOrder = listOf("text", "page", "turn")
+                                val initialIdx = when (initialState) {
+                                    "text", "type" -> 0
+                                    "page" -> 1
+                                    "turn" -> 2
+                                    else -> 0
+                                }
+                                val targetIdx = when (targetState) {
+                                    "text", "type" -> 0
+                                    "page" -> 1
+                                    "turn" -> 2
+                                    else -> 0
+                                }
+                                val dir = if (targetIdx >= initialIdx) 1 else -1
+                                (slideInHorizontally(spring(dampingRatio = 0.88f, stiffness = 420f)) { w -> dir * (w / 3) } + fadeIn(tween(180)))
+                                    .togetherWith(slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { w -> -dir * (w / 3) } + fadeOut(tween(140)))
+                            },
+                            modifier = Modifier.animateContentSize(spring(dampingRatio = 0.88f, stiffness = 420f)),
+                            label = "readerTypeTabContent"
+                        ) { tab ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                when (tab) {
+                                    // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
+                                    "text", "type" -> {
                                     Column(
                                         modifier = Modifier.alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "FONT_SIZE") 1f else nonActiveAlpha)
                                     ) {
@@ -4521,7 +4609,12 @@ fun ReaderScreen(
             }
 
         // 5. LEFT SIDEBAR TOC & ILLUSTRATIONS DRAWER (`#readerTocDrawer` with Footer Progress Bar!)
-        if (uiState.showReaderTocDrawer) {
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showReaderTocDrawer,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(180))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -4530,21 +4623,30 @@ fun ReaderScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleTocDrawer(false) }
+            )
+        }
+
+        // Left Drawer Panel
+        AnimatedVisibility(
+            visible = uiState.showReaderTocDrawer,
+            enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { -it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(160)),
+            modifier = Modifier.align(Alignment.CenterStart)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.82f)
+                    .widthIn(max = 300.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.82f)
-                        .widthIn(max = 300.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -5256,15 +5358,14 @@ fun ReaderScreen(
                     }
                 }
             }
-        }
 
         // 6. RIGHT SAVED NOTES & HIGHLIGHTS DRAWER (`#readerNotesDrawer`)
-        if (uiState.showReaderNotesDrawer) {
-            var isAddingManualNote by remember { mutableStateOf(false) }
-            var manualNoteText by remember { mutableStateOf("") }
-            var manualQuoteText by remember { mutableStateOf("") }
-            var selectedNoteColor by remember { mutableStateOf(HighlightColorKey.GOLD) }
-
+        // Backdrop Scrim
+        AnimatedVisibility(
+            visible = uiState.showReaderNotesDrawer,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(180))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -5273,22 +5374,35 @@ fun ReaderScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onToggleNotesDrawer(false) }
+            )
+        }
+
+        // Right Drawer Panel
+        AnimatedVisibility(
+            visible = uiState.showReaderNotesDrawer,
+            enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(160)),
+            modifier = Modifier.align(Alignment.CenterEnd)
+        ) {
+            var isAddingManualNote by remember { mutableStateOf(false) }
+            var manualNoteText by remember { mutableStateOf("") }
+            var manualQuoteText by remember { mutableStateOf("") }
+            var selectedNoteColor by remember { mutableStateOf(HighlightColorKey.GOLD) }
+
+            Surface(
+                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.84f)
+                    .widthIn(max = 300.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
-                    color = palette.sheetBg,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 24.dp,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.84f)
-                        .widthIn(max = 300.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -5731,12 +5845,16 @@ fun ReaderScreen(
             }
         }
     }
-        }
 
         // 7. OPAQUE ILLUSTRATION VIEWER MODAL (`#illustViewerModal`)
-        if (uiState.showIllustViewer && uiState.activeBookIllustrations.isNotEmpty()) {
+        AnimatedVisibility(
+            visible = uiState.showIllustViewer && uiState.activeBookIllustrations.isNotEmpty(),
+            enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.95f, animationSpec = tween(200)),
+            exit = fadeOut(tween(160)) + scaleOut(targetScale = 0.95f, animationSpec = tween(160)),
+            modifier = Modifier.fillMaxSize()
+        ) {
             val illusts = uiState.activeBookIllustrations
-            val activeItem = illusts.getOrElse(uiState.activeIllustIndex) { illusts.first() }
+            val activeItem = illusts.getOrElse(uiState.activeIllustIndex) { illusts.firstOrNull() ?: return@AnimatedVisibility }
             var manualScale by remember(uiState.activeIllustIndex) { mutableFloatStateOf(1f) }
             var panOffset by remember(uiState.activeIllustIndex) { mutableStateOf(Offset.Zero) }
             val currentZoom = manualScale.coerceIn(1f, 4f)
@@ -6208,22 +6326,32 @@ private fun InteractiveTextPageContent(
     val isCover = isCoverPage || (
         (chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) &&
         rawParagraphs.any { it.startsWith("[ILLUST:") }
-    ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:") && !showChapterHeader)
+    ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
 
-    // 1. Natural Aspect-Ratio EPUB Cover (Never Stretched or Cropped!)
+    // 1. Standalone / Full-Page EPUB Illustration & Cover (1:1 with Flipbook Canvas!)
     if (isCover) {
         val illustPara = rawParagraphs.firstOrNull { it.startsWith("[ILLUST:") }
         val imgPath = illustPara?.removePrefix("[ILLUST:")?.substringBefore("|")?.substringBefore("]")
         if (imgPath != null && File(imgPath).exists()) {
+            if (transparentTextForFlipbook) {
+                // Flipbook canvas underneath already renders the full-page illustration; only provide tap target
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onIllustrationClicked(imgPath) }
+                )
+                return
+            }
             val coverBitmap = remember(imgPath) {
                 runCatching { BitmapFactory.decodeFile(imgPath) }.getOrNull()
             }
             if (coverBitmap != null) {
-                val ratio = (coverBitmap.width.toFloat() / coverBitmap.height.toFloat()).coerceIn(0.58f, 0.80f)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -6232,12 +6360,9 @@ private fun InteractiveTextPageContent(
                 ) {
                     Image(
                         bitmap = coverBitmap.asImageBitmap(),
-                        contentDescription = bookTitle.ifBlank { "Cover" },
+                        contentDescription = bookTitle.ifBlank { "Illustration" },
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(ratio, matchHeightConstraintsFirst = false)
-                            .clip(RoundedCornerShape(10.dp))
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
                 return
@@ -6408,36 +6533,38 @@ private fun InteractiveTextPageContent(
             }
 
             // Inline illustrations inside the chapter
-            rawParagraphs.filter { it.startsWith("[ILLUST:") && it.endsWith("]") }.forEach { para ->
-                val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
-                val path = inner.substringBefore("|")
-                val caption = inner.substringAfter("|", "")
-                Surface(
-                    onClick = { onIllustrationClicked(path) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.bgCard,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 14.dp)
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AsyncImage(
-                            model = File(path),
-                            contentDescription = caption,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(260.dp)
-                        )
-                        if (caption.isNotBlank()) {
-                            Text(
-                                text = caption,
-                                color = palette.textMuted,
-                                fontSize = 10.5.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(8.dp)
+            if (!transparentTextForFlipbook) {
+                rawParagraphs.filter { it.startsWith("[ILLUST:") && it.endsWith("]") }.forEach { para ->
+                    val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
+                    val path = inner.substringBefore("|")
+                    val caption = inner.substringAfter("|", "")
+                    Surface(
+                        onClick = { onIllustrationClicked(path) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = palette.bgCard,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            AsyncImage(
+                                model = File(path),
+                                contentDescription = caption,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(260.dp)
                             )
+                            if (caption.isNotBlank()) {
+                                Text(
+                                    text = caption,
+                                    color = palette.textMuted,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -6990,8 +7117,8 @@ fun PdfPageItemContent(
 ) {
     val palette = LocalLluneviePalette.current
     // Initialize synchronously from LRU cache so cached pages render on Frame 0 with ZERO null blink!
-    var pageBitmap by remember(bookId, pageIndex, overrideBitmap) {
-        mutableStateOf(overrideBitmap ?: viewModel.getCachedPdfBitmap(bookId, pageIndex))
+    var pageBitmap by remember(bookId, pageIndex, filePath, overrideBitmap) {
+        mutableStateOf(overrideBitmap ?: viewModel.getCachedPdfBitmap(bookId, pageIndex, filePath))
     }
     LaunchedEffect(bookId, filePath, pageIndex, overrideBitmap) {
         if (overrideBitmap != null) {
@@ -6999,7 +7126,7 @@ fun PdfPageItemContent(
         } else if (pageBitmap == null) {
             pageBitmap = viewModel.loadPdfPageBitmap(bookId, filePath, pageIndex)
         }
-        // Prefetch neighbors so Slide and Fade already have pageIndex ± 1 in cache!
+        // Prefetch neighbors so Slide and Fade already have pageIndex ± 2 in cache!
         viewModel.prefetchPdfNeighbors(bookId, filePath, pageIndex)
     }
     Box(
@@ -7007,8 +7134,9 @@ fun PdfPageItemContent(
         contentAlignment = Alignment.Center
     ) {
         val bmp = overrideBitmap ?: pageBitmap
-        if (bmp != null) {
-            val ratio = if (bmp.height > 0) (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f) else 0.707f
+        val imageBitmap = remember(bmp) { bmp?.asImageBitmap() }
+        if (imageBitmap != null) {
+            val ratio = if (bmp != null && bmp.height > 0) (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f) else 0.707f
             Surface(
                 shape = RoundedCornerShape(4.dp),
                 color = surfaceColor,
@@ -7019,7 +7147,7 @@ fun PdfPageItemContent(
                     .padding(vertical = 4.dp)
             ) {
                 Image(
-                    bitmap = bmp.asImageBitmap(),
+                    bitmap = imageBitmap,
                     contentDescription = "Page ${pageIndex + 1}",
                     contentScale = ContentScale.Fit,
                     colorFilter = colorFilter,

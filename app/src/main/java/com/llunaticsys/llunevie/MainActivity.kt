@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.text.style.TextOverflow
 import com.llunaticsys.llunevie.model.AppThemeMode
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -30,6 +32,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -54,6 +57,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -338,8 +344,14 @@ private fun LlunevieMainContainer(
         uiState.pendingCandidateForShelf != null ||
         uiState.selectedCatalogBookDetail != null
 
-    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) {
-        Modifier.blur(10.dp)
+    val targetBlur = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) 10.dp else 0.dp
+    val animatedBlur by animateDpAsState(
+        targetValue = targetBlur,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "screenBackdropBlur"
+    )
+    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && animatedBlur > 0.5.dp) {
+        Modifier.blur(animatedBlur)
     } else {
         Modifier
     }
@@ -355,15 +367,21 @@ private fun LlunevieMainContainer(
             AnimatedContent(
                 targetState = uiState.activeTab,
                 transitionSpec = {
-                    val dir = if (targetState.ordinal >= initialState.ordinal) 1 else -1
-                    (slideInHorizontally(spring(dampingRatio = 0.84f, stiffness = 360f)) { w -> dir * (w / 6) } +
-                        fadeIn(tween(200)) +
-                        scaleIn(initialScale = 0.965f, animationSpec = spring(dampingRatio = 0.84f, stiffness = 360f)))
-                        .togetherWith(
-                            slideOutHorizontally(tween(170)) { w -> -dir * (w / 8) } +
-                                fadeOut(tween(140)) +
-                                scaleOut(targetScale = 0.965f, animationSpec = tween(170))
-                        )
+                    when {
+                        targetState == MainNavTab.READER -> {
+                            (fadeIn(tween(220, easing = FastOutSlowInEasing)) + scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)))
+                                .togetherWith(fadeOut(tween(160)) + scaleOut(targetScale = 0.96f, animationSpec = tween(180)))
+                        }
+                        initialState == MainNavTab.READER -> {
+                            (fadeIn(tween(200)) + scaleIn(initialScale = 0.96f, animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)))
+                                .togetherWith(fadeOut(tween(160)) + scaleOut(targetScale = 0.94f, animationSpec = tween(180, easing = FastOutSlowInEasing)))
+                        }
+                        else -> {
+                            val dir = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                            (slideInHorizontally(spring(dampingRatio = 0.88f, stiffness = 400f)) { w -> dir * (w / 7) } + fadeIn(tween(180)))
+                                .togetherWith(slideOutHorizontally(tween(150, easing = FastOutSlowInEasing)) { w -> -dir * (w / 9) } + fadeOut(tween(130)))
+                        }
+                    }
                 },
                 label = "mainTabTransition",
                 modifier = Modifier.fillMaxSize()
@@ -393,6 +411,7 @@ private fun LlunevieMainContainer(
                     onSetSort = { viewModel.setLibrarySort(it) },
                     onSetFilter = { viewModel.setLibraryFilter(it) },
                     onSetStatus = { viewModel.setLibraryStatus(it) },
+                    onSetCoverStyle = { viewModel.setLibraryCoverStyle(it) },
                     onSetShelf = { viewModel.setLibraryShelf(it) },
                     onSetGenre = { viewModel.setLibraryGenre(it) },
                     onAddCustomGenre = { viewModel.addCustomGenre(it) },
@@ -461,15 +480,23 @@ private fun LlunevieMainContainer(
                 )
 
                 MainNavTab.READER -> {
-                    val activeBook = books.find { it.id == uiState.activeBookId } ?: books.firstOrNull()
+                    val activeBook = remember(books, uiState.activeBookId) {
+                        books.find { it.id == uiState.activeBookId } ?: books.firstOrNull()
+                    }
                     if (activeBook != null) {
-                        val bookHighlights = allHighlights.filter { it.bookId == activeBook.id }
-                        val bookBookmarks = allBookmarks.filter { it.bookId == activeBook.id }
-                        val metrics = viewModel.computeGlobalPageMetrics(
-                            uiState.activeBookChapters,
-                            uiState.activeChapterIndex,
-                            uiState.activePageIndex
-                        )
+                        val bookHighlights = remember(allHighlights, activeBook.id) {
+                            allHighlights.filter { it.bookId == activeBook.id }
+                        }
+                        val bookBookmarks = remember(allBookmarks, activeBook.id) {
+                            allBookmarks.filter { it.bookId == activeBook.id }
+                        }
+                        val metrics = remember(uiState.activeBookChapters, uiState.activeChapterIndex, uiState.activePageIndex, prefs.readingFlowMode) {
+                            viewModel.computeGlobalPageMetrics(
+                                uiState.activeBookChapters,
+                                uiState.activeChapterIndex,
+                                uiState.activePageIndex
+                            )
+                        }
                         ReaderScreen(
                             book = activeBook,
                             uiState = uiState,
@@ -525,32 +552,45 @@ private fun LlunevieMainContainer(
             !uiState.showDeleteConfirmDialog &&
             uiState.pendingCandidateForShelf == null
 
-        if (showBottomDock) {
-            // Subtle 96.dp bottom gradient fade scrim preventing text clash under dock
+        AnimatedVisibility(
+            visible = showBottomDock,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(96.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                palette.bgApp.copy(alpha = 0.82f)
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Subtle 96.dp bottom gradient fade scrim preventing text clash under dock
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    palette.bgApp.copy(alpha = 0.82f)
+                                )
                             )
                         )
-                    )
-            )
-            BottomFloatingNavDock(
-                activeTab = uiState.activeTab,
-                strings = strings,
-                onSelectTab = { viewModel.switchTab(it) },
-                onOpenAddBook = { viewModel.setShowAddBookSheet(true, "search") },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
+                )
+                BottomFloatingNavDock(
+                    activeTab = uiState.activeTab,
+                    strings = strings,
+                    onSelectTab = { viewModel.switchTab(it) },
+                    onOpenAddBook = { viewModel.setShowAddBookSheet(true, "search") },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
         }
 
-        if (isAnyModalOrSheetOpen && (uiState.showAddBookSheet || uiState.selectedCatalogBookDetail != null || uiState.pendingCandidateForShelf != null)) {
+        AnimatedVisibility(
+            visible = isAnyModalOrSheetOpen && (uiState.showAddBookSheet || uiState.selectedCatalogBookDetail != null || uiState.pendingCandidateForShelf != null),
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -558,7 +598,12 @@ private fun LlunevieMainContainer(
             )
         }
 
-        if (uiState.showAddBookSheet && !uiState.showFullCameraScanner) {
+        AnimatedVisibility(
+            visible = uiState.showAddBookSheet && !uiState.showFullCameraScanner,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
             AddBookSheet(
                 uiState = uiState,
                 shelves = shelves,
@@ -670,60 +715,76 @@ private fun LlunevieMainContainer(
 
         // Minimal Floating Progress Bar when importing large PDF/EPUB in background
         val activeImportEntry = uiState.importingBooksProgress.entries.firstOrNull()
-        if (activeImportEntry != null) {
-            val pct = activeImportEntry.value
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = palette.sheetBg,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 10.dp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 86.dp)
-                    .widthIn(min = 200.dp, max = 280.dp)
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (strings.isId) "Mengimpor buku..." else "Importing book...",
+        AnimatedVisibility(
+            visible = activeImportEntry != null,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it / 2 } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it / 2 } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            if (activeImportEntry != null) {
+                val pct = activeImportEntry.value
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = palette.sheetBg,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 10.dp,
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(bottom = 86.dp)
+                        .widthIn(min = 200.dp, max = 280.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (strings.isId) "Mengimpor buku..." else "Importing book...",
+                                color = palette.textMain,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "$pct%",
+                                color = palette.textMuted,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { (pct / 100f).coerceIn(0.05f, 1f) },
                             color = palette.textMain,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "$pct%",
-                            color = palette.textMuted,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace
+                            trackColor = palette.borderSoft,
+                            modifier = Modifier
+                                .padding(top = 6.dp)
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .clip(CircleShape)
                         )
                     }
-                    LinearProgressIndicator(
-                        progress = { (pct / 100f).coerceIn(0.05f, 1f) },
-                        color = palette.textMain,
-                        trackColor = palette.borderSoft,
-                        modifier = Modifier
-                            .padding(top = 6.dp)
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .clip(CircleShape)
-                    )
                 }
             }
         }
 
-        uiState.toastMessage?.let { msg ->
+        var cachedToastMessage by remember { mutableStateOf<String?>(null) }
+        if (uiState.toastMessage != null) {
+            cachedToastMessage = uiState.toastMessage
+        }
+
+        AnimatedVisibility(
+            visible = uiState.toastMessage != null,
+            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it / 2 } + fadeIn(tween(180)),
+            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it / 2 } + fadeOut(tween(140)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            val msg = cachedToastMessage ?: uiState.toastMessage.orEmpty()
             Surface(
                 shape = CircleShape,
                 color = palette.sheetBg,
                 border = BorderStroke(1.dp, palette.borderSoft),
                 shadowElevation = 12.dp,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = if (uiState.activeTab == MainNavTab.READER) 68.dp else 88.dp)
             ) {

@@ -1,11 +1,22 @@
 package com.llunaticsys.llunevie.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -24,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,8 +48,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,10 +61,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -102,6 +121,7 @@ fun AddBookSheet(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
+    val haptic = LocalHapticFeedback.current
 
     Box(
         modifier = modifier
@@ -239,31 +259,44 @@ fun AddBookSheet(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    if (uiState.addModalTab == "manual") {
-                        // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
-                        var title by remember { mutableStateOf("") }
-                        var author by remember { mutableStateOf("") }
-                        var pagesStr by remember { mutableStateOf("320") }
-                        var category by remember { mutableStateOf("Light Novel") }
-                        var format by remember { mutableStateOf("PHYSICAL") }
-                        var showAdvance by remember { mutableStateOf(false) }
-                        var publisher by remember { mutableStateOf("") }
-                        var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
-                        var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
-                        var coverUrl by remember { mutableStateOf("") }
-                        var lengthCm by remember { mutableStateOf("") }
-                        var widthCm by remember { mutableStateOf("") }
-                        var weightKg by remember { mutableStateOf("") }
-                        var synopsis by remember { mutableStateOf("") }
-                        var selectedGenres by remember { mutableStateOf(setOf<String>()) }
-                        var inlineNewGenre by remember { mutableStateOf("") }
+                    // 4. Tab Content Area — AnimatedContent MUST CLOSE BEFORE the bottom Import button!
+                    AnimatedContent(
+                        targetState = uiState.addModalTab,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(180)) togetherWith
+                                fadeOut(animationSpec = tween(140))
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        label = "AddBookTabTransition"
+                    ) { targetTab ->
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            if (targetTab == "manual") {
+                                // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
+                                var title by remember { mutableStateOf("") }
+                                var author by remember { mutableStateOf("") }
+                                var pagesStr by remember { mutableStateOf("320") }
+                                var category by remember { mutableStateOf("Light Novel") }
+                                var format by remember { mutableStateOf("PHYSICAL") }
+                                var showAdvance by remember { mutableStateOf(false) }
+                                var publisher by remember { mutableStateOf("") }
+                                var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
+                                var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
+                                var coverUrl by remember { mutableStateOf("") }
+                                var lengthCm by remember { mutableStateOf("") }
+                                var widthCm by remember { mutableStateOf("") }
+                                var weightKg by remember { mutableStateOf("") }
+                                var synopsis by remember { mutableStateOf("") }
+                                var selectedGenres by remember { mutableStateOf(setOf<String>()) }
+                                var inlineNewGenre by remember { mutableStateOf("") }
 
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
                             PrototypeFormInput(
                                 label = if (strings.isId) "JUDUL BUKU / LIGHT NOVEL" else "BOOK / LIGHT NOVEL TITLE",
                                 value = title,
@@ -574,7 +607,7 @@ fun AddBookSheet(
                         }
                     } else {
                         // SUB-VIEW A: UNIFIED PARALLEL SEARCH (`#addTabSearchView` in `llunevie_prototype.html`)
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.fillMaxSize()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -783,56 +816,84 @@ fun AddBookSheet(
                             }
                         }
                     }
+                }
+            } // <--- CRITICAL: AnimatedContent CLOSES HERE!
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    // Bottom Dashed Pill Button: "Impor EPUB / PDF Lokal" (`#shelveItYourselfBtn`)
-                    val dashColor = palette.textMuted.copy(alpha = 0.7f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(CircleShape)
-                            .background(palette.bgSurface)
-                            .clickable { onPickLocalFile() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Canvas(modifier = Modifier.matchParentSize()) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 5. Bottom Dashed Pill Button: "Impor EPUB / PDF Lokal" — MUST BE OUTSIDE AnimatedContent, as a direct child of the outer Column!
+            val dashColor = palette.textMuted.copy(alpha = 0.7f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .requiredHeight(44.dp)
+                    .clip(CircleShape)
+                    .background(palette.bgSurface)
+                    .drawWithCache {
+                        val stroke = Stroke(
+                            width = 1.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
+                        )
+                        val radius = size.height / 2f
+                        onDrawWithContent {
+                            drawContent()
                             drawRoundRect(
                                 color = dashColor,
-                                style = Stroke(
-                                    width = 1.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                                ),
-                                cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
+                                cornerRadius = CornerRadius(radius, radius),
+                                style = stroke
                             )
                         }
-                        Text(
-                            text = strings.importEpubPdfBtn,
-                            color = palette.textMain,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
                     }
-                }
+                    .clickable { onPickLocalFile() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = strings.importEpubPdfBtn,
+                    color = palette.textMain,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                )
+            }
+        } // <--- Outer Column closes here!
 
                 // SLIDE-UP BOOK DETAIL SHEET (`#bookDetailSheet` in `llunevie_prototype.html`)
-                uiState.selectedCatalogBookDetail?.let { detail ->
-                    Surface(
-                        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                        color = palette.sheetBg,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        shadowElevation = 24.dp,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .heightIn(max = 620.dp)
-                            .navigationBarsPadding()
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {}
-                    ) {
+                var cachedCatalogDetail by remember { mutableStateOf<CatalogBookCandidate?>(null) }
+                if (uiState.selectedCatalogBookDetail != null) {
+                    cachedCatalogDetail = uiState.selectedCatalogBookDetail
+                }
+
+                AnimatedVisibility(
+                    visible = uiState.selectedCatalogBookDetail != null,
+                    enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
+                    exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
+                    val candidateDetail = cachedCatalogDetail ?: uiState.selectedCatalogBookDetail
+                    if (candidateDetail != null) {
+                        AnimatedContent(
+                            targetState = candidateDetail,
+                            transitionSpec = {
+                                (fadeIn(tween(180)) + slideInHorizontally(spring(0.88f, 400f)) { w -> w / 6 })
+                                    .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(140)) { w -> -w / 6 })
+                            },
+                            label = "catalogBookDetailTransition"
+                        ) { detail ->
+                            Surface(
+                                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                                color = palette.sheetBg,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                shadowElevation = 24.dp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 620.dp)
+                                    .navigationBarsPadding()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {}
+                            ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1064,6 +1125,8 @@ fun AddBookSheet(
                         }
                     }
                 }
+            }
+        }
             }
         }
     }

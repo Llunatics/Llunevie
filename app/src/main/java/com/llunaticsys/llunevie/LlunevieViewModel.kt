@@ -202,15 +202,25 @@ class LlunevieViewModel(
     fun hasAllFilesAccess(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
 
-    fun getCachedPdfBitmap(bookId: String, pageIndex: Int): Bitmap? {
-        val bmp = pdfBitmapCache.get("$bookId:$pageIndex")
+    fun getCachedPdfBitmap(bookId: String, pageIndex: Int, filePath: String? = null): Bitmap? {
+        val key = "$bookId:$pageIndex"
+        val bmp = pdfBitmapCache.get(key)
         if (bmp != null && !bmp.isRecycled) return bmp
+        if (!filePath.isNullOrBlank()) {
+            val fallback = PdfNativeRenderer.getCachedBitmap(filePath, pageIndex, 1080)
+                ?: PdfNativeRenderer.getCachedBitmap(filePath, pageIndex, 960)
+                ?: PdfNativeRenderer.getCachedBitmap(filePath, pageIndex, 720)
+            if (fallback != null && !fallback.isRecycled) {
+                pdfBitmapCache.put(key, fallback)
+                return fallback
+            }
+        }
         return null
     }
 
     suspend fun loadPdfPageBitmap(bookId: String, filePath: String, pageIndex: Int): Bitmap? = withContext(Dispatchers.IO) {
         val key = "$bookId:$pageIndex"
-        pdfBitmapCache.get(key)?.let { if (!it.isRecycled) return@withContext it }
+        getCachedPdfBitmap(bookId, pageIndex, filePath)?.let { return@withContext it }
         val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex, 1080)
         if (bmp != null) {
             pdfBitmapCache.put(key, bmp)
@@ -232,7 +242,7 @@ class LlunevieViewModel(
                     pageIndex + 3
                 )
             } else {
-                listOf(pageIndex - 1, pageIndex + 1)
+                listOf(pageIndex + 1, pageIndex - 1, pageIndex + 2, pageIndex - 2)
             }
             for (p in pagesToPrefetch) {
                 if (p in 0 until total && pdfBitmapCache.get("$bookId:$p") == null) {
@@ -634,6 +644,10 @@ class LlunevieViewModel(
     // -------------------------------------------------------------------------
     fun setLibraryViewMode(mode: LibraryViewMode) {
         viewModelScope.launch { prefsRepo.updateLibraryViewPrefs(viewMode = mode) }
+    }
+
+    fun setLibraryCoverStyle(style: String) {
+        viewModelScope.launch { prefsRepo.setLibraryCoverStyle(style) }
     }
 
     fun setHomeRecentMode(mode: String) {
