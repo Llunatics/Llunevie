@@ -19,7 +19,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1824,7 +1826,7 @@ fun ReaderScreen(
                                 }
 
                             val nonFlipbookZoomGestureModifier = Modifier.pointerInput(
-                                curZero, prefs.pageAnimStyle, prefs.readingFlowMode,
+                                prefs.pageAnimStyle, prefs.readingFlowMode,
                                 uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
                             ) {
                                 awaitEachGesture {
@@ -2002,19 +2004,36 @@ fun ReaderScreen(
                                         targetState = curZero,
                                         transitionSpec = {
                                             fadeIn(
-                                                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                                                animationSpec = tween(
+                                                    durationMillis = 150,
+                                                    delayMillis = 95,
+                                                    easing = LinearOutSlowInEasing
+                                                )
                                             ).togetherWith(
                                                 fadeOut(
-                                                    animationSpec = tween(durationMillis = 16, delayMillis = 270)
+                                                    animationSpec = tween(
+                                                        durationMillis = 110,
+                                                        delayMillis = 0,
+                                                        easing = FastOutLinearInEasing
+                                                    )
                                                 )
-                                            ).apply {
-                                                targetContentZIndex = 1f
-                                            }
+                                            ).using(
+                                                androidx.compose.animation.SizeTransform(clip = false)
+                                            )
                                         },
                                         label = "readerFadeTransition",
-                                        modifier = Modifier.fillMaxSize().then(fadeSwipeModifier)
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(palette.bgApp)
+                                            .then(fadeSwipeModifier)
                                     ) { pIdx ->
-                                        RenderPageForNonFlipbook(pIdx)
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(palette.bgApp)
+                                        ) {
+                                            RenderPageForNonFlipbook(pIdx)
+                                        }
                                     }
                                 } else {
                                     val noAnimSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
@@ -6594,21 +6613,18 @@ private fun InteractiveTextPageContent(
     }
 
     val effectiveScrollable = scrollable || isBilingual
-    val hasActivePageTranslation = isPageTranslationActive && !translatedParagraphs.isNullOrEmpty()
-    val isSpread = prefs.readingFlowMode == ReadingFlowMode.SPREAD
     val outerScrollModifier = if (effectiveScrollable) {
         Modifier
             .fillMaxSize()
-            .then(if (hasActivePageTranslation) Modifier.background(if (isSpread) palette.bgCard else palette.bgApp) else Modifier)
             .verticalScroll(rememberScrollState())
     } else {
         Modifier
             .fillMaxSize()
-            .then(if (hasActivePageTranslation) Modifier.background(if (isSpread) palette.bgCard else palette.bgApp) else Modifier)
     }
 
     Box(
         modifier = outerScrollModifier
+            .background(if (transparentTextForFlipbook) Color.Transparent else palette.bgApp)
             .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = topPadDp, bottom = bottomPadDp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
