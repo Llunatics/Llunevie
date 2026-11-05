@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -258,44 +259,44 @@ fun AddBookSheet(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // 4. Tab Content Area — AnimatedContent MUST CLOSE BEFORE the bottom Import button!
                     AnimatedContent(
                         targetState = uiState.addModalTab,
                         transitionSpec = {
-                            val dir = if (targetState == "manual") 1 else -1
-                            (slideInHorizontally(spring(dampingRatio = 0.88f, stiffness = 400f)) { w -> dir * (w / 4) } + fadeIn(tween(180)))
-                                .togetherWith(slideOutHorizontally(tween(150, easing = FastOutSlowInEasing)) { w -> -dir * (w / 4) } + fadeOut(tween(130)))
+                            fadeIn(animationSpec = tween(180)) togetherWith
+                                fadeOut(animationSpec = tween(140))
                         },
-                        label = "addBookTabTransition",
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxWidth()
-                            .clipToBounds()
-                    ) { currentTab ->
-                        if (currentTab == "manual") {
-                            // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
-                            var title by remember { mutableStateOf("") }
-                            var author by remember { mutableStateOf("") }
-                            var pagesStr by remember { mutableStateOf("320") }
-                            var category by remember { mutableStateOf("Light Novel") }
-                            var format by remember { mutableStateOf("PHYSICAL") }
-                            var showAdvance by remember { mutableStateOf(false) }
-                            var publisher by remember { mutableStateOf("") }
-                            var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
-                            var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
-                            var coverUrl by remember { mutableStateOf("") }
-                            var lengthCm by remember { mutableStateOf("") }
-                            var widthCm by remember { mutableStateOf("") }
-                            var weightKg by remember { mutableStateOf("") }
-                            var synopsis by remember { mutableStateOf("") }
-                            var selectedGenres by remember { mutableStateOf(setOf<String>()) }
-                            var inlineNewGenre by remember { mutableStateOf("") }
+                            .fillMaxWidth(),
+                        label = "AddBookTabTransition"
+                    ) { targetTab ->
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            if (targetTab == "manual") {
+                                // SUB-VIEW D: MANUAL BOOK ENTRY (`#addTabManualView` in `llunevie_prototype.html`)
+                                var title by remember { mutableStateOf("") }
+                                var author by remember { mutableStateOf("") }
+                                var pagesStr by remember { mutableStateOf("320") }
+                                var category by remember { mutableStateOf("Light Novel") }
+                                var format by remember { mutableStateOf("PHYSICAL") }
+                                var showAdvance by remember { mutableStateOf(false) }
+                                var publisher by remember { mutableStateOf("") }
+                                var releaseYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
+                                var isbn by remember(uiState.manualBookPrefillIsbn) { mutableStateOf(uiState.manualBookPrefillIsbn ?: "") }
+                                var coverUrl by remember { mutableStateOf("") }
+                                var lengthCm by remember { mutableStateOf("") }
+                                var widthCm by remember { mutableStateOf("") }
+                                var weightKg by remember { mutableStateOf("") }
+                                var synopsis by remember { mutableStateOf("") }
+                                var selectedGenres by remember { mutableStateOf(setOf<String>()) }
+                                var inlineNewGenre by remember { mutableStateOf("") }
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
                             PrototypeFormInput(
                                 label = if (strings.isId) "JUDUL BUKU / LIGHT NOVEL" else "BOOK / LIGHT NOVEL TITLE",
                                 value = title,
@@ -815,50 +816,47 @@ fun AddBookSheet(
                             }
                         }
                     }
+                }
+            } // <--- CRITICAL: AnimatedContent CLOSES HERE!
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    // Bottom Dashed Pill Button: "Impor EPUB / PDF Lokal" (`#shelveItYourselfBtn`)
-                    val dashColor = palette.textMuted.copy(alpha = 0.7f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(CircleShape)
-                            .background(palette.bgSurface)
-                            .drawWithCache {
-                                val stroke = Stroke(
-                                    width = 1.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                                )
-                                val radius = size.height / 2f
-                                onDrawWithContent {
-                                    drawContent()
-                                    drawRoundRect(
-                                        color = dashColor,
-                                        cornerRadius = CornerRadius(radius, radius),
-                                        style = stroke
-                                    )
-                                }
-                            }
-                            .clickable { onPickLocalFile() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = strings.importEpubPdfBtn,
-                                color = palette.textMain,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.Center,
-                                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 5. Bottom Dashed Pill Button: "Impor EPUB / PDF Lokal" — MUST BE OUTSIDE AnimatedContent, as a direct child of the outer Column!
+            val dashColor = palette.textMuted.copy(alpha = 0.7f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .requiredHeight(44.dp)
+                    .clip(CircleShape)
+                    .background(palette.bgSurface)
+                    .drawWithCache {
+                        val stroke = Stroke(
+                            width = 1.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
+                        )
+                        val radius = size.height / 2f
+                        onDrawWithContent {
+                            drawContent()
+                            drawRoundRect(
+                                color = dashColor,
+                                cornerRadius = CornerRadius(radius, radius),
+                                style = stroke
                             )
                         }
                     }
-                }
+                    .clickable { onPickLocalFile() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = strings.importEpubPdfBtn,
+                    color = palette.textMain,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                )
             }
+        } // <--- Outer Column closes here!
 
                 // SLIDE-UP BOOK DETAIL SHEET (`#bookDetailSheet` in `llunevie_prototype.html`)
                 var cachedCatalogDetail by remember { mutableStateOf<CatalogBookCandidate?>(null) }
