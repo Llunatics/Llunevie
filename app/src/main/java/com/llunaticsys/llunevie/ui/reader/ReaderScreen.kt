@@ -19,7 +19,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -159,6 +161,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.ui.platform.LocalContext
@@ -171,6 +174,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.PlatformTextStyle
@@ -412,6 +416,8 @@ fun ReaderScreen(
     var displayPageIndex by remember(book.id) { mutableIntStateOf(curZeroFromMetrics) }
     var readerZoom by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableFloatStateOf(1f) }
     var readerPan by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableStateOf(Offset.Zero) }
+    var nonFlipZoomScale by remember { mutableFloatStateOf(1f) }
+    var nonFlipZoomOffset by remember { mutableStateOf(Offset.Zero) }
     var isFlippingInProgress by remember { mutableStateOf(false) }
 
     LaunchedEffect(curZeroFromMetrics) {
@@ -722,6 +728,11 @@ fun ReaderScreen(
                 when (prefs.readingFlowMode) {
                     ReadingFlowMode.PAGINATED, ReadingFlowMode.SPREAD -> {
                         val curZero = displayPageIndex
+
+                        LaunchedEffect(curZero, prefs.pageAnimStyle, prefs.readingFlowMode) {
+                            nonFlipZoomScale = 1f
+                            nonFlipZoomOffset = Offset.Zero
+                        }
                         val step = if (isSpread) 2 else 1
                         val spreadStart = if (isSpread) (curZero / 2) * 2 else curZero
                         val curLeftIdx = spreadStart
@@ -1814,151 +1825,242 @@ fun ReaderScreen(
                                     }
                                 }
 
-                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
-                                if (isSpread) {
-                                    val totalSpreads = (metrics.totalBookPages + 1) / 2
-                                    val initialSpread = (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
-                                    val spreadPagerState = rememberPagerState(
-                                        initialPage = initialSpread,
-                                        pageCount = { totalSpreads.coerceAtLeast(1) }
-                                    )
-                                    LaunchedEffect(spreadPagerState) {
-                                        snapshotFlow { spreadPagerState.settledPage }
-                                            .distinctUntilChanged()
-                                            .collect { settledSpread ->
-                                                val targetPage = settledSpread * 2
-                                                if (targetPage / 2 != displayPageIndex / 2) {
-                                                    displayPageIndex = targetPage
-                                                    val target = getPageAtGlobalZero(targetPage)
-                                                    if (target != null) {
-                                                        onJumpToChapterAndPage(target.first, target.second)
-                                                    }
+                            val nonFlipbookZoomGestureModifier = Modifier.pointerInput(
+                                prefs.pageAnimStyle, prefs.readingFlowMode,
+                                uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
+                            ) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    if (uiState.showReaderTypeSheet || uiState.showReaderTocDrawer || uiState.showReaderNotesDrawer) {
+                                        return@awaitEachGesture
+                                    }
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val pressedCount = event.changes.count { it.pressed }
+                                        if (pressedCount == 0) {
+                                            if (nonFlipZoomScale < 1.03f) {
+                                                nonFlipZoomScale = 1f
+                                                nonFlipZoomOffset = Offset.Zero
+                                            }
+                                            break
+                                        }
+                                        if (pressedCount >= 2) {
+                                            val zoomChange = event.calculateZoom()
+                                            val panChange = event.calculatePan()
+                                            val newScale = (nonFlipZoomScale * zoomChange).coerceIn(1f, 4f)
+                                            val maxPanX = (size.width.toFloat() * (newScale - 1f)) / 2f
+                                            val maxPanY = (size.height.toFloat() * (newScale - 1f)) / 2f
+                                            nonFlipZoomScale = newScale
+                                            if (newScale > 1.01f) {
+                                                nonFlipZoomOffset = Offset(
+                                                    x = (nonFlipZoomOffset.x + panChange.x * newScale).coerceIn(-maxPanX, maxPanX),
+                                                    y = (nonFlipZoomOffset.y + panChange.y * newScale).coerceIn(-maxPanY, maxPanY)
+                                                )
+                                            } else {
+                                                nonFlipZoomOffset = Offset.Zero
+                                            }
+                                            event.changes.forEach { change ->
+                                                if (change.positionChanged()) change.consume()
+                                            }
+                                        } else if (pressedCount == 1 && nonFlipZoomScale > 1.02f) {
+                                            val panChange = event.calculatePan()
+                                            if (panChange != Offset.Zero) {
+                                                val maxPanX = (size.width.toFloat() * (nonFlipZoomScale - 1f)) / 2f
+                                                val maxPanY = (size.height.toFloat() * (nonFlipZoomScale - 1f)) / 2f
+                                                nonFlipZoomOffset = Offset(
+                                                    x = (nonFlipZoomOffset.x + panChange.x).coerceIn(-maxPanX, maxPanX),
+                                                    y = (nonFlipZoomOffset.y + panChange.y).coerceIn(-maxPanY, maxPanY)
+                                                )
+                                                event.changes.forEach { change ->
+                                                    if (change.positionChanged()) change.consume()
                                                 }
                                             }
-                                    }
-                                    LaunchedEffect(curZeroFromMetrics) {
-                                        val targetSpread = curZeroFromMetrics / 2
-                                        if (!spreadPagerState.isScrollInProgress &&
-                                            spreadPagerState.settledPage != targetSpread &&
-                                            spreadPagerState.currentPage != targetSpread &&
-                                            spreadPagerState.targetPage != targetSpread
-                                        ) {
-                                            displayPageIndex = curZeroFromMetrics
-                                            spreadPagerState.animateScrollToPage(
-                                                targetSpread,
-                                                animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
-                                            )
                                         }
                                     }
-                                    HorizontalPager(
-                                        state = spreadPagerState,
-                                        beyondViewportPageCount = 2,
-                                        key = { spreadIndex -> "slide_spread_$spreadIndex" },
-                                        modifier = Modifier.fillMaxSize()
-                                    ) { spreadIndex ->
-                                        val spreadLeftPage = spreadIndex * 2
-                                        val spreadRightPage = spreadIndex * 2 + 1
-                                        RenderSpreadPageForNonFlipbook(spreadLeftPage, spreadRightPage)
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clipToBounds()
+                                    .then(nonFlipbookZoomGestureModifier)
+                                    .graphicsLayer {
+                                        scaleX = nonFlipZoomScale
+                                        scaleY = nonFlipZoomScale
+                                        translationX = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.x else 0f
+                                        translationY = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.y else 0f
+                                    }
+                            ) {
+                                if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
+                                    if (isSpread) {
+                                        val totalSpreads = (metrics.totalBookPages + 1) / 2
+                                        val initialSpread = (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                        val spreadPagerState = rememberPagerState(
+                                            initialPage = initialSpread,
+                                            pageCount = { totalSpreads.coerceAtLeast(1) }
+                                        )
+                                        LaunchedEffect(spreadPagerState) {
+                                            snapshotFlow { spreadPagerState.settledPage }
+                                                .distinctUntilChanged()
+                                                .collect { settledSpread ->
+                                                    val targetPage = settledSpread * 2
+                                                    if (targetPage / 2 != displayPageIndex / 2) {
+                                                        displayPageIndex = targetPage
+                                                        val target = getPageAtGlobalZero(targetPage)
+                                                        if (target != null) {
+                                                            onJumpToChapterAndPage(target.first, target.second)
+                                                        }
+                                                    }
+                                                }
+                                        }
+                                        LaunchedEffect(curZeroFromMetrics) {
+                                            val targetSpread = curZeroFromMetrics / 2
+                                            if (!spreadPagerState.isScrollInProgress &&
+                                                spreadPagerState.settledPage != targetSpread &&
+                                                spreadPagerState.currentPage != targetSpread &&
+                                                spreadPagerState.targetPage != targetSpread
+                                            ) {
+                                                displayPageIndex = curZeroFromMetrics
+                                                spreadPagerState.animateScrollToPage(
+                                                    targetSpread,
+                                                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
+                                                )
+                                            }
+                                        }
+                                        HorizontalPager(
+                                            state = spreadPagerState,
+                                            beyondViewportPageCount = 2,
+                                            key = { spreadIndex -> "slide_spread_$spreadIndex" },
+                                            userScrollEnabled = (nonFlipZoomScale <= 1.02f),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) { spreadIndex ->
+                                            val spreadLeftPage = spreadIndex * 2
+                                            val spreadRightPage = spreadIndex * 2 + 1
+                                            RenderSpreadPageForNonFlipbook(spreadLeftPage, spreadRightPage)
+                                        }
+                                    } else {
+                                        val pagerState = rememberPagerState(
+                                            initialPage = displayPageIndex.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
+                                            pageCount = { metrics.totalBookPages.coerceAtLeast(1) }
+                                        )
+                                        LaunchedEffect(pagerState) {
+                                            snapshotFlow { pagerState.settledPage }
+                                                .distinctUntilChanged()
+                                                .collect { settled ->
+                                                    if (settled != displayPageIndex) {
+                                                        displayPageIndex = settled
+                                                        val target = getPageAtGlobalZero(settled)
+                                                        if (target != null) {
+                                                            onJumpToChapterAndPage(target.first, target.second)
+                                                        }
+                                                    }
+                                                }
+                                        }
+                                        LaunchedEffect(curZeroFromMetrics) {
+                                            if (!pagerState.isScrollInProgress &&
+                                                pagerState.settledPage != curZeroFromMetrics &&
+                                                pagerState.currentPage != curZeroFromMetrics &&
+                                                pagerState.targetPage != curZeroFromMetrics
+                                            ) {
+                                                displayPageIndex = curZeroFromMetrics
+                                                pagerState.animateScrollToPage(
+                                                    curZeroFromMetrics,
+                                                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
+                                                )
+                                            }
+                                        }
+                                        HorizontalPager(
+                                            state = pagerState,
+                                            beyondViewportPageCount = 2,
+                                            key = { pIdx -> "slide_page_$pIdx" },
+                                            userScrollEnabled = (nonFlipZoomScale <= 1.02f),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) { pIdx ->
+                                            RenderPageForNonFlipbook(pIdx)
+                                        }
+                                    }
+                                } else if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FADE) {
+                                    val fadeSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
+                                        var totalDx = 0f
+                                        var totalDy = 0f
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { totalDx = 0f; totalDy = 0f },
+                                            onDragEnd = {
+                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                                if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                    if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
+                                                    else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
+                                                }
+                                            },
+                                            onHorizontalDrag = { change, dragAmount ->
+                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                                totalDx += dragAmount
+                                                if (abs(totalDx) > 16.dp.toPx()) change.consume()
+                                            }
+                                        )
+                                    }
+                                    AnimatedContent(
+                                        targetState = curZero,
+                                        transitionSpec = {
+                                            fadeIn(
+                                                animationSpec = tween(
+                                                    durationMillis = 150,
+                                                    delayMillis = 95,
+                                                    easing = LinearOutSlowInEasing
+                                                )
+                                            ).togetherWith(
+                                                fadeOut(
+                                                    animationSpec = tween(
+                                                        durationMillis = 110,
+                                                        delayMillis = 0,
+                                                        easing = FastOutLinearInEasing
+                                                    )
+                                                )
+                                            ).using(
+                                                androidx.compose.animation.SizeTransform(clip = false)
+                                            )
+                                        },
+                                        label = "readerFadeTransition",
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(palette.bgApp)
+                                            .then(fadeSwipeModifier)
+                                    ) { pIdx ->
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(palette.bgApp)
+                                        ) {
+                                            RenderPageForNonFlipbook(pIdx)
+                                        }
                                     }
                                 } else {
-                                    val pagerState = rememberPagerState(
-                                        initialPage = displayPageIndex.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
-                                        pageCount = { metrics.totalBookPages.coerceAtLeast(1) }
-                                    )
-                                    LaunchedEffect(pagerState) {
-                                        snapshotFlow { pagerState.settledPage }
-                                            .distinctUntilChanged()
-                                            .collect { settled ->
-                                                if (settled != displayPageIndex) {
-                                                    displayPageIndex = settled
-                                                    val target = getPageAtGlobalZero(settled)
-                                                    if (target != null) {
-                                                        onJumpToChapterAndPage(target.first, target.second)
-                                                    }
+                                    val noAnimSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
+                                        var totalDx = 0f
+                                        var totalDy = 0f
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { totalDx = 0f; totalDy = 0f },
+                                            onDragEnd = {
+                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                                if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                    if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
+                                                    else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
                                                 }
+                                            },
+                                            onHorizontalDrag = { change, dragAmount ->
+                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                                totalDx += dragAmount
+                                                if (abs(totalDx) > 16.dp.toPx()) change.consume()
                                             }
+                                        )
                                     }
-                                    LaunchedEffect(curZeroFromMetrics) {
-                                        if (!pagerState.isScrollInProgress &&
-                                            pagerState.settledPage != curZeroFromMetrics &&
-                                            pagerState.currentPage != curZeroFromMetrics &&
-                                            pagerState.targetPage != curZeroFromMetrics
-                                        ) {
-                                            displayPageIndex = curZeroFromMetrics
-                                            pagerState.animateScrollToPage(
-                                                curZeroFromMetrics,
-                                                animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
-                                            )
-                                        }
+                                    Box(
+                                        modifier = Modifier.fillMaxSize().then(noAnimSwipeModifier),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        RenderPageForNonFlipbook(curZero)
                                     }
-                                    HorizontalPager(
-                                        state = pagerState,
-                                        beyondViewportPageCount = 2,
-                                        key = { pIdx -> "slide_page_$pIdx" },
-                                        modifier = Modifier.fillMaxSize()
-                                    ) { pIdx ->
-                                        RenderPageForNonFlipbook(pIdx)
-                                    }
-                                }
-                            } else if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FADE) {
-                                val fadeSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
-                                    var totalDx = 0f
-                                    var totalDy = 0f
-                                    detectHorizontalDragGestures(
-                                        onDragStart = { totalDx = 0f; totalDy = 0f },
-                                        onDragEnd = {
-                                            if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
-                                                if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
-                                                else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
-                                            }
-                                        },
-                                        onHorizontalDrag = { change, dragAmount ->
-                                            totalDx += dragAmount
-                                            if (abs(totalDx) > 16.dp.toPx()) change.consume()
-                                        }
-                                    )
-                                }
-                                AnimatedContent(
-                                    targetState = curZero,
-                                    transitionSpec = {
-                                        fadeIn(
-                                            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
-                                        ).togetherWith(
-                                            fadeOut(
-                                                animationSpec = tween(durationMillis = 16, delayMillis = 270)
-                                            )
-                                        ).apply {
-                                            targetContentZIndex = 1f
-                                        }
-                                    },
-                                    label = "readerFadeTransition",
-                                    modifier = Modifier.fillMaxSize().then(fadeSwipeModifier)
-                                ) { pIdx ->
-                                    RenderPageForNonFlipbook(pIdx)
-                                }
-                            } else {
-                                val noAnimSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
-                                    var totalDx = 0f
-                                    var totalDy = 0f
-                                    detectHorizontalDragGestures(
-                                        onDragStart = { totalDx = 0f; totalDy = 0f },
-                                        onDragEnd = {
-                                            if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
-                                                if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
-                                                else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
-                                            }
-                                        },
-                                        onHorizontalDrag = { change, dragAmount ->
-                                            totalDx += dragAmount
-                                            if (abs(totalDx) > 16.dp.toPx()) change.consume()
-                                        }
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier.fillMaxSize().then(noAnimSwipeModifier),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    RenderPageForNonFlipbook(curZero)
                                 }
                             }
                         }
@@ -2128,8 +2230,12 @@ fun ReaderScreen(
                 }
 
                 // Center Morphing Pill (`#readerTitlePill`) - 100% mathematically centered on screen
+                val isFlipbookMode = prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK
+                val effectiveZoom = if (isFlipbookMode) readerZoom else nonFlipZoomScale
+                val effectivePan = if (isFlipbookMode) readerPan else nonFlipZoomOffset
+
                 val topPillState = when {
-                    readerZoom > 1.01f -> TopCenterPillState.ZOOM
+                    effectiveZoom > 1.01f -> TopCenterPillState.ZOOM
                     isPageTranslationActive -> TopCenterPillState.TRANSLATION
                     else -> TopCenterPillState.TITLE
                 }
@@ -2161,24 +2267,31 @@ fun ReaderScreen(
                                         .fillMaxHeight()
                                         .clickable {
                                             scope.launch {
-                                                val startZ = readerZoom
-                                                val startP = readerPan
+                                                val startZ = effectiveZoom
+                                                val startP = effectivePan
                                                 Animatable(0f).animateTo(
                                                     targetValue = 1f,
                                                     animationSpec = tween(220, easing = FastOutSlowInEasing)
                                                 ) {
                                                     val f = 1f - value
-                                                    readerZoom = 1f + (startZ - 1f) * f
-                                                    readerPan = Offset(startP.x * f, startP.y * f)
+                                                    if (isFlipbookMode) {
+                                                        readerZoom = 1f + (startZ - 1f) * f
+                                                        readerPan = Offset(startP.x * f, startP.y * f)
+                                                    } else {
+                                                        nonFlipZoomScale = 1f + (startZ - 1f) * f
+                                                        nonFlipZoomOffset = Offset(startP.x * f, startP.y * f)
+                                                    }
                                                 }
                                                 readerZoom = 1f
                                                 readerPan = Offset.Zero
+                                                nonFlipZoomScale = 1f
+                                                nonFlipZoomOffset = Offset.Zero
                                             }
                                         }
                                         .padding(horizontal = 14.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    val pct = (readerZoom * 100f).roundToInt()
+                                    val pct = (effectiveZoom * 100f).roundToInt()
                                     Text(
                                         text = "$pct% · Reset",
                                         color = palette.textMain,
@@ -6500,21 +6613,18 @@ private fun InteractiveTextPageContent(
     }
 
     val effectiveScrollable = scrollable || isBilingual
-    val hasActivePageTranslation = isPageTranslationActive && !translatedParagraphs.isNullOrEmpty()
-    val isSpread = prefs.readingFlowMode == ReadingFlowMode.SPREAD
     val outerScrollModifier = if (effectiveScrollable) {
         Modifier
             .fillMaxSize()
-            .then(if (hasActivePageTranslation) Modifier.background(if (isSpread) palette.bgCard else palette.bgApp) else Modifier)
             .verticalScroll(rememberScrollState())
     } else {
         Modifier
             .fillMaxSize()
-            .then(if (hasActivePageTranslation) Modifier.background(if (isSpread) palette.bgCard else palette.bgApp) else Modifier)
     }
 
     Box(
         modifier = outerScrollModifier
+            .background(if (transparentTextForFlipbook) Color.Transparent else palette.bgApp)
             .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = topPadDp, bottom = bottomPadDp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
