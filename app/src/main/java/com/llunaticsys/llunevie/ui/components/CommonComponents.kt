@@ -379,12 +379,12 @@ fun PrototypeSvgIcon(
 }
 
 fun targetLanguageDisplayName(code: String, isEnglish: Boolean = false): String {
-    return when (code.lowercase()) {
-        "id" -> if (isEnglish) "Indonesian" else "Bahasa Indonesia"
+    return when (code.trim().lowercase()) {
+        "id", "in" -> if (isEnglish) "Indonesian" else "Bahasa Indonesia"
         "en" -> "English"
-        "ja" -> "日本語"
-        "zh" -> "中文"
-        "ko" -> "한국어"
+        "ja", "jp" -> "日本語"
+        "zh", "zh-cn", "cn" -> "中文"
+        "ko", "kr" -> "한국어"
         "es" -> "Español"
         "fr" -> "Français"
         "de" -> "Deutsch"
@@ -393,16 +393,16 @@ fun targetLanguageDisplayName(code: String, isEnglish: Boolean = false): String 
 }
 
 fun targetLanguageBadgeLabel(code: String): String {
-    return when (code.lowercase()) {
-        "id" -> "ID"
+    return when (code.trim().lowercase()) {
+        "id", "in" -> "ID"
         "en" -> "EN"
-        "ja" -> "JA"
-        "zh" -> "ZH"
-        "ko" -> "KO"
+        "ja", "jp" -> "JA"
+        "zh", "zh-cn", "cn" -> "ZH"
+        "ko", "kr" -> "KO"
         "es" -> "ES"
         "fr" -> "FR"
         "de" -> "DE"
-        else -> code.uppercase()
+        else -> code.uppercase().take(2)
     }
 }
 

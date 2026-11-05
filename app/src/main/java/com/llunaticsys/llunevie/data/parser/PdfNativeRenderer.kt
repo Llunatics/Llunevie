@@ -23,6 +23,7 @@ import android.text.style.RelativeSizeSpan
 import android.util.LruCache
 import com.llunaticsys.llunevie.data.local.BookChapterEntity
 import com.llunaticsys.llunevie.data.local.BookEntity
+import com.llunaticsys.llunevie.normalizeTranslationLangCode
 import com.llunaticsys.llunevie.model.BookIllustration
 import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
@@ -506,7 +507,9 @@ object PdfNativeRenderer {
         engine: String = ""
     ): Bitmap? {
         if (pageIndex < 0 || blocks.isEmpty() || translatedTexts.isEmpty()) return null
-        val cacheKey = "$pdfFilePath|$pageIndex|$targetLang|$engine|$displayMode|$targetWidthPx"
+        val normLang = normalizeTranslationLangCode(targetLang)
+        val normMode = displayMode.trim().lowercase()
+        val cacheKey = "$pdfFilePath|$pageIndex|$normLang|$engine|$normMode|$targetWidthPx"
         translatedPdfBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return cached
         }
