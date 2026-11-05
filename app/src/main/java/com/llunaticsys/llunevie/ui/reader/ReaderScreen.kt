@@ -6,8 +6,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
@@ -471,6 +469,7 @@ fun ReaderScreen(
     val context = LocalContext.current
     val view = LocalView.current
     var showReaderChrome by remember { mutableStateOf(true) }
+    var showLangDropdown by remember { mutableStateOf(false) }
     val isTwoPageSpread = isSpread
 
     val translationRepo = remember { TranslationRepository.getInstance() }
@@ -667,6 +666,12 @@ fun ReaderScreen(
 
     LaunchedEffect(prefs.flowMode, isTwoPageSpread) {
         showReaderChrome = true
+    }
+
+    LaunchedEffect(uiState.isTranslationActive, showReaderChrome) {
+        if (!uiState.isTranslationActive || !showReaderChrome) {
+            showLangDropdown = false
+        }
     }
 
     DisposableEffect(isTwoPageSpread, showReaderChrome) {
@@ -2342,6 +2347,17 @@ fun ReaderScreen(
 
         }
 
+        if (showLangDropdown) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showLangDropdown = false }
+            )
+        }
+
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
         AnimatedVisibility(
             visible = showReaderChrome,
@@ -2352,13 +2368,17 @@ fun ReaderScreen(
             val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
             val topBarStartPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
             val topBarEndPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .windowInsetsPadding(WindowInsets.displayCutout)
-                    .padding(start = topBarStartPad, end = topBarEndPad, top = 10.dp, bottom = 10.dp)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
             ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .windowInsetsPadding(WindowInsets.displayCutout)
+                        .padding(start = topBarStartPad, end = topBarEndPad, top = 10.dp, bottom = 10.dp)
+                ) {
                 // Left: 34.dp circular Back button
                 Surface(
                     onClick = onBack,
@@ -2388,8 +2408,6 @@ fun ReaderScreen(
                     isPageTranslationActive || uiState.isTranslationActive -> TopCenterPillState.TRANSLATION
                     else -> TopCenterPillState.TITLE
                 }
-
-                var showLangMenu by remember { mutableStateOf(false) }
 
                 Surface(
                     shape = CircleShape,
@@ -2548,106 +2566,35 @@ fun ReaderScreen(
                                             .background(palette.borderSoft)
                                     )
 
-                                    // Chip 3 (Target Language Selector)
-                                    Box(
-                                        modifier = Modifier
-                                            .height(24.dp)
-                                            .clip(CircleShape)
-                                            .clickable { showLangMenu = true }
-                                            .padding(horizontal = 8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        val activeNormCode = normalizeTranslationLangCode(uiState.translationTargetLang)
-                                        val activeLangs = remember(prefs.customTranslationLangs) {
-                                            getActiveTranslationLanguages(prefs.customTranslationLangs)
-                                        }
-                                        val activeLangOption = activeLangs.find { normalizeTranslationLangCode(it.code) == activeNormCode }
-                                            ?: DEFAULT_TRANSLATION_LANGUAGES.find { normalizeTranslationLangCode(it.code) == activeNormCode }
-                                            ?: TranslationLangOption(code = activeNormCode, badgeCode = activeNormCode.uppercase().take(2), nativeName = activeNormCode)
-                                        val currentLangLabel = activeLangOption.badgeCode
-                                        Text(
-                                            text = "$currentLangLabel ▾",
-                                            fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = palette.textMain,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 11.sp
-                                            )
-                                        )
-
-                                        DropdownMenu(
-                                            expanded = showLangMenu,
-                                            onDismissRequest = { showLangMenu = false },
-                                            shape = RoundedCornerShape(18.dp),
-                                            containerColor = palette.sheetBg,
-                                            border = BorderStroke(1.dp, palette.borderSoft),
-                                            shadowElevation = 16.dp,
-                                            modifier = Modifier.width(204.dp)
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
-                                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                                            ) {
-                                                activeLangs.forEach { langOpt ->
-                                                    val isSelected = normalizeTranslationLangCode(langOpt.code) == activeNormCode
-                                                    Surface(
-                                                        onClick = {
-                                                            showLangMenu = false
-                                                            viewModel?.setTranslationTargetLang(langOpt.code)
-                                                        },
-                                                        shape = RoundedCornerShape(12.dp),
-                                                        color = if (isSelected) palette.pillActiveBg else Color.Transparent,
-                                                        border = if (isSelected) BorderStroke(1.dp, palette.pillActiveBorder) else null,
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .height(36.dp)
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier
-                                                                .fillMaxSize()
-                                                                .padding(horizontal = 12.dp),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.SpaceBetween
-                                                        ) {
-                                                            Row(
-                                                                verticalAlignment = Alignment.CenterVertically,
-                                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                            ) {
-                                                                Text(
-                                                                    text = langOpt.badgeCode.lowercase(),
-                                                                    color = if (isSelected) palette.textMain else palette.textSecondary,
-                                                                    fontSize = 12.5.sp,
-                                                                    fontFamily = FontFamily.Monospace,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                                                )
-                                                                Text(
-                                                                    text = "(${langOpt.nativeName})",
-                                                                    color = if (isSelected) palette.textMain else palette.textMuted,
-                                                                    fontSize = 12.5.sp,
-                                                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                                                )
-                                                            }
-                                                            if (isSelected) {
-                                                                PrototypeSvgIcon(
-                                                                    type = PrototypeIconType.CHECK,
-                                                                    tint = palette.textMain,
-                                                                    modifier = Modifier.size(14.dp)
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                     // Chip 3 (Target Language Selector)
+                                     Box(
+                                         modifier = Modifier
+                                             .height(24.dp)
+                                             .clip(CircleShape)
+                                             .clickable { showLangDropdown = !showLangDropdown }
+                                             .padding(horizontal = 8.dp),
+                                         contentAlignment = Alignment.Center
+                                     ) {
+                                         val activeNormCode = normalizeTranslationLangCode(uiState.translationTargetLang)
+                                         val activeLangs = remember(prefs.customTranslationLangs) {
+                                             getActiveTranslationLanguages(prefs.customTranslationLangs)
+                                         }
+                                         val activeLangOption = activeLangs.find { normalizeTranslationLangCode(it.code) == activeNormCode }
+                                             ?: DEFAULT_TRANSLATION_LANGUAGES.find { normalizeTranslationLangCode(it.code) == activeNormCode }
+                                             ?: TranslationLangOption(code = activeNormCode, badgeCode = activeNormCode.uppercase().take(2), nativeName = activeNormCode)
+                                         val currentLangLabel = activeLangOption.badgeCode
+                                         Text(
+                                             text = "$currentLangLabel ▾",
+                                             fontSize = 11.sp,
+                                             fontFamily = FontFamily.Monospace,
+                                             fontWeight = FontWeight.SemiBold,
+                                             color = palette.textMain,
+                                             style = TextStyle(
+                                                 platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                 lineHeight = 11.sp
+                                             )
+                                         )
+                                     }
 
                                     // Loading Indicator (only while current page translation is actively fetching)
                                     if (isTranslatingPage) {
@@ -2814,7 +2761,97 @@ fun ReaderScreen(
                     }
                 }
             }
+
+            AnimatedVisibility(
+                visible = showLangDropdown && uiState.isTranslationActive,
+                enter = fadeIn(animationSpec = tween(150)) +
+                    scaleIn(initialScale = 0.96f, animationSpec = tween(150)) +
+                    expandVertically(expandFrom = Alignment.Top, animationSpec = tween(160)),
+                exit = fadeOut(animationSpec = tween(110)) +
+                    scaleOut(targetScale = 0.96f, animationSpec = tween(110)) +
+                    shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(120))
+            ) {
+                val activeNormCode = normalizeTranslationLangCode(uiState.translationTargetLang)
+                val activeLangs = remember(prefs.customTranslationLangs) {
+                    getActiveTranslationLanguages(prefs.customTranslationLangs)
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = palette.bgSurface,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 0.dp,
+                    tonalElevation = 0.dp,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .width(200.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        activeLangs.forEach { langOpt ->
+                            val isSelected = normalizeTranslationLangCode(langOpt.code) == activeNormCode
+                            Surface(
+                                onClick = {
+                                    showLangDropdown = false
+                                    viewModel?.setTranslationTargetLang(langOpt.code)
+                                },
+                                shape = RoundedCornerShape(11.dp),
+                                color = if (isSelected) palette.pillActiveBg else Color.Transparent,
+                                border = if (isSelected) BorderStroke(1.dp, palette.pillActiveBorder) else null,
+                                shadowElevation = 0.dp,
+                                tonalElevation = 0.dp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(34.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Text(
+                                            text = langOpt.badgeCode.lowercase(),
+                                            color = if (isSelected) palette.textMain else palette.textSecondary,
+                                            fontSize = 12.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                        )
+                                        Text(
+                                            text = "(${langOpt.nativeName})",
+                                            color = if (isSelected) palette.textMain else palette.textMuted,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        PrototypeSvgIcon(
+                                            type = PrototypeIconType.CHECK,
+                                            tint = palette.textMain,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
 
         // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
         AnimatedVisibility(
