@@ -85,16 +85,8 @@ data class GlobalPageMetrics(
     val isAtVeryLastPage: Boolean
 )
 
-fun normalizeTranslationLangCode(rawLang: String): String {
-    return when (rawLang.trim().lowercase()) {
-        "id", "in", "indonesian", "bahasa indonesia" -> "id"
-        "en", "eng", "english" -> "en"
-        "ja", "jp", "jpn", "japanese" -> "ja"
-        "ko", "kr", "kor", "korean" -> "ko"
-        "zh", "zh-cn", "cn", "chinese" -> "zh-CN"
-        else -> "en"
-    }
-}
+fun normalizeTranslationLangCode(rawLang: String): String =
+    com.llunaticsys.llunevie.model.normalizeTranslationLangCode(rawLang)
 
 data class LlunevieUiState(
     val activeTab: MainNavTab = MainNavTab.HOME,
@@ -333,6 +325,23 @@ class LlunevieViewModel(
         // If translation is active, immediately trigger translation with the EXPLICIT normLang parameter:
         if (_uiState.value.isTranslationActive && _uiState.value.translationMode != "original") {
             triggerCurrentPageTranslation(explicitTargetLang = normLang)
+        }
+    }
+
+    fun addCustomTranslationLang(code: String) {
+        val norm = normalizeTranslationLangCode(code)
+        viewModelScope.launch {
+            prefsRepo.addCustomTranslationLang(norm)
+        }
+    }
+
+    fun removeCustomTranslationLang(code: String) {
+        val norm = normalizeTranslationLangCode(code)
+        viewModelScope.launch {
+            prefsRepo.removeCustomTranslationLang(norm)
+        }
+        if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == norm) {
+            setTranslationTargetLang("en")
         }
     }
 

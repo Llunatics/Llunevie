@@ -1,5 +1,8 @@
 package com.llunaticsys.llunevie.ui.components
 
+import com.llunaticsys.llunevie.model.DEFAULT_TRANSLATION_LANGUAGES
+import com.llunaticsys.llunevie.model.EXTRA_TRANSLATION_LANGUAGES
+import com.llunaticsys.llunevie.model.normalizeTranslationLangCode
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -379,31 +382,19 @@ fun PrototypeSvgIcon(
 }
 
 fun targetLanguageDisplayName(code: String, isEnglish: Boolean = false): String {
-    return when (code.trim().lowercase()) {
-        "id", "in" -> if (isEnglish) "Indonesian" else "Bahasa Indonesia"
-        "en" -> "English"
-        "ja", "jp" -> "日本語"
-        "zh", "zh-cn", "cn" -> "中文"
-        "ko", "kr" -> "한국어"
-        "es" -> "Español"
-        "fr" -> "Français"
-        "de" -> "Deutsch"
-        else -> code.uppercase()
+    val norm = normalizeTranslationLangCode(code)
+    val option = (DEFAULT_TRANSLATION_LANGUAGES + EXTRA_TRANSLATION_LANGUAGES).find { normalizeTranslationLangCode(it.code) == norm }
+    if (option != null) {
+        if (norm == "id" && isEnglish) return "Indonesian"
+        return option.nativeName
     }
+    return code.uppercase()
 }
 
 fun targetLanguageBadgeLabel(code: String): String {
-    return when (code.trim().lowercase()) {
-        "id", "in" -> "ID"
-        "en" -> "EN"
-        "ja", "jp" -> "JA"
-        "zh", "zh-cn", "cn" -> "ZH"
-        "ko", "kr" -> "KO"
-        "es" -> "ES"
-        "fr" -> "FR"
-        "de" -> "DE"
-        else -> code.uppercase().take(2)
-    }
+    val norm = normalizeTranslationLangCode(code)
+    val option = (DEFAULT_TRANSLATION_LANGUAGES + EXTRA_TRANSLATION_LANGUAGES).find { normalizeTranslationLangCode(it.code) == norm }
+    return option?.badgeCode ?: norm.uppercase().take(2)
 }
 
 @Composable

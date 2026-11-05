@@ -220,6 +220,9 @@ import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.HighlightColorKey
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
+import com.llunaticsys.llunevie.model.TranslationLangOption
+import com.llunaticsys.llunevie.model.DEFAULT_TRANSLATION_LANGUAGES
+import com.llunaticsys.llunevie.model.getActiveTranslationLanguages
 import com.llunaticsys.llunevie.normalizeTranslationLangCode
 import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import com.llunaticsys.llunevie.ui.components.targetLanguageDisplayName
@@ -2554,14 +2557,14 @@ fun ReaderScreen(
                                             .padding(horizontal = 8.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        val currentLangLabel = when (uiState.translationTargetLang.trim().lowercase()) {
-                                            "id", "in" -> "ID"
-                                            "en" -> "EN"
-                                            "ja", "jp" -> "JA"
-                                            "ko", "kr" -> "KO"
-                                            "zh", "zh-cn", "cn" -> "ZH"
-                                            else -> uiState.translationTargetLang.uppercase().take(2)
+                                        val activeNormCode = normalizeTranslationLangCode(uiState.translationTargetLang)
+                                        val activeLangs = remember(prefs.customTranslationLangs) {
+                                            getActiveTranslationLanguages(prefs.customTranslationLangs)
                                         }
+                                        val activeLangOption = activeLangs.find { normalizeTranslationLangCode(it.code) == activeNormCode }
+                                            ?: DEFAULT_TRANSLATION_LANGUAGES.find { normalizeTranslationLangCode(it.code) == activeNormCode }
+                                            ?: TranslationLangOption(code = activeNormCode, badgeCode = activeNormCode.uppercase().take(2), nativeName = activeNormCode)
+                                        val currentLangLabel = activeLangOption.badgeCode
                                         Text(
                                             text = "$currentLangLabel ▾",
                                             fontSize = 11.sp,
@@ -2577,31 +2580,71 @@ fun ReaderScreen(
                                         DropdownMenu(
                                             expanded = showLangMenu,
                                             onDismissRequest = { showLangMenu = false },
-                                            containerColor = palette.sheetBg
+                                            shape = RoundedCornerShape(18.dp),
+                                            containerColor = palette.sheetBg,
+                                            border = BorderStroke(1.dp, palette.borderSoft),
+                                            shadowElevation = 16.dp,
+                                            modifier = Modifier.width(204.dp)
                                         ) {
-                                            val langOptions = listOf(
-                                                "id" to "ID",
-                                                "en" to "EN",
-                                                "ja" to "JA",
-                                                "ko" to "KO",
-                                                "zh-CN" to "ZH"
-                                            )
-                                            langOptions.forEach { (code, label) ->
-                                                val isSelected = normalizeTranslationLangCode(uiState.translationTargetLang) == normalizeTranslationLangCode(code)
-                                                DropdownMenuItem(
-                                                    text = {
-                                                        Text(
-                                                            text = label,
-                                                            color = if (isSelected) palette.textMain else palette.textMuted,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                            fontSize = 12.sp
-                                                        )
-                                                    },
-                                                    onClick = {
-                                                        showLangMenu = false
-                                                        viewModel?.setTranslationTargetLang(code)
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                                            ) {
+                                                activeLangs.forEach { langOpt ->
+                                                    val isSelected = normalizeTranslationLangCode(langOpt.code) == activeNormCode
+                                                    Surface(
+                                                        onClick = {
+                                                            showLangMenu = false
+                                                            viewModel?.setTranslationTargetLang(langOpt.code)
+                                                        },
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        color = if (isSelected) palette.pillActiveBg else Color.Transparent,
+                                                        border = if (isSelected) BorderStroke(1.dp, palette.pillActiveBorder) else null,
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(36.dp)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .padding(horizontal = 12.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                        ) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = langOpt.badgeCode.lowercase(),
+                                                                    color = if (isSelected) palette.textMain else palette.textSecondary,
+                                                                    fontSize = 12.5.sp,
+                                                                    fontFamily = FontFamily.Monospace,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                                                )
+                                                                Text(
+                                                                    text = "(${langOpt.nativeName})",
+                                                                    color = if (isSelected) palette.textMain else palette.textMuted,
+                                                                    fontSize = 12.5.sp,
+                                                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+                                                                )
+                                                            }
+                                                            if (isSelected) {
+                                                                PrototypeSvgIcon(
+                                                                    type = PrototypeIconType.CHECK,
+                                                                    tint = palette.textMain,
+                                                                    modifier = Modifier.size(14.dp)
+                                                                )
+                                                            }
+                                                        }
                                                     }
-                                                )
+                                                }
                                             }
                                         }
                                     }
@@ -3507,8 +3550,10 @@ fun ReaderScreen(
                                         )
                                         Surface(
                                             onClick = {
-                                                val langs = listOf("id", "en", "ja", "zh", "ko", "es", "fr", "de")
-                                                val nextIdx = (langs.indexOf(prefs.translatorTargetLang) + 1) % langs.size
+                                                val langs = getActiveTranslationLanguages(prefs.customTranslationLangs).map { it.code }
+                                                val currentNorm = normalizeTranslationLangCode(prefs.translatorTargetLang)
+                                                val currentIdx = langs.indexOfFirst { normalizeTranslationLangCode(it) == currentNorm }.let { if (it == -1) 0 else it }
+                                                val nextIdx = (currentIdx + 1) % langs.size
                                                 val newLang = langs[nextIdx]
                                                 viewModel?.updateTranslatorPrefs(targetLang = newLang)
                                                 scope.launch {

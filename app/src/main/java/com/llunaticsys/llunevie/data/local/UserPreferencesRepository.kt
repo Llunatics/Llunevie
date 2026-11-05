@@ -15,6 +15,7 @@ import com.llunaticsys.llunevie.model.LibrarySortOption
 import com.llunaticsys.llunevie.model.LibraryViewMode
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
+import com.llunaticsys.llunevie.model.normalizeTranslationLangCode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -70,6 +71,7 @@ data class UserPreferencesState(
     val pdfProtectIllustrations: Boolean = true,
     val translatorEngine: String = "free",
     val translatorTargetLang: String = "id",
+    val customTranslationLangs: Set<String> = emptySet(),
     val translatorDisplayMode: String = "bilingual",
     val aiApiKey: String = "",
     val aiModelName: String = "gemini-2.5-flash",
@@ -154,6 +156,7 @@ class UserPreferencesRepository(private val context: Context) {
         val PDF_PROTECT_ILLUSTRATIONS = booleanPreferencesKey("pdf_protect_illustrations")
         val TRANSLATOR_ENGINE = stringPreferencesKey("translator_engine")
         val TRANSLATOR_TARGET_LANG = stringPreferencesKey("translator_target_lang")
+        val CUSTOM_TRANSLATION_LANGS = stringSetPreferencesKey("custom_translation_langs")
         val TRANSLATOR_DISPLAY_MODE = stringPreferencesKey("translator_display_mode")
         val AI_API_KEY = stringPreferencesKey("ai_api_key")
         val AI_MODEL_NAME = stringPreferencesKey("ai_model_name")
@@ -219,6 +222,7 @@ class UserPreferencesRepository(private val context: Context) {
             pdfProtectIllustrations = prefs[Keys.PDF_PROTECT_ILLUSTRATIONS] ?: true,
             translatorEngine = prefs[Keys.TRANSLATOR_ENGINE] ?: "free",
             translatorTargetLang = prefs[Keys.TRANSLATOR_TARGET_LANG] ?: "id",
+            customTranslationLangs = prefs[Keys.CUSTOM_TRANSLATION_LANGS] ?: emptySet(),
             translatorDisplayMode = prefs[Keys.TRANSLATOR_DISPLAY_MODE] ?: "bilingual",
             aiApiKey = prefs[Keys.AI_API_KEY] ?: "",
             aiModelName = prefs[Keys.AI_MODEL_NAME] ?: "gemini-2.5-flash",
@@ -430,6 +434,26 @@ class UserPreferencesRepository(private val context: Context) {
             modelName?.let { prefs[Keys.AI_MODEL_NAME] = it.trim() }
             customBaseUrl?.let { prefs[Keys.AI_CUSTOM_BASE_URL] = it.trim() }
             systemPrompt?.let { prefs[Keys.AI_SYSTEM_PROMPT] = it }
+        }
+    }
+
+    suspend fun addCustomTranslationLang(code: String) {
+        val norm = normalizeTranslationLangCode(code)
+        context.llunevieDataStore.edit { prefs ->
+            val current = prefs[Keys.CUSTOM_TRANSLATION_LANGS] ?: emptySet()
+            prefs[Keys.CUSTOM_TRANSLATION_LANGS] = current + norm
+        }
+    }
+
+    suspend fun removeCustomTranslationLang(code: String) {
+        val norm = normalizeTranslationLangCode(code)
+        context.llunevieDataStore.edit { prefs ->
+            val current = prefs[Keys.CUSTOM_TRANSLATION_LANGS] ?: emptySet()
+            prefs[Keys.CUSTOM_TRANSLATION_LANGS] = current - norm
+            val currentTarget = prefs[Keys.TRANSLATOR_TARGET_LANG] ?: "id"
+            if (normalizeTranslationLangCode(currentTarget) == norm) {
+                prefs[Keys.TRANSLATOR_TARGET_LANG] = "en"
+            }
         }
     }
 }
