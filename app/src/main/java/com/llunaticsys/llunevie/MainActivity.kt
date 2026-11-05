@@ -476,6 +476,8 @@ private fun LlunevieMainContainer(
                     onUpdateTranslatorPrefs = { engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt ->
                         viewModel.updateTranslatorPrefs(engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt)
                     },
+                    onAddCustomTranslationLang = { viewModel.addCustomTranslationLang(it) },
+                    onRemoveCustomTranslationLang = { viewModel.removeCustomTranslationLang(it) },
                     onClearTranslationCache = { viewModel.clearTranslationCache() }
                 )
 

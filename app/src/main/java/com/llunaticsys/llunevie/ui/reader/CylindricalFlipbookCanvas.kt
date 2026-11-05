@@ -711,11 +711,12 @@ fun CylindricalFlipbookCanvas(
         if (prevPageBitmap != null) displayedPrevBmp = prevPageBitmap
     }
     LaunchedEffect(currentPageBitmap) {
-        // Only update displayedCurrentBmp when idle and when currentPageBitmap is NOT the old previous page:
-        if (progressAnim.value == 0f && currentPageBitmap !== displayedPrevBmp) {
-            displayedCurrentBmp = currentPageBitmap
-            displayedCurrFilter = curPageColorFilter
-            isWaitingForParentPageSync = false
+        if (progressAnim.value == 0f && !isDragging) {
+            if (!isWaitingForParentPageSync || currentPageBitmap !== displayedPrevBmp) {
+                displayedCurrentBmp = currentPageBitmap
+                displayedCurrFilter = curPageColorFilter
+                isWaitingForParentPageSync = false
+            }
         }
     }
 

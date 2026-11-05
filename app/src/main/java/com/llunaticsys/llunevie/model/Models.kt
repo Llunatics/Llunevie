@@ -166,3 +166,58 @@ data class CatalogBookCandidate(
     val weightGrams: Float = 300f,
     val status: BatchLookupStatus = BatchLookupStatus.FOUND
 )
+
+data class TranslationLangOption(
+    val code: String,          // API language code: "id", "en", "ja", "ko", "zh-CN", etc.
+    val badgeCode: String,     // Short badge in Top Pill: "ID", "EN", "JA", "KO", "CN", etc.
+    val nativeName: String,    // Native name: "Bahasa Indonesia", "English", "日本語", "한국어", "简体中文", etc.
+    val isDefault: Boolean = false
+) {
+    // Formatted display label for dropdowns & settings: e.g. "ja (日本語)", "cn (简体中文)"
+    val dropdownLabel: String get() = "${badgeCode.lowercase()} ($nativeName)"
+    val settingsLabel: String get() = "${badgeCode.uppercase()} ($nativeName)"
+}
+
+val DEFAULT_TRANSLATION_LANGUAGES = listOf(
+    TranslationLangOption(code = "id", badgeCode = "ID", nativeName = "Bahasa Indonesia", isDefault = true),
+    TranslationLangOption(code = "en", badgeCode = "EN", nativeName = "English", isDefault = true),
+    TranslationLangOption(code = "ja", badgeCode = "JA", nativeName = "日本語", isDefault = true),
+    TranslationLangOption(code = "ko", badgeCode = "KO", nativeName = "한국어", isDefault = true),
+    TranslationLangOption(code = "zh-CN", badgeCode = "CN", nativeName = "简体中文", isDefault = true)
+)
+
+val EXTRA_TRANSLATION_LANGUAGES = listOf(
+    TranslationLangOption(code = "zh-TW", badgeCode = "TW", nativeName = "繁體中文"),
+    TranslationLangOption(code = "es", badgeCode = "ES", nativeName = "Español"),
+    TranslationLangOption(code = "fr", badgeCode = "FR", nativeName = "Français"),
+    TranslationLangOption(code = "de", badgeCode = "DE", nativeName = "Deutsch"),
+    TranslationLangOption(code = "ru", badgeCode = "RU", nativeName = "Русский"),
+    TranslationLangOption(code = "ar", badgeCode = "AR", nativeName = "العربية"),
+    TranslationLangOption(code = "pt", badgeCode = "PT", nativeName = "Português"),
+    TranslationLangOption(code = "it", badgeCode = "IT", nativeName = "Italiano"),
+    TranslationLangOption(code = "th", badgeCode = "TH", nativeName = "ไทย"),
+    TranslationLangOption(code = "vi", badgeCode = "VI", nativeName = "Tiếng Việt"),
+    TranslationLangOption(code = "ms", badgeCode = "MS", nativeName = "Bahasa Melayu"),
+    TranslationLangOption(code = "tr", badgeCode = "TR", nativeName = "Türkçe"),
+    TranslationLangOption(code = "hi", badgeCode = "HI", nativeName = "हिन्दी"),
+    TranslationLangOption(code = "nl", badgeCode = "NL", nativeName = "Nederlands")
+)
+
+fun normalizeTranslationLangCode(rawLang: String): String {
+    return when (rawLang.trim().lowercase()) {
+        "id", "in", "indonesian", "bahasa indonesia" -> "id"
+        "en", "eng", "english" -> "en"
+        "ja", "jp", "jpn", "japanese" -> "ja"
+        "ko", "kr", "kor", "korean" -> "ko"
+        "cn", "zh", "zh-cn", "chinese" -> "zh-CN"
+        "tw", "zh-tw" -> "zh-TW"
+        "es", "fr", "de", "ru", "ar", "pt", "it", "th", "vi", "ms", "tr", "hi", "nl" -> rawLang.trim().lowercase()
+        else -> "en"
+    }
+}
+
+fun getActiveTranslationLanguages(customCodes: Set<String>): List<TranslationLangOption> {
+    val normCustom = customCodes.map { normalizeTranslationLangCode(it) }.toSet()
+    val extras = EXTRA_TRANSLATION_LANGUAGES.filter { normalizeTranslationLangCode(it.code) in normCustom }
+    return DEFAULT_TRANSLATION_LANGUAGES + extras
+}

@@ -79,6 +79,16 @@ import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.heightIn
+import com.llunaticsys.llunevie.model.TranslationLangOption
+import com.llunaticsys.llunevie.model.DEFAULT_TRANSLATION_LANGUAGES
+import com.llunaticsys.llunevie.model.EXTRA_TRANSLATION_LANGUAGES
+import com.llunaticsys.llunevie.model.getActiveTranslationLanguages
+import com.llunaticsys.llunevie.model.normalizeTranslationLangCode
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -134,6 +144,8 @@ fun SettingsScreen(
         customBaseUrl: String?,
         systemPrompt: String?
     ) -> Unit = { _, _, _, _, _, _, _ -> },
+    onAddCustomTranslationLang: (String) -> Unit = {},
+    onRemoveCustomTranslationLang: (String) -> Unit = {},
     onClearTranslationCache: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -146,6 +158,7 @@ fun SettingsScreen(
 
     val translationRepo = remember { TranslationRepository.getInstance() }
     var cacheStats by remember { mutableStateOf(translationRepo.getCacheStats(context)) }
+    var showTargetLangDialog by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showModelDialog by remember { mutableStateOf(false) }
     var showCustomUrlDialog by remember { mutableStateOf(false) }
@@ -655,22 +668,43 @@ fun SettingsScreen(
                             lineHeight = 17.sp
                         )
                     }
-                    val langOptions = listOf(
-                        "id" to "Bahasa Indonesia",
-                        "en" to "English",
-                        "ja" to "日本語",
-                        "zh" to "中文",
-                        "ko" to "한국어",
-                        "es" to "Español",
-                        "fr" to "Français",
-                        "de" to "Deutsch"
-                    )
-                    CustomThemeDropdown(
-                        title = strings.transTargetLangLabel,
-                        selectedValue = prefs.translatorTargetLang,
-                        options = langOptions,
-                        onValueSelected = { onUpdateTranslatorPrefs(null, it, null, null, null, null, null) }
-                    )
+                    val activeLangs = remember(prefs.customTranslationLangs) {
+                        getActiveTranslationLanguages(prefs.customTranslationLangs)
+                    }
+                    val activeNormCode = normalizeTranslationLangCode(prefs.translatorTargetLang)
+                    val currentLangOpt = activeLangs.find { normalizeTranslationLangCode(it.code) == activeNormCode }
+                        ?: DEFAULT_TRANSLATION_LANGUAGES.find { normalizeTranslationLangCode(it.code) == activeNormCode }
+                        ?: TranslationLangOption(code = activeNormCode, badgeCode = activeNormCode.uppercase().take(2), nativeName = activeNormCode)
+
+                    Surface(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable { showTargetLangDialog = true },
+                        shape = RoundedCornerShape(999.dp),
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = currentLangOpt.settingsLabel,
+                                color = palette.textMain,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.CHEVRON_DOWN,
+                                tint = palette.textMuted.copy(alpha = 0.75f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
                 }
                 HorizontalDivider(color = palette.borderSoft)
 
@@ -1182,6 +1216,240 @@ fun SettingsScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 10.dp)
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // TARGET LANGUAGE SELECTOR & CUSTOM LANGUAGE MANAGER MODAL
+    if (showTargetLangDialog) {
+        var showAddMoreLangs by remember { mutableStateOf(false) }
+        val activeLangs = remember(prefs.customTranslationLangs) {
+            getActiveTranslationLanguages(prefs.customTranslationLangs)
+        }
+        val activeNormCode = normalizeTranslationLangCode(prefs.translatorTargetLang)
+        val normCustom = prefs.customTranslationLangs.map { normalizeTranslationLangCode(it) }.toSet()
+        val remainingExtras = EXTRA_TRANSLATION_LANGUAGES.filter { normalizeTranslationLangCode(it.code) !in normCustom }
+
+        Dialog(onDismissRequest = { showTargetLangDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = palette.sheetBg,
+                border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 24.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    // Header
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.transTargetLangLabel.uppercase(),
+                            color = palette.textMuted,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.3.sp
+                        )
+                        Surface(
+                            onClick = { showTargetLangDialog = false },
+                            shape = CircleShape,
+                            color = palette.bgSurface,
+                            border = BorderStroke(1.dp, palette.borderSoft),
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("✕", color = palette.textMain, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    // Scrollable List of active and extra languages
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 440.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // 1. Active Languages List
+                        activeLangs.forEach { langOpt ->
+                            val isSelected = normalizeTranslationLangCode(langOpt.code) == activeNormCode
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isSelected) palette.pillActiveBg else Color.Transparent,
+                                border = if (isSelected) BorderStroke(1.dp, palette.pillActiveBorder) else null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        onUpdateTranslatorPrefs(null, langOpt.code, null, null, null, null, null)
+                                        showTargetLangDialog = false
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    ) {
+                                        Text(
+                                            text = langOpt.badgeCode.uppercase(),
+                                            color = if (isSelected) palette.textMain else palette.textSecondary,
+                                            fontSize = 12.5.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "(${langOpt.nativeName})",
+                                            color = if (isSelected) palette.textMain else palette.textMuted,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (isSelected) {
+                                            PrototypeSvgIcon(
+                                                type = PrototypeIconType.CHECK,
+                                                tint = palette.textMain,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        if (!langOpt.isDefault) {
+                                            Surface(
+                                                onClick = {
+                                                    onRemoveCustomTranslationLang(langOpt.code)
+                                                },
+                                                shape = CircleShape,
+                                                color = palette.bgSurface,
+                                                border = BorderStroke(1.dp, palette.borderSoft),
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        text = "✕",
+                                                        color = palette.textMuted,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. Inline Expandable "+ Tambah Bahasa Lain" / "+ Add More Languages" Section
+                        if (remainingExtras.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Surface(
+                                onClick = { showAddMoreLangs = !showAddMoreLangs },
+                                shape = RoundedCornerShape(14.dp),
+                                color = palette.bgSurface,
+                                border = BorderStroke(1.dp, palette.borderSoft),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        text = if (strings.isId) "+ Tambah Bahasa Lain" else "+ Add More Languages",
+                                        color = palette.accentDark,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            AnimatedVisibility(
+                                visible = showAddMoreLangs,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    remainingExtras.forEach { extra ->
+                                        Surface(
+                                            onClick = {
+                                                onAddCustomTranslationLang(extra.code)
+                                                onUpdateTranslatorPrefs(null, extra.code, null, null, null, null, null)
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = palette.bgSurface.copy(alpha = 0.6f),
+                                            border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = 0.6f)),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Text(
+                                                        text = extra.badgeCode.uppercase(),
+                                                        color = palette.textSecondary,
+                                                        fontSize = 12.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "(${extra.nativeName})",
+                                                        color = palette.textMuted,
+                                                        fontSize = 12.5.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                }
+                                                PrototypeSvgIcon(
+                                                    type = PrototypeIconType.PLUS,
+                                                    tint = palette.accentDark,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

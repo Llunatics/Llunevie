@@ -5,6 +5,7 @@ import android.util.LruCache
 import com.llunaticsys.llunevie.data.local.DEFAULT_AI_TRANSLATOR_PROMPT
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
+import com.llunaticsys.llunevie.normalizeTranslationLangCode
 import com.llunaticsys.llunevie.ui.components.targetLanguageDisplayName
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -118,14 +119,15 @@ class TranslationRepository private constructor() {
     suspend fun translate(
         text: String,
         prefs: UserPreferencesState,
-        context: Context
+        context: Context,
+        explicitTargetLang: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         val cleanText = text.trim()
         if (cleanText.isBlank()) return@withContext Result.success("")
 
         val engine = prefs.translatorEngine.ifBlank { "free" }
         val model = prefs.aiModelName.ifBlank { "gemini-2.5-flash" }
-        val targetLang = prefs.translatorTargetLang.ifBlank { "id" }
+        val targetLang = normalizeTranslationLangCode(explicitTargetLang ?: prefs.translatorTargetLang.ifBlank { "id" })
         val systemPrompt = prefs.aiSystemPrompt.ifBlank { DEFAULT_AI_TRANSLATOR_PROMPT }
 
         val cached = getFromCache(context, engine, model, targetLang, systemPrompt, cleanText)
@@ -134,9 +136,9 @@ class TranslationRepository private constructor() {
         }
 
         val result = when (engine) {
-            "gemini" -> translateGemini(cleanText, prefs)
-            "openrouter" -> translateOpenRouter(cleanText, prefs)
-            "custom" -> translateCustom(cleanText, prefs)
+            "gemini" -> translateGemini(cleanText, prefs, targetLang)
+            "openrouter" -> translateOpenRouter(cleanText, prefs, targetLang)
+            "custom" -> translateCustom(cleanText, prefs, targetLang)
             else -> translateFree(cleanText, targetLang)
         }
 
@@ -207,7 +209,7 @@ class TranslationRepository private constructor() {
         }
     }
 
-    private fun translateGemini(text: String, prefs: UserPreferencesState): Result<String> {
+    private fun translateGemini(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
         val apiKey = prefs.aiApiKey.trim()
         if (apiKey.isBlank()) {
             val msg = if (prefs.lang == "en") {
@@ -224,7 +226,7 @@ class TranslationRepository private constructor() {
         return runCatching {
             val isEn = prefs.lang == "en"
             val resolvedPrompt = prefs.aiSystemPrompt.ifBlank { DEFAULT_AI_TRANSLATOR_PROMPT }
-                .replace("{{TARGET_LANG}}", targetLanguageDisplayName(prefs.translatorTargetLang, isEn))
+                .replace("{{TARGET_LANG}}", targetLanguageDisplayName(targetLang, isEn))
 
             val payload = JSONObject().apply {
                 put("systemInstruction", JSONObject().apply {
@@ -269,7 +271,7 @@ class TranslationRepository private constructor() {
         }
     }
 
-    private fun translateOpenRouter(text: String, prefs: UserPreferencesState): Result<String> {
+    private fun translateOpenRouter(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
         val apiKey = prefs.aiApiKey.trim()
         if (apiKey.isBlank()) {
             val msg = if (prefs.lang == "en") {
@@ -282,26 +284,27 @@ class TranslationRepository private constructor() {
 
         val endpoint = "https://openrouter.ai/api/v1/chat/completions"
         val model = prefs.aiModelName.ifBlank { "google/gemini-2.5-flash" }.trim()
-        return executeOpenAiChatCompletion(endpoint, model, text, prefs)
+        return executeOpenAiChatCompletion(endpoint, model, text, prefs, targetLang)
     }
 
-    private fun translateCustom(text: String, prefs: UserPreferencesState): Result<String> {
+    private fun translateCustom(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
         val baseUrl = prefs.aiCustomBaseUrl.ifBlank { "https://openrouter.ai/api/v1" }.trimEnd('/')
         val endpoint = "$baseUrl/chat/completions"
         val model = prefs.aiModelName.ifBlank { "gpt-4o-mini" }.trim()
-        return executeOpenAiChatCompletion(endpoint, model, text, prefs)
+        return executeOpenAiChatCompletion(endpoint, model, text, prefs, targetLang)
     }
 
     private fun executeOpenAiChatCompletion(
         endpoint: String,
         model: String,
         text: String,
-        prefs: UserPreferencesState
+        prefs: UserPreferencesState,
+        targetLang: String
     ): Result<String> {
         return runCatching {
             val isEn = prefs.lang == "en"
             val resolvedPrompt = prefs.aiSystemPrompt.ifBlank { DEFAULT_AI_TRANSLATOR_PROMPT }
-                .replace("{{TARGET_LANG}}", targetLanguageDisplayName(prefs.translatorTargetLang, isEn))
+                .replace("{{TARGET_LANG}}", targetLanguageDisplayName(targetLang, isEn))
 
             val payload = JSONObject().apply {
                 put("model", model)
@@ -356,7 +359,8 @@ class TranslationRepository private constructor() {
     suspend fun translateParagraphList(
         paragraphs: List<String>,
         prefs: UserPreferencesState,
-        context: Context
+        context: Context,
+        explicitTargetLang: String? = null
     ): Result<List<Pair<String, String?>>> = withContext(Dispatchers.IO) {
         val rawParagraphs = paragraphs.map { it.trim() }.filter { it.isNotBlank() }
         if (rawParagraphs.isEmpty()) {
@@ -365,7 +369,7 @@ class TranslationRepository private constructor() {
 
         val engine = prefs.translatorEngine.ifBlank { "free" }
         val model = prefs.aiModelName.ifBlank { "gemini-2.5-flash" }
-        val targetLang = prefs.translatorTargetLang.ifBlank { "id" }
+        val targetLang = normalizeTranslationLangCode(explicitTargetLang ?: prefs.translatorTargetLang.ifBlank { "id" })
         val systemPrompt = prefs.aiSystemPrompt.ifBlank { DEFAULT_AI_TRANSLATOR_PROMPT }
 
         val uncachedIndices = mutableListOf<Int>()
@@ -394,13 +398,13 @@ class TranslationRepository private constructor() {
 
         val translatedUncached: List<String> = if (uncachedTexts.size == 1) {
             uncachedTexts.map { text ->
-                val tr = translate(text, prefs, context)
+                val tr = translate(text, prefs, context, targetLang)
                 tr.getOrNull() ?: text
             }
         } else {
             // Join with [[PARA_SPLIT]] for coherent page context in 1 single network request!
             val joined = uncachedTexts.joinToString("\n[[PARA_SPLIT]]\n")
-            val trResult = translate(joined, prefs, context)
+            val trResult = translate(joined, prefs, context, targetLang)
             if (trResult.isSuccess) {
                 val translatedBlock = trResult.getOrNull().orEmpty()
                 var splits = translatedBlock.split(Regex("\\s*\\[\\[PARA_SPLIT]]\\s*")).map { it.trim() }
@@ -418,7 +422,7 @@ class TranslationRepository private constructor() {
                 } else {
                     // Fallback to individual translations if split count mismatched
                     uncachedTexts.map { text ->
-                        translate(text, prefs, context).getOrDefault(text)
+                        translate(text, prefs, context, targetLang).getOrDefault(text)
                     }
                 }
             } else {
@@ -441,12 +445,13 @@ class TranslationRepository private constructor() {
     suspend fun translatePageParagraphs(
         pageRaw: String,
         prefs: UserPreferencesState,
-        context: Context
+        context: Context,
+        explicitTargetLang: String? = null
     ): Result<List<Pair<String, String?>>> {
         val rawParagraphs = pageRaw.split(Regex("\n\\s*\n"))
             .map { it.trim() }
             .filter { it.isNotBlank() }
-        return translateParagraphList(rawParagraphs, prefs, context)
+        return translateParagraphList(rawParagraphs, prefs, context, explicitTargetLang)
     }
 
     suspend fun extractPdfPageParagraphBlocks(

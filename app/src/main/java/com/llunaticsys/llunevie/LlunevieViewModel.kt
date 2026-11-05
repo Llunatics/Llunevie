@@ -23,6 +23,7 @@ import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
 import com.llunaticsys.llunevie.data.parser.SpineColorExtractor
 import com.llunaticsys.llunevie.data.parser.TxtNativeParser
 import com.llunaticsys.llunevie.data.remote.MultiBookApiRepository
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import coil.Coil
 import coil.request.ImageRequest
 import coil.request.SuccessResult
@@ -84,6 +85,9 @@ data class GlobalPageMetrics(
     val isAtVeryLastPage: Boolean
 )
 
+fun normalizeTranslationLangCode(rawLang: String): String =
+    com.llunaticsys.llunevie.model.normalizeTranslationLangCode(rawLang)
+
 data class LlunevieUiState(
     val activeTab: MainNavTab = MainNavTab.HOME,
     val previousTab: MainNavTab = MainNavTab.HOME,
@@ -123,7 +127,12 @@ data class LlunevieUiState(
     val pdfIndexingState: Map<String, Int?> = emptyMap(),
     val importingBooksProgress: Map<String, Int> = emptyMap(),
     val toastMessage: String? = null,
-    val isInitialDataReady: Boolean = false
+    val isInitialDataReady: Boolean = false,
+    val isTranslationActive: Boolean = false,
+    val translationMode: String = "replace",
+    val translationTargetLang: String = "id",
+    val isTranslatingPage: Boolean = false,
+    val translationRevision: Int = 0
 ) {
     val showCenterSearchLoader: Boolean
         get() = isCatalogSearching && catalogSearchResults.isEmpty()
@@ -189,12 +198,28 @@ class LlunevieViewModel(
         initialValue = emptyList()
     )
 
-    private val _uiState = MutableStateFlow(LlunevieUiState())
+    private val initialBootPrefs = prefsRepo.getInitialBootState()
+    private val _uiState = MutableStateFlow(
+        LlunevieUiState(
+            translationTargetLang = normalizeTranslationLangCode(initialBootPrefs.translatorTargetLang),
+            translationMode = initialBootPrefs.translatorDisplayMode.ifBlank { "replace" }
+        )
+    )
     val uiState: StateFlow<LlunevieUiState> = _uiState.asStateFlow()
 
     private val pdfBitmapCache = object : LruCache<String, Bitmap>(32) {
         override fun sizeOf(key: String, value: Bitmap): Int = 1
     }
+
+    private val translatedPdfBitmapCache = object : LruCache<String, Bitmap>(32) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
+    private val translatedTextCache = object : LruCache<String, List<Pair<String, String?>>>(100) {
+        override fun sizeOf(key: String, value: List<Pair<String, String?>>): Int = 1
+    }
+
+    private var activeTranslationJob: Job? = null
     private val _pdfIndexingState = MutableStateFlow<Map<String, Int?>>(emptyMap())
     val pdfIndexingState: StateFlow<Map<String, Int?>> = _pdfIndexingState.asStateFlow()
 
@@ -251,6 +276,245 @@ class LlunevieViewModel(
                 }
             }
         }
+    }
+
+    fun buildTranslatedPdfCacheKey(bookId: String, pageIndex: Int, targetLang: String, mode: String): String {
+        val normLang = normalizeTranslationLangCode(targetLang)
+        val normMode = mode.trim().lowercase()
+        return "$bookId:$pageIndex:$normLang:$normMode"
+    }
+
+    fun buildTranslatedTextCacheKey(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): String {
+        val normLang = normalizeTranslationLangCode(targetLang)
+        return "$bookId:$pageIndex:$normLang:$sourceHash"
+    }
+
+    fun getCachedTranslatedPdfBitmap(bookId: String, pageIndex: Int, targetLang: String, mode: String): Bitmap? {
+        val key = buildTranslatedPdfCacheKey(bookId, pageIndex, targetLang, mode)
+        val bmp = translatedPdfBitmapCache.get(key)
+        if (bmp != null && !bmp.isRecycled) return bmp
+        return null
+    }
+
+    fun putCachedTranslatedPdfBitmap(bookId: String, pageIndex: Int, targetLang: String, mode: String, bitmap: Bitmap) {
+        val key = buildTranslatedPdfCacheKey(bookId, pageIndex, targetLang, mode)
+        translatedPdfBitmapCache.put(key, bitmap)
+    }
+
+    fun getCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): List<Pair<String, String?>>? {
+        val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
+        return translatedTextCache.get(key)
+    }
+
+    fun putCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int, paragraphs: List<Pair<String, String?>>) {
+        val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
+        translatedTextCache.put(key, paragraphs)
+    }
+
+    fun setTranslationTargetLang(newLang: String) {
+        val normLang = normalizeTranslationLangCode(newLang)
+        activeTranslationJob?.cancel()
+        _uiState.update {
+            it.copy(
+                translationTargetLang = normLang,
+                isTranslatingPage = it.isTranslationActive && it.translationMode != "original",
+                translationRevision = it.translationRevision + 1
+            )
+        }
+        updateTranslatorPrefs(targetLang = normLang)
+        // If translation is active, immediately trigger translation with the EXPLICIT normLang parameter:
+        if (_uiState.value.isTranslationActive && _uiState.value.translationMode != "original") {
+            triggerCurrentPageTranslation(explicitTargetLang = normLang)
+        }
+    }
+
+    fun addCustomTranslationLang(code: String) {
+        val norm = normalizeTranslationLangCode(code)
+        viewModelScope.launch {
+            prefsRepo.addCustomTranslationLang(norm)
+        }
+    }
+
+    fun removeCustomTranslationLang(code: String) {
+        val norm = normalizeTranslationLangCode(code)
+        viewModelScope.launch {
+            prefsRepo.removeCustomTranslationLang(norm)
+        }
+        if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == norm) {
+            setTranslationTargetLang("en")
+        }
+    }
+
+    fun setTranslationActive(active: Boolean) {
+        activeTranslationJob?.cancel()
+        _uiState.update {
+            it.copy(
+                isTranslationActive = active,
+                isTranslatingPage = active && it.translationMode != "original",
+                translationRevision = it.translationRevision + 1
+            )
+        }
+        if (active && _uiState.value.translationMode != "original") {
+            triggerCurrentPageTranslation(explicitTargetLang = _uiState.value.translationTargetLang)
+        }
+    }
+
+    fun setTranslationMode(mode: String) {
+        val normMode = mode.trim().lowercase()
+        activeTranslationJob?.cancel()
+        _uiState.update {
+            it.copy(
+                translationMode = normMode,
+                isTranslatingPage = it.isTranslationActive && normMode != "original",
+                translationRevision = it.translationRevision + 1
+            )
+        }
+        updateTranslatorPrefs(displayMode = normMode)
+        if (_uiState.value.isTranslationActive && normMode != "original") {
+            triggerCurrentPageTranslation(explicitTargetLang = _uiState.value.translationTargetLang)
+        }
+    }
+
+    fun triggerCurrentPageTranslation(explicitTargetLang: String) {
+        val normLang = normalizeTranslationLangCode(explicitTargetLang)
+        activeTranslationJob?.cancel()
+        activeTranslationJob = viewModelScope.launch(Dispatchers.IO) {
+            val st = _uiState.value
+            val bookId = st.activeBookId ?: return@launch
+            val book = books.value.find { it.id == bookId } ?: return@launch
+            val isPdf = book.format.equals("PDF", ignoreCase = true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
+            val pageIdx = st.activePageIndex
+            val mode = st.translationMode
+
+            if (isPdf) {
+                val path = book.localFilePath ?: return@launch
+                loadOrTranslatePdfPageBitmap(
+                    bookId = bookId,
+                    filePath = path,
+                    pageIndex = pageIdx,
+                    targetLang = normLang,
+                    mode = mode
+                )
+            } else {
+                val chapters = st.activeBookChapters
+                val curCh = chapters.getOrNull(st.activeChapterIndex)
+                val pageRaw = curCh?.pages?.getOrNull(st.activePageIndex).orEmpty()
+                if (pageRaw.isNotBlank()) {
+                    loadOrTranslatePageParagraphs(
+                        bookId = bookId,
+                        pageIndex = pageIdx,
+                        pageRaw = pageRaw,
+                        targetLang = normLang
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun loadOrTranslatePdfPageBitmap(
+        bookId: String,
+        filePath: String,
+        pageIndex: Int,
+        targetLang: String,
+        mode: String,
+        targetWidthPx: Int = 1080
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        val normLang = normalizeTranslationLangCode(targetLang)
+        val normMode = mode.trim().lowercase()
+        if (normMode == "original") {
+            return@withContext loadPdfPageBitmap(bookId, filePath, pageIndex)
+        }
+        getCachedTranslatedPdfBitmap(bookId, pageIndex, normLang, normMode)?.let { return@withContext it }
+
+        _uiState.update { it.copy(isTranslatingPage = true) }
+
+        val translationRepo = TranslationRepository.getInstance(appContext)
+        val book = books.value.find { it.id == bookId }
+        val bookTitle = book?.title.orEmpty()
+        val blocks = translationRepo.extractPdfPageParagraphBlocks(appContext, filePath, pageIndex, bookTitle)
+        if (blocks.isEmpty()) {
+            val orig = loadPdfPageBitmap(bookId, filePath, pageIndex)
+            _uiState.update { it.copy(isTranslatingPage = false) }
+            return@withContext orig
+        }
+
+        val texts = blocks.map { it.text }
+        val currentPrefs = preferences.value
+        val res = translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
+        if (!res.isSuccess) {
+            _uiState.update { it.copy(isTranslatingPage = false) }
+            return@withContext loadPdfPageBitmap(bookId, filePath, pageIndex)
+        }
+
+        val transPairs = res.getOrThrow()
+        val transTexts = transPairs.map { it.second ?: it.first }
+
+        val isIllust = pageIndex == 0 || _uiState.value.activeBookIllustrations.any { it.pageIndexInBook == pageIndex }
+        val rendered = PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
+            pdfFilePath = filePath,
+            pageIndex = pageIndex,
+            blocks = blocks,
+            translatedTexts = transTexts,
+            displayMode = normMode,
+            targetWidthPx = targetWidthPx,
+            isIllustrationPage = isIllust,
+            targetLang = normLang,
+            engine = currentPrefs.translatorEngine
+        ) ?: loadPdfPageBitmap(bookId, filePath, pageIndex)
+
+        if (rendered != null) {
+            putCachedTranslatedPdfBitmap(bookId, pageIndex, normLang, normMode, rendered)
+        }
+
+        if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) != normLang) {
+            return@withContext rendered
+        }
+
+        _uiState.update {
+            it.copy(
+                isTranslatingPage = false,
+                translationRevision = it.translationRevision + 1
+            )
+        }
+
+        rendered
+    }
+
+    suspend fun loadOrTranslatePageParagraphs(
+        bookId: String,
+        pageIndex: Int,
+        pageRaw: String,
+        targetLang: String
+    ): List<Pair<String, String?>>? = withContext(Dispatchers.IO) {
+        val normLang = normalizeTranslationLangCode(targetLang)
+        val sourceHash = pageRaw.hashCode()
+        getCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash)?.let { return@withContext it }
+
+        _uiState.update { it.copy(isTranslatingPage = true) }
+
+        val translationRepo = TranslationRepository.getInstance(appContext)
+        val currentPrefs = preferences.value
+        val res = translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
+        if (!res.isSuccess) {
+            _uiState.update { it.copy(isTranslatingPage = false) }
+            return@withContext null
+        }
+
+        val transList = res.getOrThrow()
+        putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
+
+        if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) != normLang) {
+            return@withContext transList
+        }
+
+        _uiState.update {
+            it.copy(
+                isTranslatingPage = false,
+                translationRevision = it.translationRevision + 1
+            )
+        }
+
+        transList
     }
 
     private var searchJob: Job? = null
@@ -554,10 +818,11 @@ class LlunevieViewModel(
         customBaseUrl: String? = null,
         systemPrompt: String? = null
     ) {
+        val normLang = targetLang?.let { normalizeTranslationLangCode(it) }
         viewModelScope.launch {
             prefsRepo.updateTranslatorPrefs(
                 engine = engine,
-                targetLang = targetLang,
+                targetLang = normLang,
                 displayMode = displayMode,
                 apiKey = apiKey,
                 modelName = modelName,
@@ -565,11 +830,24 @@ class LlunevieViewModel(
                 systemPrompt = systemPrompt
             )
         }
+        if (normLang != null || displayMode != null) {
+            _uiState.update {
+                it.copy(
+                    translationTargetLang = normLang ?: it.translationTargetLang,
+                    translationMode = displayMode ?: it.translationMode,
+                    translationRevision = it.translationRevision + 1
+                )
+            }
+        }
     }
 
     fun clearTranslationCache() {
         viewModelScope.launch {
-            com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance().clearCache(appContext)
+            translatedPdfBitmapCache.evictAll()
+            translatedTextCache.evictAll()
+            PdfNativeRenderer.translatedPdfBitmapCache.evictAll()
+            TranslationRepository.getInstance(appContext).clearCache(appContext)
+            _uiState.update { it.copy(translationRevision = it.translationRevision + 1) }
             val isId = preferences.value.lang != "en"
             showToast(if (isId) "Cache terjemahan dibersihkan" else "Translation cache cleared")
         }
