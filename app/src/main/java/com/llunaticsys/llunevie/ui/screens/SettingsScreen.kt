@@ -208,12 +208,6 @@ fun SettingsScreen(
                 fontWeight = FontWeight.Medium
             )
         }
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = strings.settingsSub,
-            color = palette.textMuted,
-            fontSize = 12.sp
-        )
 
         // SECTION 1: PROFILE & APPEARANCE (`#i18nSecYou`)
         Spacer(modifier = Modifier.height(16.dp))

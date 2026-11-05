@@ -6313,22 +6313,32 @@ private fun InteractiveTextPageContent(
     val isCover = isCoverPage || (
         (chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) &&
         rawParagraphs.any { it.startsWith("[ILLUST:") }
-    ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:") && !showChapterHeader)
+    ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
 
-    // 1. Natural Aspect-Ratio EPUB Cover (Never Stretched or Cropped!)
+    // 1. Standalone / Full-Page EPUB Illustration & Cover (1:1 with Flipbook Canvas!)
     if (isCover) {
         val illustPara = rawParagraphs.firstOrNull { it.startsWith("[ILLUST:") }
         val imgPath = illustPara?.removePrefix("[ILLUST:")?.substringBefore("|")?.substringBefore("]")
         if (imgPath != null && File(imgPath).exists()) {
+            if (transparentTextForFlipbook) {
+                // Flipbook canvas underneath already renders the full-page illustration; only provide tap target
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onIllustrationClicked(imgPath) }
+                )
+                return
+            }
             val coverBitmap = remember(imgPath) {
                 runCatching { BitmapFactory.decodeFile(imgPath) }.getOrNull()
             }
             if (coverBitmap != null) {
-                val ratio = (coverBitmap.width.toFloat() / coverBitmap.height.toFloat()).coerceIn(0.58f, 0.80f)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -6337,12 +6347,9 @@ private fun InteractiveTextPageContent(
                 ) {
                     Image(
                         bitmap = coverBitmap.asImageBitmap(),
-                        contentDescription = bookTitle.ifBlank { "Cover" },
+                        contentDescription = bookTitle.ifBlank { "Illustration" },
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(ratio, matchHeightConstraintsFirst = false)
-                            .clip(RoundedCornerShape(10.dp))
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
                 return
@@ -6513,36 +6520,38 @@ private fun InteractiveTextPageContent(
             }
 
             // Inline illustrations inside the chapter
-            rawParagraphs.filter { it.startsWith("[ILLUST:") && it.endsWith("]") }.forEach { para ->
-                val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
-                val path = inner.substringBefore("|")
-                val caption = inner.substringAfter("|", "")
-                Surface(
-                    onClick = { onIllustrationClicked(path) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.bgCard,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 14.dp)
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AsyncImage(
-                            model = File(path),
-                            contentDescription = caption,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(260.dp)
-                        )
-                        if (caption.isNotBlank()) {
-                            Text(
-                                text = caption,
-                                color = palette.textMuted,
-                                fontSize = 10.5.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(8.dp)
+            if (!transparentTextForFlipbook) {
+                rawParagraphs.filter { it.startsWith("[ILLUST:") && it.endsWith("]") }.forEach { para ->
+                    val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
+                    val path = inner.substringBefore("|")
+                    val caption = inner.substringAfter("|", "")
+                    Surface(
+                        onClick = { onIllustrationClicked(path) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = palette.bgCard,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            AsyncImage(
+                                model = File(path),
+                                contentDescription = caption,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(260.dp)
                             )
+                            if (caption.isNotBlank()) {
+                                Text(
+                                    text = caption,
+                                    color = palette.textMuted,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
                         }
                     }
                 }
