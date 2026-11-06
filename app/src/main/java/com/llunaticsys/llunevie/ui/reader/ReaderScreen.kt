@@ -1,109 +1,68 @@
 package com.llunaticsys.llunevie.ui.reader
 
-import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.LruCache
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import com.llunaticsys.llunevie.LlunevieViewModel
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.Dp
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bookmark
-import androidx.compose.material.icons.rounded.BookmarkBorder
-import androidx.compose.material3.minimumInteractiveComponentSize
-import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -111,231 +70,78 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.input.pointer.changedToUp
-import androidx.compose.ui.input.pointer.util.VelocityTracker
-import kotlinx.coroutines.launch
-import kotlin.math.abs
-import kotlin.math.roundToInt
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalTextToolbar
-import androidx.compose.ui.platform.TextToolbar
-import androidx.compose.ui.platform.TextToolbarStatus
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.ParagraphStyle
-import androidx.compose.ui.text.style.TextIndent
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.calculateCentroid
-import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.withStyle
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChanged
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
-import androidx.compose.ui.graphics.drawscope.Stroke
-import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.zIndex
-import com.llunaticsys.llunevie.ui.components.ClassicGlassSegmentedControl
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.llunaticsys.llunevie.GlobalPageMetrics
 import com.llunaticsys.llunevie.LlunevieUiState
+import com.llunaticsys.llunevie.LlunevieViewModel
 import com.llunaticsys.llunevie.data.local.BookEntity
-import com.llunaticsys.llunevie.data.local.localizeChapterTitle
 import com.llunaticsys.llunevie.data.local.HighlightNoteEntity
+import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
-import com.llunaticsys.llunevie.data.parser.EpubNativeParser
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.HighlightColorKey
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
-import com.llunaticsys.llunevie.model.TranslationLangOption
-import com.llunaticsys.llunevie.model.DEFAULT_TRANSLATION_LANGUAGES
 import com.llunaticsys.llunevie.model.getActiveTranslationLanguages
 import com.llunaticsys.llunevie.normalizeTranslationLangCode
-import com.llunaticsys.llunevie.data.remote.TranslationRepository
-import com.llunaticsys.llunevie.ui.components.targetLanguageDisplayName
-import com.llunaticsys.llunevie.ui.components.targetLanguageBadgeLabel
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.layout.IntrinsicSize
-import com.llunaticsys.llunevie.ui.components.FlyleafThinSlider
-import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
-import com.llunaticsys.llunevie.ui.components.ModernSwitch
+import com.llunaticsys.llunevie.ui.components.targetLanguageDisplayName
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
-import coil.compose.AsyncImage
-import java.io.File
-import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
-val CURATED_READER_FONTS = listOf(
-    "Literata" to "Literata",
-    "EB Garamond" to "EB Garamond",
-    "Source Serif 4" to "Source Serif",
-    "Newsreader" to "Newsreader",
-    "Lora" to "Lora",
-    "Merriweather" to "Merriweather",
-    "Crimson Pro" to "Crimson Pro",
-    "Playfair Display" to "Playfair",
-    "PT Serif" to "PT Serif",
-    "Bitter" to "Bitter",
-    "Plus Jakarta Sans" to "Plus Jakarta",
-    "Inter" to "Inter",
-    "DM Sans" to "DM Sans",
-    "Nunito" to "Nunito",
-    "JetBrains Mono" to "JetBrains Mono"
+private data class ScrollLazyItemMeta(
+    val globalPageZero: Int,
+    val chapterIndex: Int,
+    val pageInChapter: Int,
+    val isPageItem: Boolean
 )
-
-private val SANS_FONTS = setOf("Plus Jakarta Sans", "Inter", "DM Sans", "Nunito")
-
-private val fontFamiliesCache = mutableMapOf<String, FontFamily>()
-
-fun getReaderFontFamily(context: Context? = null, name: String, fontWeight: Int = 400): FontFamily {
-    val key = "$name:$fontWeight"
-    return fontFamiliesCache.getOrPut(key) {
-        val assetPath = PageSnapshotBitmapRenderer.getFontAssetPath(name)
-        if (context != null && assetPath != null) {
-            runCatching {
-                FontFamily(androidx.compose.ui.text.font.Font(assetManager = context.assets, path = assetPath))
-            }.getOrNull() ?: runCatching {
-                val tf = PageSnapshotBitmapRenderer.getSystemTypeface(name, fontWeight, context)
-                FontFamily(tf)
-            }.getOrDefault(FontFamily.Default)
-        } else {
-            val tf = PageSnapshotBitmapRenderer.getSystemTypeface(name, fontWeight, context)
-            FontFamily(tf)
-        }
-    }
-}
-
-// In-memory snapshot bitmap cache for instant 0ms page turns
-private val epubSnapshotCache = android.util.LruCache<String, ImageBitmap>(12)
-
-private fun buildSnapshotCacheKey(
-    bookId: String,
-    pageZero: Int,
-    isSpread: Boolean,
-    widthPx: Int,
-    heightPx: Int,
-    bgArgb: Int,
-    textArgb: Int,
-    prefs: UserPreferencesState,
-    highlightsHash: Int,
-    translationSuffix: String = ""
-): String {
-    return "$bookId:$pageZero:$isSpread:${widthPx}x${heightPx}:$bgArgb:$textArgb:" +
-           "${prefs.fontSizeSp}:${prefs.lineHeightMultiplier}:${prefs.fontFamily}:" +
-           "${prefs.fontWeight}:${prefs.paraSpacingEm}:${prefs.wordSpacingPx}:" +
-           "${prefs.pageMargin}:${prefs.paraIndent}:${prefs.letterSpacingEm}:${prefs.textAlign}:$highlightsHash$translationSuffix"
-}
-
-private fun buildTranslatedPageRaw(
-    originalPageRaw: String,
-    translatedParagraphs: List<String>?,
-    displayMode: String
-): String {
-    if (translatedParagraphs.isNullOrEmpty()) return originalPageRaw
-    val rawParas = originalPageRaw.split(Regex("\n\\s*\n"))
-    if (displayMode == "replace") {
-        var tIdx = 0
-        return rawParas.joinToString("\n\n") { para ->
-            val trimmed = para.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith("[ILLUST:") || trimmed.startsWith("[PDF_PAGE:")) {
-                para
-            } else {
-                val rep = translatedParagraphs.getOrNull(tIdx) ?: para
-                tIdx++
-                rep
-            }
-        }
-    }
-    return originalPageRaw
-}
-
-@JvmName("buildTranslatedPageRawFromPairs")
-private fun buildTranslatedPageRaw(
-    originalPageRaw: String,
-    translatedPairs: List<Pair<String, String?>>?,
-    displayMode: String
-): String {
-    if (translatedPairs.isNullOrEmpty()) return originalPageRaw
-    val transList = translatedPairs.map { it.second ?: it.first }
-    return buildTranslatedPageRaw(originalPageRaw, transList, displayMode)
-}
-
-private enum class TopCenterPillState {
-    ZOOM,
-    TRANSLATION,
-    TITLE
-}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -402,6 +208,7 @@ fun ReaderScreen(
     var lastTurnDirection by remember { mutableIntStateOf(1) }
     var slideDragOffsetPx by remember { mutableFloatStateOf(0f) }
     var hasSelectionActive by remember { mutableStateOf(false) }
+    var clearSelectionTrigger by remember { mutableIntStateOf(0) }
     var selStartHandleAnchor by remember { mutableStateOf(Offset.Zero) }
     var selEndHandleAnchor by remember { mutableStateOf(Offset.Zero) }
     var activeDraggingSliderKey by remember { mutableStateOf<String?>(null) }
@@ -517,6 +324,34 @@ fun ReaderScreen(
     var inlineTranslationText by remember { mutableStateOf<String?>(null) }
     var isTranslatingInline by remember { mutableStateOf(false) }
     var inlineTranslationError by remember { mutableStateOf<String?>(null) }
+
+    // Intercept system back press to dismiss active in-reader overlays before leaving the reader
+    val hasActiveInReaderOverlay = inBookSearchQuery != null ||
+        showLangDropdown ||
+        showPageScrubber ||
+        showInlinePageSlider ||
+        selectedQuoteForPopover != null ||
+        hasSelectionActive
+
+    BackHandler(enabled = hasActiveInReaderOverlay) {
+        when {
+            inBookSearchQuery != null -> inBookSearchQuery = null
+            showLangDropdown -> showLangDropdown = false
+            showPageScrubber -> showPageScrubber = false
+            showInlinePageSlider -> showInlinePageSlider = false
+            selectedQuoteForPopover != null -> {
+                selectedQuoteForPopover = null
+                showInlineNoteInput = false
+                showInlineTranslation = false
+                inlineTranslationText = null
+                inlineTranslationError = null
+            }
+            hasSelectionActive -> {
+                hasSelectionActive = false
+                clearSelectionTrigger++
+            }
+        }
+    }
 
     LaunchedEffect(displayPageIndex, isPageTranslationActive) {
         peekOriginalPdfPage = false
@@ -693,355 +528,370 @@ fun ReaderScreen(
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize()
         ) {
-                val stageW = with(density) { maxWidth.roundToPx() }.coerceIn(320, 1920)
-                val stageH = with(density) { maxHeight.roundToPx() }.coerceIn(360, 2400)
-                val fontPx = with(density) { prefs.fontSizeSp.sp.toPx() }
-                val marginPx = with(density) { prefs.pageMarginDp.dp.roundToPx() }
+            val stageW = with(density) { maxWidth.roundToPx() }.coerceIn(320, 1920)
+            val stageH = with(density) { maxHeight.roundToPx() }.coerceIn(360, 2400)
+            val spreadW = (stageH * 1.414f).toInt().coerceAtMost(stageW)
 
-                val currentStatusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-                val currentNavBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                var stableStatusBarTopDp by remember { mutableStateOf(24.dp) }
-                var stableNavBarBottomDp by remember { mutableStateOf(16.dp) }
-                if (currentStatusBarTop > 0.dp && currentStatusBarTop > stableStatusBarTopDp) {
-                    stableStatusBarTopDp = currentStatusBarTop
-                }
-                if (currentNavBarBottom > 0.dp && currentNavBarBottom > stableNavBarBottomDp) {
-                    stableNavBarBottomDp = currentNavBarBottom
-                }
-                val topClearanceDp = stableStatusBarTopDp + 64.dp
-                val bottomClearanceDp = stableNavBarBottomDp + 76.dp
+            val currentStatusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            val currentNavBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            var stableStatusBarTopDp by remember { mutableStateOf(24.dp) }
+            var stableNavBarBottomDp by remember { mutableStateOf(16.dp) }
+            if (currentStatusBarTop > 0.dp && currentStatusBarTop > stableStatusBarTopDp) {
+                stableStatusBarTopDp = currentStatusBarTop
+            }
+            if (currentNavBarBottom > 0.dp && currentNavBarBottom > stableNavBarBottomDp) {
+                stableNavBarBottomDp = currentNavBarBottom
+            }
+            val topClearanceDp = stableStatusBarTopDp + 64.dp
+            val bottomClearanceDp = stableNavBarBottomDp + 76.dp
 
-                val horizontalMarginDp = when (prefs.pageMargin) {
-                    0 -> 12.dp
-                    2 -> 36.dp
-                    else -> 22.dp
-                }
+            val horizontalMarginDp = when (prefs.pageMargin) {
+                0 -> 12.dp
+                2 -> 36.dp
+                else -> 22.dp
+            }
 
-                val padX = with(density) { horizontalMarginDp.toPx() }
-                val padTop = with(density) { topClearanceDp.toPx() }
-                val padBottom = with(density) { bottomClearanceDp.toPx() }
+            val padX = with(density) { horizontalMarginDp.toPx() }
+            val padTop = with(density) { topClearanceDp.toPx() }
+            val padBottom = with(density) { bottomClearanceDp.toPx() }
 
-                when (prefs.readingFlowMode) {
-                    ReadingFlowMode.PAGINATED, ReadingFlowMode.SPREAD -> {
-                        val curZero = displayPageIndex
+            when (prefs.readingFlowMode) {
+                ReadingFlowMode.PAGINATED, ReadingFlowMode.SPREAD -> {
+                    val curZero = displayPageIndex
 
-                        LaunchedEffect(curZero, prefs.pageAnimStyle, prefs.readingFlowMode) {
-                            nonFlipZoomScale = 1f
-                            nonFlipZoomOffset = Offset.Zero
-                        }
-                        val step = if (isSpread) 2 else 1
-                        val spreadStart = if (isSpread) (curZero / 2) * 2 else curZero
-                        val curLeftIdx = spreadStart
-                        val curRightIdx = spreadStart + 1
-                        val nextLeftIdx = if (isSpread) spreadStart + 2 else curZero + 1
-                        val nextRightIdx = if (isSpread) spreadStart + 3 else curZero + 2
-                        val prevLeftIdx = if (isSpread) spreadStart - 2 else curZero - 1
-                        val prevRightIdx = if (isSpread) spreadStart - 1 else curZero
+                    LaunchedEffect(curZero, prefs.pageAnimStyle, prefs.readingFlowMode) {
+                        nonFlipZoomScale = 1f
+                        nonFlipZoomOffset = Offset.Zero
+                    }
+                    val spreadStart = if (isSpread) (curZero / 2) * 2 else curZero
+                    val curLeftIdx = spreadStart
+                    val curRightIdx = spreadStart + 1
+                    val nextLeftIdx = if (isSpread) spreadStart + 2 else curZero + 1
+                    val nextRightIdx = if (isSpread) spreadStart + 3 else curZero + 2
+                    val prevLeftIdx = if (isSpread) spreadStart - 2 else curZero - 1
+                    val prevRightIdx = if (isSpread) spreadStart - 1 else curZero
 
-                        val needStagePdfBitmaps = isPdfBook && (
-                            (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) ||
+                    val needStagePdfBitmaps = isPdfBook && (
+                        (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) ||
                             isSpread
                         )
 
-                        val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
-                        val transTargetLang = uiState.translationTargetLang
-                        val transMode = uiState.translationMode
-                        val transRev = uiState.translationRevision
+                    val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
+                    val transTargetLang = uiState.translationTargetLang
+                    val transMode = uiState.translationMode
+                    val transRev = uiState.translationRevision
 
-                        val curLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (needStagePdfBitmaps) {
-                                if (isTrans) {
-                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, curLeftIdx, transTargetLang, transMode)
-                                        ?: viewModel?.getCachedPdfBitmap(book.id, curLeftIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                } else {
-                                    viewModel?.getCachedPdfBitmap(book.id, curLeftIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                }
-                            } else null,
-                            needStagePdfBitmaps, curLeftIdx, book.localFilePath, stageW,
-                            uiState.isTranslationActive, transMode, transTargetLang, transRev
-                        ) {
-                            value = if (needStagePdfBitmaps) {
-                                if (isTrans && viewModel != null) {
-                                    viewModel.loadOrTranslatePdfPageBitmap(
-                                        bookId = book.id,
-                                        filePath = book.localFilePath!!,
-                                        pageIndex = curLeftIdx,
-                                        targetLang = transTargetLang,
-                                        mode = transMode,
-                                        targetWidthPx = if (isSpread) stageW / 2 else stageW
-                                    )
-                                } else {
-                                    PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curLeftIdx, if (isSpread) stageW / 2 else stageW)
-                                }
-                            } else null
-                        }
-                        val curRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
-                                if (isTrans) {
-                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, curRightIdx, transTargetLang, transMode)
-                                        ?: viewModel?.getCachedPdfBitmap(book.id, curRightIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                } else {
-                                    viewModel?.getCachedPdfBitmap(book.id, curRightIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                }
-                            } else null,
-                            needStagePdfBitmaps, isSpread, curRightIdx, book.localFilePath, stageW,
-                            uiState.isTranslationActive, transMode, transTargetLang, transRev
-                        ) {
-                            value = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
-                                if (isTrans && viewModel != null) {
-                                    viewModel.loadOrTranslatePdfPageBitmap(
-                                        bookId = book.id,
-                                        filePath = book.localFilePath!!,
-                                        pageIndex = curRightIdx,
-                                        targetLang = transTargetLang,
-                                        mode = transMode,
-                                        targetWidthPx = stageW / 2
-                                    )
-                                } else {
-                                    PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curRightIdx, stageW / 2)
-                                }
-                            } else null
-                        }
-                        val nextLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
-                                if (isTrans) {
-                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, nextLeftIdx, transTargetLang, transMode)
-                                        ?: viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                } else {
-                                    viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                }
-                            } else null,
-                            needStagePdfBitmaps, nextLeftIdx, book.localFilePath, stageW,
-                            uiState.isTranslationActive, transMode, transTargetLang, transRev
-                        ) {
-                            value = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
-                                if (isTrans && viewModel != null) {
-                                    viewModel.loadOrTranslatePdfPageBitmap(
-                                        bookId = book.id,
-                                        filePath = book.localFilePath!!,
-                                        pageIndex = nextLeftIdx,
-                                        targetLang = transTargetLang,
-                                        mode = transMode,
-                                        targetWidthPx = if (isSpread) stageW / 2 else stageW
-                                    )
-                                } else {
-                                    PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextLeftIdx, if (isSpread) stageW / 2 else stageW)
-                                }
-                            } else null
-                        }
-                        val nextRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
-                                if (isTrans) {
-                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, nextRightIdx, transTargetLang, transMode)
-                                        ?: viewModel?.getCachedPdfBitmap(book.id, nextRightIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                } else {
-                                    viewModel?.getCachedPdfBitmap(book.id, nextRightIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                }
-                            } else null,
-                            needStagePdfBitmaps, isSpread, nextRightIdx, book.localFilePath, stageW,
-                            uiState.isTranslationActive, transMode, transTargetLang, transRev
-                        ) {
-                            value = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
-                                if (isTrans && viewModel != null) {
-                                    viewModel.loadOrTranslatePdfPageBitmap(
-                                        bookId = book.id,
-                                        filePath = book.localFilePath!!,
-                                        pageIndex = nextRightIdx,
-                                        targetLang = transTargetLang,
-                                        mode = transMode,
-                                        targetWidthPx = stageW / 2
-                                    )
-                                } else {
-                                    PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextRightIdx, stageW / 2)
-                                }
-                            } else null
-                        }
-                        val prevLeftPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
-                                if (isTrans) {
-                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, prevLeftIdx, transTargetLang, transMode)
-                                        ?: viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                } else {
-                                    viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
-                                }
-                            } else null,
-                            needStagePdfBitmaps, prevLeftIdx, book.localFilePath, stageW,
-                            uiState.isTranslationActive, transMode, transTargetLang, transRev
-                        ) {
-                            value = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
-                                if (isTrans && viewModel != null) {
-                                    viewModel.loadOrTranslatePdfPageBitmap(
-                                        bookId = book.id,
-                                        filePath = book.localFilePath!!,
-                                        pageIndex = prevLeftIdx,
-                                        targetLang = transTargetLang,
-                                        mode = transMode,
-                                        targetWidthPx = if (isSpread) stageW / 2 else stageW
-                                    )
-                                } else {
-                                    PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevLeftIdx, if (isSpread) stageW / 2 else stageW)
-                                }
-                            } else null
-                        }
-                        val prevRightPdfBmp by produceState<Bitmap?>(
-                            initialValue = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
-                                if (isTrans) {
-                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, prevRightIdx, transTargetLang, transMode)
-                                        ?: viewModel?.getCachedPdfBitmap(book.id, prevRightIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                } else {
-                                    viewModel?.getCachedPdfBitmap(book.id, prevRightIdx, book.localFilePath)
-                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
-                                }
-                            } else null,
-                            needStagePdfBitmaps, isSpread, prevRightIdx, book.localFilePath, stageW,
-                            uiState.isTranslationActive, transMode, transTargetLang, transRev
-                        ) {
-                            value = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
-                                if (isTrans && viewModel != null) {
-                                    viewModel.loadOrTranslatePdfPageBitmap(
-                                        bookId = book.id,
-                                        filePath = book.localFilePath!!,
-                                        pageIndex = prevRightIdx,
-                                        targetLang = transTargetLang,
-                                        mode = transMode,
-                                        targetWidthPx = stageW / 2
-                                    )
-                                } else {
-                                    PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevRightIdx, stageW / 2)
-                                }
-                            } else null
-                        }
-
-                        val curLeftEffectivePdfBmp = getEffectivePdfPageBitmap(curLeftIdx, curLeftPdfBmp)
-                        val curRightEffectivePdfBmp = getEffectivePdfPageBitmap(curRightIdx, curRightPdfBmp)
-                        val nextLeftEffectivePdfBmp = getEffectivePdfPageBitmap(nextLeftIdx, nextLeftPdfBmp)
-                        val nextRightEffectivePdfBmp = getEffectivePdfPageBitmap(nextRightIdx, nextRightPdfBmp)
-                        val prevLeftEffectivePdfBmp = getEffectivePdfPageBitmap(prevLeftIdx, prevLeftPdfBmp)
-                        val prevRightEffectivePdfBmp = getEffectivePdfPageBitmap(prevRightIdx, prevRightPdfBmp)
-
-                        val textMeasurer = rememberTextMeasurer()
-                        val context = LocalContext.current
-                        val resolvedFontFamily = remember(prefs.fontFamily, prefs.fontWeight) {
-                            getReaderFontFamily(context, prefs.fontFamily, prefs.fontWeight)
-                        }
-                        val resolvedFontWeight = when {
-                            prefs.fontWeight >= 600 -> FontWeight.Bold
-                            prefs.fontWeight == 500 -> FontWeight.Medium
-                            else -> FontWeight.Normal
-                        }
-                        val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
-                            "justify" -> TextAlign.Justify
-                            "center" -> TextAlign.Center
-                            else -> TextAlign.Start
-                        }
-                        val baseTextStyle = remember(prefs, resolvedFontFamily, resolvedFontWeight, resolvedTextAlign, palette) {
-                            TextStyle(
-                                color = palette.textMain,
-                                fontSize = prefs.fontSizeSp.sp,
-                                lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
-                                letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp).sp,
-                                fontFamily = resolvedFontFamily,
-                                fontWeight = resolvedFontWeight,
-                                textAlign = resolvedTextAlign,
-                                platformStyle = PlatformTextStyle(includeFontPadding = false)
-                            )
-                        }
-                        val spreadTextStyle = remember(baseTextStyle, prefs) {
-                            baseTextStyle.copy(
-                                fontSize = (prefs.fontSizeSp * 0.78f).sp,
-                                lineHeight = (prefs.fontSizeSp * 0.78f * prefs.lineHeightMultiplier).sp
-                            )
-                        }
-
-                        if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                            var lockedCurrBmp by remember { mutableStateOf<ImageBitmap?>(null) }
-                            var lockedNextBmp by remember { mutableStateOf<ImageBitmap?>(null) }
-                            var lockedPrevBmp by remember { mutableStateOf<ImageBitmap?>(null) }
-                            var committedCurrentBmp by remember { mutableStateOf<ImageBitmap?>(null) }
-                            var isTurnCommitting by remember { mutableStateOf(false) }
-
-                            var lockedCurrFilter by remember { mutableStateOf<ColorFilter?>(null) }
-                            var lockedNextFilter by remember { mutableStateOf<ColorFilter?>(null) }
-                            var lockedPrevFilter by remember { mutableStateOf<ColorFilter?>(null) }
-
-                            LaunchedEffect(uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision) {
-                                committedCurrentBmp = null
-                                lockedCurrBmp = null
-                                lockedNextBmp = null
-                                lockedPrevBmp = null
+                    val curLeftPdfBmp by produceState<Bitmap?>(
+                        initialValue = if (needStagePdfBitmaps) {
+                            if (isTrans) {
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, curLeftIdx, transTargetLang, transMode)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curLeftIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                            } else {
+                                viewModel?.getCachedPdfBitmap(book.id, curLeftIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
                             }
+                        } else null,
+                        needStagePdfBitmaps, curLeftIdx, book.localFilePath, stageW,
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                    ) {
+                        value = if (needStagePdfBitmaps) {
+                            if (isTrans && viewModel != null) {
+                                viewModel.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = book.localFilePath!!,
+                                    pageIndex = curLeftIdx,
+                                    targetLang = transTargetLang,
+                                    mode = transMode,
+                                    targetWidthPx = if (isSpread) stageW / 2 else stageW
+                                )
+                            } else {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curLeftIdx, if (isSpread) stageW / 2 else stageW)
+                            }
+                        } else null
+                    }
+                    val curRightPdfBmp by produceState<Bitmap?>(
+                        initialValue = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
+                            if (isTrans) {
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, curRightIdx, transTargetLang, transMode)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, curRightIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                            } else {
+                                viewModel?.getCachedPdfBitmap(book.id, curRightIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                            }
+                        } else null,
+                        needStagePdfBitmaps, isSpread, curRightIdx, book.localFilePath, stageW,
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                    ) {
+                        value = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
+                            if (isTrans && viewModel != null) {
+                                viewModel.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = book.localFilePath!!,
+                                    pageIndex = curRightIdx,
+                                    targetLang = transTargetLang,
+                                    mode = transMode,
+                                    targetWidthPx = stageW / 2
+                                )
+                            } else {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, curRightIdx, stageW / 2)
+                            }
+                        } else null
+                    }
+                    val nextLeftPdfBmp by produceState<Bitmap?>(
+                        initialValue = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
+                            if (isTrans) {
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, nextLeftIdx, transTargetLang, transMode)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                            } else {
+                                viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                            }
+                        } else null,
+                        needStagePdfBitmaps, nextLeftIdx, book.localFilePath, stageW,
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                    ) {
+                        value = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
+                            if (isTrans && viewModel != null) {
+                                viewModel.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = book.localFilePath!!,
+                                    pageIndex = nextLeftIdx,
+                                    targetLang = transTargetLang,
+                                    mode = transMode,
+                                    targetWidthPx = if (isSpread) stageW / 2 else stageW
+                                )
+                            } else {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextLeftIdx, if (isSpread) stageW / 2 else stageW)
+                            }
+                        } else null
+                    }
+                    val nextRightPdfBmp by produceState<Bitmap?>(
+                        initialValue = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
+                            if (isTrans) {
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, nextRightIdx, transTargetLang, transMode)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, nextRightIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                            } else {
+                                viewModel?.getCachedPdfBitmap(book.id, nextRightIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                            }
+                        } else null,
+                        needStagePdfBitmaps, isSpread, nextRightIdx, book.localFilePath, stageW,
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                    ) {
+                        value = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
+                            if (isTrans && viewModel != null) {
+                                viewModel.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = book.localFilePath!!,
+                                    pageIndex = nextRightIdx,
+                                    targetLang = transTargetLang,
+                                    mode = transMode,
+                                    targetWidthPx = stageW / 2
+                                )
+                            } else {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, nextRightIdx, stageW / 2)
+                            }
+                        } else null
+                    }
+                    val prevLeftPdfBmp by produceState<Bitmap?>(
+                        initialValue = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
+                            if (isTrans) {
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, prevLeftIdx, transTargetLang, transMode)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                            } else {
+                                viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
+                            }
+                        } else null,
+                        needStagePdfBitmaps, prevLeftIdx, book.localFilePath, stageW,
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                    ) {
+                        value = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
+                            if (isTrans && viewModel != null) {
+                                viewModel.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = book.localFilePath!!,
+                                    pageIndex = prevLeftIdx,
+                                    targetLang = transTargetLang,
+                                    mode = transMode,
+                                    targetWidthPx = if (isSpread) stageW / 2 else stageW
+                                )
+                            } else {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevLeftIdx, if (isSpread) stageW / 2 else stageW)
+                            }
+                        } else null
+                    }
+                    val prevRightPdfBmp by produceState<Bitmap?>(
+                        initialValue = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
+                            if (isTrans) {
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, prevRightIdx, transTargetLang, transMode)
+                                    ?: viewModel?.getCachedPdfBitmap(book.id, prevRightIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                            } else {
+                                viewModel?.getCachedPdfBitmap(book.id, prevRightIdx, book.localFilePath)
+                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
+                            }
+                        } else null,
+                        needStagePdfBitmaps, isSpread, prevRightIdx, book.localFilePath, stageW,
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                    ) {
+                        value = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
+                            if (isTrans && viewModel != null) {
+                                viewModel.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = book.localFilePath!!,
+                                    pageIndex = prevRightIdx,
+                                    targetLang = transTargetLang,
+                                    mode = transMode,
+                                    targetWidthPx = stageW / 2
+                                )
+                            } else {
+                                PdfNativeRenderer.renderPageBitmap(book.localFilePath!!, prevRightIdx, stageW / 2)
+                            }
+                        } else null
+                    }
 
-                            val curBitmapInitial = if (isPdfBook && !isSpread) {
-                                (curLeftEffectivePdfBmp
-                                    ?: (if (isTrans) viewModel?.getCachedTranslatedPdfBitmap(book.id, curZero, transTargetLang, transMode) else null)
-                                    ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360))
-                                    ?: viewModel?.getCachedPdfBitmap(book.id, curZero, book.localFilePath))?.asImageBitmap()
-                            } else null
+                    val curLeftEffectivePdfBmp = getEffectivePdfPageBitmap(curLeftIdx, curLeftPdfBmp)
+                    val curRightEffectivePdfBmp = getEffectivePdfPageBitmap(curRightIdx, curRightPdfBmp)
+                    val nextLeftEffectivePdfBmp = getEffectivePdfPageBitmap(nextLeftIdx, nextLeftPdfBmp)
+                    val nextRightEffectivePdfBmp = getEffectivePdfPageBitmap(nextRightIdx, nextRightPdfBmp)
+                    val prevLeftEffectivePdfBmp = getEffectivePdfPageBitmap(prevLeftIdx, prevLeftPdfBmp)
+                    val prevRightEffectivePdfBmp = getEffectivePdfPageBitmap(prevRightIdx, prevRightPdfBmp)
 
-                            val curBitmap by produceState<ImageBitmap?>(
-                                initialValue = curBitmapInitial,
-                                curZero, isSpread, isPdfBook, currentPageRaw, curLeftEffectivePdfBmp, curRightEffectivePdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
-                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
-                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
-                                isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                                pageTranslationMap[curZero], peekOriginalPdfPage,
-                                uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
-                            ) {
-                                val curTriple = getPageAtGlobalZero(curZero)
-                                val curCh = curTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
-                                val curRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
-                                val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
-                                val curPInCh = curTriple?.second ?: uiState.activePageIndex
+                    val textMeasurer = rememberTextMeasurer()
+                    val resolvedFontFamily = remember(prefs.fontFamily, prefs.fontWeight) {
+                        getReaderFontFamily(context, prefs.fontFamily, prefs.fontWeight)
+                    }
+                    val resolvedFontWeight = when {
+                        prefs.fontWeight >= 600 -> FontWeight.Bold
+                        prefs.fontWeight == 500 -> FontWeight.Medium
+                        else -> FontWeight.Normal
+                    }
+                    val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
+                        "justify" -> TextAlign.Justify
+                        "center" -> TextAlign.Center
+                        else -> TextAlign.Start
+                    }
+                    val baseTextStyle = remember(prefs, resolvedFontFamily, resolvedFontWeight, resolvedTextAlign, palette) {
+                        TextStyle(
+                            color = palette.textMain,
+                            fontSize = prefs.fontSizeSp.sp,
+                            lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
+                            letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp).sp,
+                            fontFamily = resolvedFontFamily,
+                            fontWeight = resolvedFontWeight,
+                            textAlign = resolvedTextAlign,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false)
+                        )
+                    }
+                    val spreadTextStyle = remember(baseTextStyle, prefs) {
+                        baseTextStyle.copy(
+                            fontSize = (prefs.fontSizeSp * 0.78f).sp,
+                            lineHeight = (prefs.fontSizeSp * 0.78f * prefs.lineHeightMultiplier).sp
+                        )
+                    }
 
-                                val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                    uiState.translationMode.equals("replace", ignoreCase = true)
-                                val cachedCurTrans = viewModel?.getCachedTranslatedParagraphs(book.id, curZero, uiState.translationTargetLang, curRaw.hashCode())
-                                    ?: pageTranslationMap[curZero]
-                                val curText = if (!isPdfBook && isReplaceMode && !cachedCurTrans.isNullOrEmpty()) {
-                                    buildTranslatedPageRaw(curRaw, cachedCurTrans, "replace")
+                    val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
+                        uiState.translationMode.equals("replace", ignoreCase = true)
+
+                    fun resolveEffectiveEpubText(pageZero: Int, fallbackRaw: String = ""): String {
+                        val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
+                        if (isPdfBook || !isReplaceMode || raw.isBlank()) return raw
+                        val cachedTrans = viewModel?.getCachedTranslatedParagraphs(
+                            book.id,
+                            pageZero,
+                            uiState.translationTargetLang,
+                            raw.hashCode()
+                        ) ?: pageTranslationMap[pageZero]
+                        return if (!cachedTrans.isNullOrEmpty()) {
+                            buildTranslatedPageRaw(raw, cachedTrans, "replace")
+                        } else {
+                            raw
+                        }
+                    }
+
+                    fun buildEpubSnapshotKey(pageZero: Int, textHash: Int, spread: Boolean): String {
+                        val transActive = isPageTranslationActive || uiState.isTranslationActive
+                        val combinedHash = ((bookHighlights.hashCode() * 31 + textHash) * 31 +
+                            (if (transActive) uiState.translationTargetLang.hashCode() else 0)) * 31 +
+                            (if (transActive) uiState.translationMode.hashCode() else 0)
+                        return buildSnapshotCacheKey(
+                            bookId = book.id,
+                            pageZero = pageZero,
+                            widthPx = if (spread) spreadW else stageW,
+                            heightPx = stageH,
+                            prefs = prefs,
+                            bgArgb = (if (spread) palette.bgCard else palette.bgApp).toArgb(),
+                            textArgb = palette.textMain.toArgb(),
+                            isSpread = spread,
+                            highlightsHash = combinedHash
+                        )
+                    }
+
+                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
+                        var lockedCurrBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+                        var lockedNextBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+                        var lockedPrevBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+                        var committedCurrentBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+                        var isTurnCommitting by remember { mutableStateOf(false) }
+
+                        var lockedCurrFilter by remember { mutableStateOf<ColorFilter?>(null) }
+                        var lockedNextFilter by remember { mutableStateOf<ColorFilter?>(null) }
+                        var lockedPrevFilter by remember { mutableStateOf<ColorFilter?>(null) }
+
+                        LaunchedEffect(uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision) {
+                            committedCurrentBmp = null
+                            lockedCurrBmp = null
+                            lockedNextBmp = null
+                            lockedPrevBmp = null
+                        }
+
+                        val curBitmapInitial = if (isPdfBook && !isSpread) {
+                            (curLeftEffectivePdfBmp
+                                ?: (if (isTrans) viewModel?.getCachedTranslatedPdfBitmap(book.id, curZero, transTargetLang, transMode) else null)
+                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curZero, ((stageW / 120) * 120).coerceAtLeast(360))
+                                ?: viewModel?.getCachedPdfBitmap(book.id, curZero, book.localFilePath))?.asImageBitmap()
+                        } else if (!isPdfBook) {
+                            if (isSpread) {
+                                val leftText = resolveEffectiveEpubText(spreadStart, if (spreadStart == curZero) currentPageRaw else "")
+                                val rightText = resolveEffectiveEpubText(spreadStart + 1)
+                                epubSnapshotCache.get(buildEpubSnapshotKey(spreadStart, leftText.hashCode() * 31 + rightText.hashCode(), true))
+                            } else {
+                                val curText = resolveEffectiveEpubText(curZero, currentPageRaw)
+                                epubSnapshotCache.get(buildEpubSnapshotKey(curZero, curText.hashCode(), false))
+                            }
+                        } else null
+
+                        val curBitmap by produceState<ImageBitmap?>(
+                            initialValue = curBitmapInitial,
+                            curZero, isSpread, isPdfBook, currentPageRaw, curLeftEffectivePdfBmp, curRightEffectivePdfBmp,
+                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                            prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                            prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                            prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                            isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
+                            pageTranslationMap[curZero], peekOriginalPdfPage,
+                            uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
+                        ) {
+                            if (isSpread) {
+                                val leftZero = spreadStart
+                                val rightZero = spreadStart + 1
+                                val leftTriple = getPageAtGlobalZero(leftZero)
+                                val rightTriple = getPageAtGlobalZero(rightZero)
+                                val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
+                                val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
+                                val leftText = resolveEffectiveEpubText(leftZero, if (leftZero == curZero) currentPageRaw else "")
+                                val rightText = resolveEffectiveEpubText(rightZero)
+                                val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                                val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
+                                if (cached != null) {
+                                    value = cached
                                 } else {
-                                    curRaw
-                                }
-
-                                value = if (isSpread) {
-                                    val leftZero = spreadStart
-                                    val rightZero = spreadStart + 1
-                                    val leftTriple = getPageAtGlobalZero(leftZero)
-                                    val rightTriple = getPageAtGlobalZero(rightZero)
-                                    val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
-                                    val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
-
-                                    val leftRaw = leftTriple?.third.orEmpty().ifBlank { if (leftZero == curZero) currentPageRaw else "" }
-                                    val cachedLeftTrans = viewModel?.getCachedTranslatedParagraphs(book.id, leftZero, uiState.translationTargetLang, leftRaw.hashCode())
-                                        ?: pageTranslationMap[leftZero]
-                                    val leftText = if (!isPdfBook && isReplaceMode && !cachedLeftTrans.isNullOrEmpty()) {
-                                        buildTranslatedPageRaw(leftRaw, cachedLeftTrans, "replace")
-                                    } else {
-                                        leftRaw
-                                    }
-
-                                    val rightRaw = rightTriple?.third.orEmpty()
-                                    val cachedRightTrans = viewModel?.getCachedTranslatedParagraphs(book.id, rightZero, uiState.translationTargetLang, rightRaw.hashCode())
-                                        ?: pageTranslationMap[rightZero]
-                                    val rightText = if (!isPdfBook && isReplaceMode && !cachedRightTrans.isNullOrEmpty()) {
-                                        buildTranslatedPageRaw(rightRaw, cachedRightTrans, "replace")
-                                    } else {
-                                        rightRaw
-                                    }
-
                                     val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                         !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                             leftZero, indexedIllustrationPages
@@ -1051,31 +901,43 @@ fun ReaderScreen(
                                         !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                             rightZero, indexedIllustrationPages
                                         ))
-
-                                    renderTwoPageSpreadSnapshot(
-                                        textMeasurer = textMeasurer,
-                                        widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                        heightPx = stageH,
-                                        density = density,
-                                        leftPageIndex = leftZero,
-                                        rightPageIndex = rightZero,
-                                        leftHeader = leftCh?.title.orEmpty(),
-                                        rightHeader = rightCh?.title.orEmpty(),
-                                        leftText = leftText,
-                                        rightText = rightText,
-                                        leftPdfBitmap = curLeftEffectivePdfBmp,
-                                        rightPdfBitmap = curRightEffectivePdfBmp,
-                                        bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
-                                        pageTextStyle = spreadTextStyle,
-                                        palette = palette,
-                                        prefs = prefs,
-                                        leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
-                                        rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
-                                    )
-                                } else if (isPdfBook) {
-                                    curLeftEffectivePdfBmp?.asImageBitmap()
-                                } else {
-                                    renderEpubPageSnapshot(
+                                    value = withContext(Dispatchers.Default) {
+                                        renderCachedTwoPageSpreadSnapshot(
+                                            cacheKey = cacheKey,
+                                            textMeasurer = textMeasurer,
+                                            widthPx = spreadW,
+                                            heightPx = stageH,
+                                            density = density,
+                                            leftPageIndex = leftZero,
+                                            rightPageIndex = rightZero,
+                                            leftHeader = leftCh?.title.orEmpty(),
+                                            rightHeader = rightCh?.title.orEmpty(),
+                                            leftText = leftText,
+                                            rightText = rightText,
+                                            leftPdfBitmap = curLeftEffectivePdfBmp,
+                                            rightPdfBitmap = curRightEffectivePdfBmp,
+                                            bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                            pageTextStyle = spreadTextStyle,
+                                            palette = palette,
+                                            prefs = prefs,
+                                            leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                            rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
+                                        )
+                                    }
+                                }
+                            } else if (isPdfBook) {
+                                value = curLeftEffectivePdfBmp?.asImageBitmap()
+                            } else {
+                                val curTriple = getPageAtGlobalZero(curZero)
+                                val curCh = curTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
+                                val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
+                                val curPInCh = curTriple?.second ?: uiState.activePageIndex
+                                val curText = resolveEffectiveEpubText(curZero, currentPageRaw)
+                                val cacheKey = buildEpubSnapshotKey(curZero, curText.hashCode(), false)
+                                val cached = epubSnapshotCache.get(cacheKey)
+                                value = cached ?: withContext(Dispatchers.Default) {
+                                    renderCachedEpubPageSnapshot(
+                                        cacheKey = cacheKey,
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
                                         heightPx = stageH,
@@ -1097,58 +959,59 @@ fun ReaderScreen(
                                     )
                                 }
                             }
+                        }
 
-                            val nextSpreadStart = spreadStart + 2
-                            val nextTriple = remember(chapters, curZero, isSpread, spreadStart) {
-                                if (isSpread) {
-                                    if (nextSpreadStart < metrics.totalBookPages) getPageAtGlobalZero(nextSpreadStart) else null
-                                } else {
-                                    getPageAtGlobalZero(curZero + 1)
-                                }
+                        val nextSpreadStart = spreadStart + 2
+                        val nextTriple = remember(chapters, curZero, isSpread, spreadStart) {
+                            if (isSpread) {
+                                if (nextSpreadStart < metrics.totalBookPages) getPageAtGlobalZero(nextSpreadStart) else null
+                            } else {
+                                getPageAtGlobalZero(curZero + 1)
                             }
-                            val nextBitmap by produceState<ImageBitmap?>(
-                                initialValue = null,
-                                curZero, isSpread, isPdfBook, nextTriple, nextLeftEffectivePdfBmp, nextRightEffectivePdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
-                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
-                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
-                                activeDraggingSliderKey == null,
-                                isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                                pageTranslationMap[if (isSpread) nextSpreadStart else curZero + 1], peekOriginalPdfPage,
-                                uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
-                            ) {
-                                if (activeDraggingSliderKey != null) return@produceState
-                                val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                    uiState.translationMode.equals("replace", ignoreCase = true)
-                                value = if (isSpread) {
-                                    if (nextSpreadStart >= metrics.totalBookPages) null
-                                    else {
-                                        val leftZero = nextSpreadStart
-                                        val rightZero = leftZero + 1
-                                        val leftTripleSpread = getPageAtGlobalZero(leftZero)
-                                        val rightTripleSpread = getPageAtGlobalZero(rightZero)
-                                        val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
-                                        val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-
-                                        val leftRaw = leftTripleSpread?.third.orEmpty()
-                                        val cachedLeftTrans = viewModel?.getCachedTranslatedParagraphs(book.id, leftZero, uiState.translationTargetLang, leftRaw.hashCode())
-                                            ?: pageTranslationMap[leftZero]
-                                        val leftText = if (!isPdfBook && isReplaceMode && !cachedLeftTrans.isNullOrEmpty()) {
-                                            buildTranslatedPageRaw(leftRaw, cachedLeftTrans, "replace")
-                                        } else {
-                                            leftRaw
-                                        }
-
-                                        val rightRaw = rightTripleSpread?.third.orEmpty()
-                                        val cachedRightTrans = viewModel?.getCachedTranslatedParagraphs(book.id, rightZero, uiState.translationTargetLang, rightRaw.hashCode())
-                                            ?: pageTranslationMap[rightZero]
-                                        val rightText = if (!isPdfBook && isReplaceMode && !cachedRightTrans.isNullOrEmpty()) {
-                                            buildTranslatedPageRaw(rightRaw, cachedRightTrans, "replace")
-                                        } else {
-                                            rightRaw
-                                        }
-
+                        }
+                        val nextBitmapInitial = if (!isPdfBook) {
+                            if (isSpread) {
+                                if (nextSpreadStart < metrics.totalBookPages) {
+                                    val leftText = resolveEffectiveEpubText(nextSpreadStart)
+                                    val rightText = resolveEffectiveEpubText(nextSpreadStart + 1)
+                                    epubSnapshotCache.get(buildEpubSnapshotKey(nextSpreadStart, leftText.hashCode() * 31 + rightText.hashCode(), true))
+                                } else null
+                            } else if (nextTriple != null) {
+                                val nextPZero = curZero + 1
+                                val nextText = resolveEffectiveEpubText(nextPZero)
+                                epubSnapshotCache.get(buildEpubSnapshotKey(nextPZero, nextText.hashCode(), false))
+                            } else null
+                        } else null
+                        val nextBitmap by produceState<ImageBitmap?>(
+                            initialValue = nextBitmapInitial,
+                            curZero, isSpread, isPdfBook, nextTriple, nextLeftEffectivePdfBmp, nextRightEffectivePdfBmp,
+                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                            prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                            prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                            prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                            activeDraggingSliderKey == null,
+                            isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
+                            pageTranslationMap[if (isSpread) nextSpreadStart else curZero + 1], peekOriginalPdfPage,
+                            uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
+                        ) {
+                            if (activeDraggingSliderKey != null) return@produceState
+                            if (isSpread) {
+                                if (nextSpreadStart >= metrics.totalBookPages) {
+                                    value = null
+                                } else {
+                                    val leftZero = nextSpreadStart
+                                    val rightZero = leftZero + 1
+                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
+                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
+                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
+                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
+                                    val leftText = resolveEffectiveEpubText(leftZero)
+                                    val rightText = resolveEffectiveEpubText(rightZero)
+                                    val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                                    val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
+                                    if (cached != null) {
+                                        value = cached
+                                    } else {
                                         val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                                 leftZero, indexedIllustrationPages
@@ -1158,45 +1021,46 @@ fun ReaderScreen(
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                                 rightZero, indexedIllustrationPages
                                             ))
-
-                                        renderTwoPageSpreadSnapshot(
-                                            textMeasurer = textMeasurer,
-                                            widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                            heightPx = stageH,
-                                            density = density,
-                                            leftPageIndex = leftZero,
-                                            rightPageIndex = rightZero,
-                                            leftHeader = leftCh?.title.orEmpty(),
-                                            rightHeader = rightCh?.title.orEmpty(),
-                                            leftText = leftText,
-                                            rightText = rightText,
-                                            leftPdfBitmap = nextLeftEffectivePdfBmp,
-                                            rightPdfBitmap = nextRightEffectivePdfBmp,
-                                            bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
-                                            pageTextStyle = spreadTextStyle,
-                                            palette = palette,
-                                            prefs = prefs,
-                                            leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
-                                            rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
-                                        )
+                                        value = withContext(Dispatchers.Default) {
+                                            renderCachedTwoPageSpreadSnapshot(
+                                                cacheKey = cacheKey,
+                                                textMeasurer = textMeasurer,
+                                                widthPx = spreadW,
+                                                heightPx = stageH,
+                                                density = density,
+                                                leftPageIndex = leftZero,
+                                                rightPageIndex = rightZero,
+                                                leftHeader = leftCh?.title.orEmpty(),
+                                                rightHeader = rightCh?.title.orEmpty(),
+                                                leftText = leftText,
+                                                rightText = rightText,
+                                                leftPdfBitmap = nextLeftEffectivePdfBmp,
+                                                rightPdfBitmap = nextRightEffectivePdfBmp,
+                                                bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                                pageTextStyle = spreadTextStyle,
+                                                palette = palette,
+                                                prefs = prefs,
+                                                leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                                rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
+                                            )
+                                        }
                                     }
-                                } else if (nextTriple == null) null
-                                else if (isPdfBook) {
-                                    nextLeftEffectivePdfBmp?.asImageBitmap()
-                                } else {
-                                    val nextCh = nextTriple.let { chapters.getOrNull(it.first) }
-                                    val nextRaw = nextTriple.third.orEmpty()
-                                    val nextChIdx = nextTriple.first
-                                    val nextPInCh = nextTriple.second
-                                    val nextPZero = curZero + 1
-                                    val cachedNextTrans = viewModel?.getCachedTranslatedParagraphs(book.id, nextPZero, uiState.translationTargetLang, nextRaw.hashCode())
-                                        ?: pageTranslationMap[nextPZero]
-                                    val nextText = if (!isPdfBook && isReplaceMode && !cachedNextTrans.isNullOrEmpty()) {
-                                        buildTranslatedPageRaw(nextRaw, cachedNextTrans, "replace")
-                                    } else {
-                                        nextRaw
-                                    }
-                                    renderEpubPageSnapshot(
+                                }
+                            } else if (nextTriple == null) {
+                                value = null
+                            } else if (isPdfBook) {
+                                value = nextLeftEffectivePdfBmp?.asImageBitmap()
+                            } else {
+                                val nextCh = nextTriple.let { chapters.getOrNull(it.first) }
+                                val nextChIdx = nextTriple.first
+                                val nextPInCh = nextTriple.second
+                                val nextPZero = curZero + 1
+                                val nextText = resolveEffectiveEpubText(nextPZero)
+                                val cacheKey = buildEpubSnapshotKey(nextPZero, nextText.hashCode(), false)
+                                val cached = epubSnapshotCache.get(cacheKey)
+                                value = cached ?: withContext(Dispatchers.Default) {
+                                    renderCachedEpubPageSnapshot(
+                                        cacheKey = cacheKey,
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
                                         heightPx = stageH,
@@ -1209,7 +1073,7 @@ fun ReaderScreen(
                                         padTop = padTop,
                                         padBottom = padBottom,
                                         showChapterHeader = nextPInCh == 0,
-                                        isCover = (curZero + 1 == 0),
+                                        isCover = (nextPZero == 0),
                                         highlights = bookHighlights,
                                         chapterIndex = nextChIdx,
                                         pageIndex = nextPInCh,
@@ -1218,58 +1082,59 @@ fun ReaderScreen(
                                     )
                                 }
                             }
+                        }
 
-                            val prevSpreadStart = spreadStart - 2
-                            val prevTriple = remember(chapters, curZero, isSpread, spreadStart) {
-                                if (isSpread) {
-                                    if (prevSpreadStart >= 0) getPageAtGlobalZero(prevSpreadStart) else null
-                                } else {
-                                    getPageAtGlobalZero(curZero - 1)
-                                }
+                        val prevSpreadStart = spreadStart - 2
+                        val prevTriple = remember(chapters, curZero, isSpread, spreadStart) {
+                            if (isSpread) {
+                                if (prevSpreadStart >= 0) getPageAtGlobalZero(prevSpreadStart) else null
+                            } else {
+                                getPageAtGlobalZero(curZero - 1)
                             }
-                            val prevBitmap by produceState<ImageBitmap?>(
-                                initialValue = null,
-                                curZero, isSpread, isPdfBook, prevTriple, prevLeftEffectivePdfBmp, prevRightEffectivePdfBmp,
-                                palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
-                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
-                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
-                                activeDraggingSliderKey == null,
-                                isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                                pageTranslationMap[if (isSpread) prevSpreadStart else curZero - 1], peekOriginalPdfPage,
-                                uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
-                            ) {
-                                if (activeDraggingSliderKey != null) return@produceState
-                                val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                    uiState.translationMode.equals("replace", ignoreCase = true)
-                                value = if (isSpread) {
-                                    if (prevSpreadStart < 0) null
-                                    else {
-                                        val leftZero = prevSpreadStart
-                                        val rightZero = leftZero + 1
-                                        val leftTripleSpread = getPageAtGlobalZero(leftZero)
-                                        val rightTripleSpread = getPageAtGlobalZero(rightZero)
-                                        val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
-                                        val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-
-                                        val leftRaw = leftTripleSpread?.third.orEmpty()
-                                        val cachedLeftTrans = viewModel?.getCachedTranslatedParagraphs(book.id, leftZero, uiState.translationTargetLang, leftRaw.hashCode())
-                                            ?: pageTranslationMap[leftZero]
-                                        val leftText = if (!isPdfBook && isReplaceMode && !cachedLeftTrans.isNullOrEmpty()) {
-                                            buildTranslatedPageRaw(leftRaw, cachedLeftTrans, "replace")
-                                        } else {
-                                            leftRaw
-                                        }
-
-                                        val rightRaw = rightTripleSpread?.third.orEmpty()
-                                        val cachedRightTrans = viewModel?.getCachedTranslatedParagraphs(book.id, rightZero, uiState.translationTargetLang, rightRaw.hashCode())
-                                            ?: pageTranslationMap[rightZero]
-                                        val rightText = if (!isPdfBook && isReplaceMode && !cachedRightTrans.isNullOrEmpty()) {
-                                            buildTranslatedPageRaw(rightRaw, cachedRightTrans, "replace")
-                                        } else {
-                                            rightRaw
-                                        }
-
+                        }
+                        val prevBitmapInitial = if (!isPdfBook) {
+                            if (isSpread) {
+                                if (prevSpreadStart >= 0) {
+                                    val leftText = resolveEffectiveEpubText(prevSpreadStart)
+                                    val rightText = resolveEffectiveEpubText(prevSpreadStart + 1)
+                                    epubSnapshotCache.get(buildEpubSnapshotKey(prevSpreadStart, leftText.hashCode() * 31 + rightText.hashCode(), true))
+                                } else null
+                            } else if (prevTriple != null) {
+                                val prevPZero = curZero - 1
+                                val prevText = resolveEffectiveEpubText(prevPZero)
+                                epubSnapshotCache.get(buildEpubSnapshotKey(prevPZero, prevText.hashCode(), false))
+                            } else null
+                        } else null
+                        val prevBitmap by produceState<ImageBitmap?>(
+                            initialValue = prevBitmapInitial,
+                            curZero, isSpread, isPdfBook, prevTriple, prevLeftEffectivePdfBmp, prevRightEffectivePdfBmp,
+                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                            prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                            prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                            prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                            activeDraggingSliderKey == null,
+                            isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
+                            pageTranslationMap[if (isSpread) prevSpreadStart else curZero - 1], peekOriginalPdfPage,
+                            uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
+                        ) {
+                            if (activeDraggingSliderKey != null) return@produceState
+                            if (isSpread) {
+                                if (prevSpreadStart < 0) {
+                                    value = null
+                                } else {
+                                    val leftZero = prevSpreadStart
+                                    val rightZero = leftZero + 1
+                                    val leftTripleSpread = getPageAtGlobalZero(leftZero)
+                                    val rightTripleSpread = getPageAtGlobalZero(rightZero)
+                                    val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
+                                    val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
+                                    val leftText = resolveEffectiveEpubText(leftZero)
+                                    val rightText = resolveEffectiveEpubText(rightZero)
+                                    val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                                    val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
+                                    if (cached != null) {
+                                        value = cached
+                                    } else {
                                         val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                                 leftZero, indexedIllustrationPages
@@ -1279,45 +1144,46 @@ fun ReaderScreen(
                                             !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                                 rightZero, indexedIllustrationPages
                                             ))
-
-                                        renderTwoPageSpreadSnapshot(
-                                            textMeasurer = textMeasurer,
-                                            widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                            heightPx = stageH,
-                                            density = density,
-                                            leftPageIndex = leftZero,
-                                            rightPageIndex = rightZero,
-                                            leftHeader = leftCh?.title.orEmpty(),
-                                            rightHeader = rightCh?.title.orEmpty(),
-                                            leftText = leftText,
-                                            rightText = rightText,
-                                            leftPdfBitmap = prevLeftEffectivePdfBmp,
-                                            rightPdfBitmap = prevRightEffectivePdfBmp,
-                                            bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
-                                            pageTextStyle = spreadTextStyle,
-                                            palette = palette,
-                                            prefs = prefs,
-                                            leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
-                                            rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
-                                        )
+                                        value = withContext(Dispatchers.Default) {
+                                            renderCachedTwoPageSpreadSnapshot(
+                                                cacheKey = cacheKey,
+                                                textMeasurer = textMeasurer,
+                                                widthPx = spreadW,
+                                                heightPx = stageH,
+                                                density = density,
+                                                leftPageIndex = leftZero,
+                                                rightPageIndex = rightZero,
+                                                leftHeader = leftCh?.title.orEmpty(),
+                                                rightHeader = rightCh?.title.orEmpty(),
+                                                leftText = leftText,
+                                                rightText = rightText,
+                                                leftPdfBitmap = prevLeftEffectivePdfBmp,
+                                                rightPdfBitmap = prevRightEffectivePdfBmp,
+                                                bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                                pageTextStyle = spreadTextStyle,
+                                                palette = palette,
+                                                prefs = prefs,
+                                                leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                                rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
+                                            )
+                                        }
                                     }
-                                } else if (prevTriple == null) null
-                                else if (isPdfBook) {
-                                    prevLeftEffectivePdfBmp?.asImageBitmap()
-                                } else {
-                                    val prevCh = prevTriple.let { chapters.getOrNull(it.first) }
-                                    val prevRaw = prevTriple.third.orEmpty()
-                                    val prevChIdx = prevTriple.first
-                                    val prevPInCh = prevTriple.second
-                                    val prevPZero = curZero - 1
-                                    val cachedPrevTrans = viewModel?.getCachedTranslatedParagraphs(book.id, prevPZero, uiState.translationTargetLang, prevRaw.hashCode())
-                                        ?: pageTranslationMap[prevPZero]
-                                    val prevText = if (!isPdfBook && isReplaceMode && !cachedPrevTrans.isNullOrEmpty()) {
-                                        buildTranslatedPageRaw(prevRaw, cachedPrevTrans, "replace")
-                                    } else {
-                                        prevRaw
-                                    }
-                                    renderEpubPageSnapshot(
+                                }
+                            } else if (prevTriple == null) {
+                                value = null
+                            } else if (isPdfBook) {
+                                value = prevLeftEffectivePdfBmp?.asImageBitmap()
+                            } else {
+                                val prevCh = prevTriple.let { chapters.getOrNull(it.first) }
+                                val prevChIdx = prevTriple.first
+                                val prevPInCh = prevTriple.second
+                                val prevPZero = curZero - 1
+                                val prevText = resolveEffectiveEpubText(prevPZero)
+                                val cacheKey = buildEpubSnapshotKey(prevPZero, prevText.hashCode(), false)
+                                val cached = epubSnapshotCache.get(cacheKey)
+                                value = cached ?: withContext(Dispatchers.Default) {
+                                    renderCachedEpubPageSnapshot(
+                                        cacheKey = cacheKey,
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
                                         heightPx = stageH,
@@ -1330,7 +1196,7 @@ fun ReaderScreen(
                                         padTop = padTop,
                                         padBottom = padBottom,
                                         showChapterHeader = prevPInCh == 0,
-                                        isCover = (curZero - 1 == 0),
+                                        isCover = (prevPZero == 0),
                                         highlights = bookHighlights,
                                         chapterIndex = prevChIdx,
                                         pageIndex = prevPInCh,
@@ -1339,292 +1205,291 @@ fun ReaderScreen(
                                     )
                                 }
                             }
+                        }
 
-                            LaunchedEffect(curBitmap) {
-                                if (curBitmap != null) {
-                                    committedCurrentBmp = null
-                                }
-                            }
-
-                            LaunchedEffect(
-                                pageTranslationMap[curZero],
-                                pageTranslationMap[nextLeftIdx],
-                                pageTranslationMap[prevLeftIdx],
-                                prefs.translatorDisplayMode,
-                                prefs.translatorTargetLang,
-                                isPageTranslationActive,
-                                peekOriginalPdfPage
-                            ) {
+                        LaunchedEffect(curBitmap) {
+                            if (curBitmap != null) {
                                 committedCurrentBmp = null
-                                lockedCurrBmp = null
                             }
+                        }
 
-                            val curPdfColorFilter = pdfFilterForPage(curLeftIdx)
-                            val nextPdfColorFilter = pdfFilterForPage(nextLeftIdx)
-                            val prevPdfColorFilter = pdfFilterForPage(prevLeftIdx)
+                        LaunchedEffect(
+                            pageTranslationMap[curZero],
+                            pageTranslationMap[nextLeftIdx],
+                            pageTranslationMap[prevLeftIdx],
+                            prefs.translatorDisplayMode,
+                            prefs.translatorTargetLang,
+                            isPageTranslationActive,
+                            peekOriginalPdfPage
+                        ) {
+                            committedCurrentBmp = null
+                            lockedCurrBmp = null
+                        }
 
-                            val activeCurrBmp = committedCurrentBmp ?: (if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap)
-                            val activeNextBmp = if (isFlippingInProgress) (lockedNextBmp ?: nextBitmap) else nextBitmap
-                            val activePrevBmp = if (isFlippingInProgress) (lockedPrevBmp ?: prevBitmap) else prevBitmap
+                        val curPdfColorFilter = pdfFilterForPage(curLeftIdx)
+                        val nextPdfColorFilter = pdfFilterForPage(nextLeftIdx)
+                        val prevPdfColorFilter = pdfFilterForPage(prevLeftIdx)
 
-                            var flipTurnDir by remember { mutableIntStateOf(1) }
-                            var liveDragProgress by remember { mutableFloatStateOf(0f) }
-                            var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
+                        val activeCurrBmp = committedCurrentBmp ?: (if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap)
+                        val activeNextBmp = if (isFlippingInProgress) (lockedNextBmp ?: nextBitmap) else nextBitmap
+                        val activePrevBmp = if (isFlippingInProgress) (lockedPrevBmp ?: prevBitmap) else prevBitmap
 
+                        var flipTurnDir by remember { mutableIntStateOf(1) }
+                        var liveDragProgress by remember { mutableFloatStateOf(0f) }
+                        var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
 
-                            val flipbookGestureModifier = Modifier.pointerInput(
-                                curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
-                                showPageScrubber, showInlinePageSlider, uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
-                            ) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                    if (isTurnCommitting) return@awaitEachGesture
-                                    if (showPageScrubber ||
-                                        showInlinePageSlider ||
-                                        down.position.y >= size.height - 96.dp.toPx() ||
-                                        down.position.y <= 88.dp.toPx() ||
-                                        uiState.showReaderTypeSheet ||
-                                        uiState.showReaderTocDrawer ||
-                                        uiState.showReaderNotesDrawer
-                                    ) {
+                        val flipbookGestureModifier = Modifier.pointerInput(
+                            curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
+                            showPageScrubber, showInlinePageSlider, uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
+                        ) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                if (isTurnCommitting) return@awaitEachGesture
+                                if (showPageScrubber ||
+                                    showInlinePageSlider ||
+                                    down.position.y >= size.height - 96.dp.toPx() ||
+                                    down.position.y <= 88.dp.toPx() ||
+                                    uiState.showReaderTypeSheet ||
+                                    uiState.showReaderTocDrawer ||
+                                    uiState.showReaderNotesDrawer
+                                ) {
+                                    return@awaitEachGesture
+                                }
+                                if (hasSelectionActive) {
+                                    val distStart = (down.position - selStartHandleAnchor).getDistance()
+                                    val distEnd = (down.position - selEndHandleAnchor).getDistance()
+                                    if (distStart < 44.dp.toPx() || distEnd < 44.dp.toPx()) {
                                         return@awaitEachGesture
                                     }
-                                    if (hasSelectionActive) {
-                                        val distStart = (down.position - selStartHandleAnchor).getDistance()
-                                        val distEnd = (down.position - selEndHandleAnchor).getDistance()
-                                        if (distStart < 44.dp.toPx() || distEnd < 44.dp.toPx()) {
-                                            return@awaitEachGesture
+                                }
+                                val touchSlop = viewConfiguration.touchSlop
+                                var dragLocked = false
+                                var totalDx = 0f
+                                var totalDy = 0f
+                                var isMultiTouchPinch = false
+                                val velocityTracker = VelocityTracker()
+                                velocityTracker.addPosition(down.uptimeMillis, down.position)
+
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val pressedChanges = event.changes.filter { it.pressed }
+
+                                    // 1. MULTI-TOUCH PINCH-TO-ZOOM (2+ fingers down at any point)
+                                    if (pressedChanges.size >= 2 || isMultiTouchPinch) {
+                                        if (!isMultiTouchPinch) {
+                                            isMultiTouchPinch = true
+                                            dragLocked = false
+                                            liveDragProgress = 0f
+                                            isFlippingInProgress = false
+                                            lockedCurrBmp = null
+                                            lockedNextBmp = null
+                                            lockedPrevBmp = null
+                                            lockedCurrFilter = null
+                                            lockedNextFilter = null
+                                            lockedPrevFilter = null
                                         }
-                                    }
-                                    val touchSlop = viewConfiguration.touchSlop
-                                    var dragLocked = false
-                                    var totalDx = 0f
-                                    var totalDy = 0f
-                                    var isMultiTouchPinch = false
-                                    val velocityTracker = VelocityTracker()
-                                    velocityTracker.addPosition(down.uptimeMillis, down.position)
-
-                                    while (true) {
-                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                        val pressedChanges = event.changes.filter { it.pressed }
-
-                                        // 1. MULTI-TOUCH PINCH-TO-ZOOM (2+ fingers down at any point)
-                                        if (pressedChanges.size >= 2 || isMultiTouchPinch) {
-                                            if (!isMultiTouchPinch) {
-                                                isMultiTouchPinch = true
-                                                // Immediately cancel any incipient 1-finger page flip!
-                                                dragLocked = false
-                                                liveDragProgress = 0f
-                                                isFlippingInProgress = false
-                                                lockedCurrBmp = null
-                                                lockedNextBmp = null
-                                                lockedPrevBmp = null
-                                                lockedCurrFilter = null
-                                                lockedNextFilter = null
-                                                lockedPrevFilter = null
-                                            }
-                                            if (pressedChanges.size >= 2) {
-                                                val zoomChange = event.calculateZoom()
-                                                val panChange = event.calculatePan()
-                                                val newZoom = (readerZoom * zoomChange).coerceIn(1f, 4f)
-                                                val maxPanX = (size.width.toFloat() * (newZoom - 1f)) * 0.5f
-                                                val maxPanY = (size.height.toFloat() * (newZoom - 1f)) * 0.5f
-                                                readerZoom = if (newZoom <= 1.02f) 1f else newZoom
-                                                readerPan = if (readerZoom <= 1f) {
-                                                    Offset.Zero
-                                                } else {
-                                                    Offset(
-                                                        x = (readerPan.x + panChange.x).coerceIn(-maxPanX, maxPanX),
-                                                        y = (readerPan.y + panChange.y).coerceIn(-maxPanY, maxPanY)
-                                                    )
-                                                }
-                                            }
-                                            event.changes.forEach { it.consume() }
-                                            if (pressedChanges.isEmpty()) {
-                                                break
-                                            }
-                                            continue
-                                        }
-
-                                        // 2. SINGLE-FINGER PAN WHEN CURRENTLY ZOOMED IN (readerZoom > 1.01f)
-                                        if (readerZoom > 1.01f) {
+                                        if (pressedChanges.size >= 2) {
+                                            val zoomChange = event.calculateZoom()
                                             val panChange = event.calculatePan()
-                                            val maxPanX = (size.width.toFloat() * (readerZoom - 1f)) * 0.5f
-                                            val maxPanY = (size.height.toFloat() * (readerZoom - 1f)) * 0.5f
-                                            readerPan = Offset(
-                                                x = (readerPan.x + panChange.x).coerceIn(-maxPanX, maxPanX),
-                                                y = (readerPan.y + panChange.y).coerceIn(-maxPanY, maxPanY)
-                                            )
-                                            event.changes.forEach { it.consume() }
-                                            if (pressedChanges.isEmpty()) {
-                                                break
+                                            val newZoom = (readerZoom * zoomChange).coerceIn(1f, 4f)
+                                            val maxPanX = (size.width.toFloat() * (newZoom - 1f)) * 0.5f
+                                            val maxPanY = (size.height.toFloat() * (newZoom - 1f)) * 0.5f
+                                            readerZoom = if (newZoom <= 1.02f) 1f else newZoom
+                                            readerPan = if (readerZoom <= 1f) {
+                                                Offset.Zero
+                                            } else {
+                                                Offset(
+                                                    x = (readerPan.x + panChange.x).coerceIn(-maxPanX, maxPanX),
+                                                    y = (readerPan.y + panChange.y).coerceIn(-maxPanY, maxPanY)
+                                                )
                                             }
-                                            continue
                                         }
-
-                                        // 3. EXISTING SINGLE-FINGER PAGE FLIP LOGIC (only when !isMultiTouchPinch && readerZoom <= 1.01f)
-                                        val change = event.changes.firstOrNull() ?: break
-                                        if (change.changedToUp()) {
-                                            if (dragLocked && isFlippingInProgress) {
-                                                val velX = velocityTracker.calculateVelocity().x
-                                                val speedInDir = if (flipTurnDir > 0) -velX else velX
-                                                val shouldCommit = liveDragProgress >= 0.14f || (speedInDir > 350f)
-                                                scope.launch {
-                                                    if (shouldCommit) {
-                                                        isTurnCommitting = true
-                                                        isFlippingInProgress = true
-                                                        val anim = Animatable(liveDragProgress)
-                                                        anim.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) {
-                                                            liveDragProgress = value
-                                                        }
-                                                        val dir = flipTurnDir
-                                                        val targetPage = if (isSpread) {
-                                                            val spreadStart = (displayPageIndex / 2) * 2
-                                                            val maxSpread = (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
-                                                            if (dir > 0) (spreadStart + 2).coerceAtMost(maxSpread) else (spreadStart - 2).coerceAtLeast(0)
-                                                        } else {
-                                                            if (dir > 0) (displayPageIndex + 1).coerceAtMost(metrics.totalBookPages - 1) else (displayPageIndex - 1).coerceAtLeast(0)
-                                                        }
-                                                        val nextB = lockedNextBmp ?: nextBitmap
-                                                        val prevB = lockedPrevBmp ?: prevBitmap
-                                                        val currB = lockedCurrBmp ?: curBitmap
-                                                        if (dir > 0 && nextB != null) {
-                                                            lockedPrevBmp = currB
-                                                            lockedCurrBmp = nextB
-                                                            lockedNextBmp = null
-                                                            committedCurrentBmp = nextB
-                                                        } else if (dir < 0 && prevB != null) {
-                                                            lockedNextBmp = currB
-                                                            lockedCurrBmp = prevB
-                                                            lockedPrevBmp = null
-                                                            committedCurrentBmp = prevB
-                                                        }
-                                                        lockedCurrFilter = if (dir > 0) lockedNextFilter else lockedPrevFilter
-                                                        // Execute synchronously on the Main UI thread in the same frame:
-                                                        displayPageIndex = targetPage
-                                                        liveDragProgress = 0f
-                                                        // Keep isFlippingInProgress = true so Flipbook Canvas stays visible on top displaying the new page
-                                                        viewModel?.jumpToGlobalPage(targetPage)
-                                                        // Wait for two UI frames so the underlying idle view has already composed and drawn the new page:
-                                                        withFrameNanos { }
-                                                        withFrameNanos { }
-                                                        isTurnCommitting = false
-                                                        isFlippingInProgress = false
-                                                        lockedCurrBmp = null
-                                                        lockedNextBmp = null
-                                                        lockedPrevBmp = null
-                                                        lockedCurrFilter = null
-                                                        lockedNextFilter = null
-                                                        lockedPrevFilter = null
-                                                    } else {
-                                                        val anim = Animatable(liveDragProgress)
-                                                        anim.animateTo(0f, tween(160, easing = FastOutSlowInEasing)) {
-                                                            liveDragProgress = value
-                                                        }
-                                                        liveDragProgress = 0f
-                                                        isFlippingInProgress = false
-                                                        lockedCurrBmp = null
-                                                        lockedNextBmp = null
-                                                        lockedPrevBmp = null
-                                                        lockedCurrFilter = null
-                                                        lockedNextFilter = null
-                                                        lockedPrevFilter = null
-                                                    }
-                                                }
-                                            } else if (!dragLocked) {
-                                                val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
-                                                if (relX >= 0.76f) {
-                                                    val canGoNext = if (isSpread) ((curZero / 2) * 2 + 2 < metrics.totalBookPages) else (curZero + 1 < metrics.totalBookPages)
-                                                    if (canGoNext && nextBitmap != null) {
-                                                        lockedCurrBmp = curBitmap
-                                                        lockedNextBmp = nextBitmap
-                                                        lockedPrevBmp = prevBitmap
-                                                        lockedCurrFilter = curPdfColorFilter
-                                                        lockedNextFilter = nextPdfColorFilter
-                                                        lockedPrevFilter = prevPdfColorFilter
-                                                        isFlippingInProgress = true
-                                                        externalFlipTrigger = 1
-                                                    }
-                                                } else if (relX <= 0.24f) {
-                                                    val canGoPrev = if (isSpread) ((curZero / 2) * 2 - 2 >= 0) else (curZero - 1 >= 0)
-                                                    if (canGoPrev && prevBitmap != null) {
-                                                        lockedCurrBmp = curBitmap
-                                                        lockedNextBmp = nextBitmap
-                                                        lockedPrevBmp = prevBitmap
-                                                        lockedCurrFilter = curPdfColorFilter
-                                                        lockedNextFilter = nextPdfColorFilter
-                                                        lockedPrevFilter = prevPdfColorFilter
-                                                        isFlippingInProgress = true
-                                                        externalFlipTrigger = -1
-                                                    }
-                                                } else {
-                                                    if (hasSelectionActive) {
-                                                        hasSelectionActive = false
-                                                    }
-                                                    selectedQuoteForPopover = null
-                                                }
-                                            }
+                                        event.changes.forEach { it.consume() }
+                                        if (pressedChanges.isEmpty()) {
                                             break
                                         }
+                                        continue
+                                    }
 
-                                        velocityTracker.addPosition(change.uptimeMillis, change.position)
-                                        totalDx = change.position.x - down.position.x
-                                        totalDy = change.position.y - down.position.y
+                                    // 2. SINGLE-FINGER PAN WHEN CURRENTLY ZOOMED IN (readerZoom > 1.01f)
+                                    if (readerZoom > 1.01f) {
+                                        val panChange = event.calculatePan()
+                                        val maxPanX = (size.width.toFloat() * (readerZoom - 1f)) * 0.5f
+                                        val maxPanY = (size.height.toFloat() * (readerZoom - 1f)) * 0.5f
+                                        readerPan = Offset(
+                                            x = (readerPan.x + panChange.x).coerceIn(-maxPanX, maxPanX),
+                                            y = (readerPan.y + panChange.y).coerceIn(-maxPanY, maxPanY)
+                                        )
+                                        event.changes.forEach { it.consume() }
+                                        if (pressedChanges.isEmpty()) {
+                                            break
+                                        }
+                                        continue
+                                    }
 
-                                        if (!dragLocked) {
-                                            val isBilingualEpub = !isPdfBook && isPageTranslationActive && prefs.translatorDisplayMode == "bilingual"
-                                            val horizThresholdRatio = if (isBilingualEpub) 1.35f else 1.15f
-                                            if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * horizThresholdRatio) {
-                                                val candidateDir = if (totalDx < 0f) 1 else -1
-                                                if (candidateDir > 0) {
-                                                    val isAtEnd = if (isSpread) ((curZero / 2) * 2 >= (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)) else (curZero >= metrics.totalBookPages - 1)
-                                                    if (isAtEnd) break
+                                    // 3. EXISTING SINGLE-FINGER PAGE FLIP LOGIC (only when !isMultiTouchPinch && readerZoom <= 1.01f)
+                                    val change = event.changes.firstOrNull() ?: break
+                                    if (change.changedToUp()) {
+                                        if (dragLocked && isFlippingInProgress) {
+                                            val velX = velocityTracker.calculateVelocity().x
+                                            val speedInDir = if (flipTurnDir > 0) -velX else velX
+                                            val shouldCommit = liveDragProgress >= 0.14f || (speedInDir > 350f)
+                                            scope.launch {
+                                                if (shouldCommit) {
+                                                    isTurnCommitting = true
+                                                    isFlippingInProgress = true
+                                                    val anim = Animatable(liveDragProgress)
+                                                    anim.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) {
+                                                        liveDragProgress = value
+                                                    }
+                                                    val dir = flipTurnDir
+                                                    val targetPage = if (isSpread) {
+                                                        val spreadStart = (displayPageIndex / 2) * 2
+                                                        val maxSpread = (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
+                                                        if (dir > 0) (spreadStart + 2).coerceAtMost(maxSpread) else (spreadStart - 2).coerceAtLeast(0)
+                                                    } else {
+                                                        if (dir > 0) (displayPageIndex + 1).coerceAtMost(metrics.totalBookPages - 1) else (displayPageIndex - 1).coerceAtLeast(0)
+                                                    }
+                                                    val nextB = lockedNextBmp ?: nextBitmap
+                                                    val prevB = lockedPrevBmp ?: prevBitmap
+                                                    val currB = lockedCurrBmp ?: curBitmap
+                                                    if (dir > 0 && nextB != null) {
+                                                        lockedPrevBmp = currB
+                                                        lockedCurrBmp = nextB
+                                                        lockedNextBmp = null
+                                                        committedCurrentBmp = nextB
+                                                    } else if (dir < 0 && prevB != null) {
+                                                        lockedNextBmp = currB
+                                                        lockedCurrBmp = prevB
+                                                        lockedPrevBmp = null
+                                                        committedCurrentBmp = prevB
+                                                    }
+                                                    lockedCurrFilter = if (dir > 0) lockedNextFilter else lockedPrevFilter
+                                                    displayPageIndex = targetPage
+                                                    liveDragProgress = 0f
+                                                    viewModel?.jumpToGlobalPage(targetPage)
+                                                    withFrameNanos { }
+                                                    withFrameNanos { }
+                                                    isTurnCommitting = false
+                                                    isFlippingInProgress = false
+                                                    lockedCurrBmp = null
+                                                    lockedNextBmp = null
+                                                    lockedPrevBmp = null
+                                                    lockedCurrFilter = null
+                                                    lockedNextFilter = null
+                                                    lockedPrevFilter = null
                                                 } else {
-                                                    val isAtStart = if (isSpread) ((curZero / 2) * 2 <= 0) else (curZero <= 0)
-                                                    if (isAtStart) break
+                                                    val anim = Animatable(liveDragProgress)
+                                                    anim.animateTo(0f, tween(160, easing = FastOutSlowInEasing)) {
+                                                        liveDragProgress = value
+                                                    }
+                                                    liveDragProgress = 0f
+                                                    isFlippingInProgress = false
+                                                    lockedCurrBmp = null
+                                                    lockedNextBmp = null
+                                                    lockedPrevBmp = null
+                                                    lockedCurrFilter = null
+                                                    lockedNextFilter = null
+                                                    lockedPrevFilter = null
                                                 }
-                                                dragLocked = true
-                                                flipTurnDir = candidateDir
-                                                lockedCurrBmp = curBitmap
-                                                lockedNextBmp = nextBitmap
-                                                lockedPrevBmp = prevBitmap
-                                                lockedCurrFilter = curPdfColorFilter
-                                                lockedNextFilter = nextPdfColorFilter
-                                                lockedPrevFilter = prevPdfColorFilter
-                                                isFlippingInProgress = true
-                                                change.consume()
+                                            }
+                                        } else if (!dragLocked) {
+                                            val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
+                                            if (relX >= 0.76f) {
+                                                val canGoNext = if (isSpread) ((curZero / 2) * 2 + 2 < metrics.totalBookPages) else (curZero + 1 < metrics.totalBookPages)
+                                                if (canGoNext && nextBitmap != null) {
+                                                    lockedCurrBmp = curBitmap
+                                                    lockedNextBmp = nextBitmap
+                                                    lockedPrevBmp = prevBitmap
+                                                    lockedCurrFilter = curPdfColorFilter
+                                                    lockedNextFilter = nextPdfColorFilter
+                                                    lockedPrevFilter = prevPdfColorFilter
+                                                    isFlippingInProgress = true
+                                                    externalFlipTrigger = 1
+                                                }
+                                            } else if (relX <= 0.24f) {
+                                                val canGoPrev = if (isSpread) ((curZero / 2) * 2 - 2 >= 0) else (curZero - 1 >= 0)
+                                                if (canGoPrev && prevBitmap != null) {
+                                                    lockedCurrBmp = curBitmap
+                                                    lockedNextBmp = nextBitmap
+                                                    lockedPrevBmp = prevBitmap
+                                                    lockedCurrFilter = curPdfColorFilter
+                                                    lockedNextFilter = nextPdfColorFilter
+                                                    lockedPrevFilter = prevPdfColorFilter
+                                                    isFlippingInProgress = true
+                                                    externalFlipTrigger = -1
+                                                }
+                                            } else {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                    hasSelectionActive = false
+                                                    clearSelectionTrigger++
+                                                    selectedQuoteForPopover = null
+                                                } else {
+                                                    showReaderChrome = !showReaderChrome
+                                                }
                                             }
                                         }
+                                        break
+                                    }
 
-                                        if (dragLocked) {
+                                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+                                    totalDx = change.position.x - down.position.x
+                                    totalDy = change.position.y - down.position.y
+
+                                    if (!dragLocked) {
+                                        val isBilingualEpub = !isPdfBook && isPageTranslationActive && prefs.translatorDisplayMode == "bilingual"
+                                        val horizThresholdRatio = if (isBilingualEpub) 1.35f else 1.15f
+                                        if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * horizThresholdRatio) {
+                                            val candidateDir = if (totalDx < 0f) 1 else -1
+                                            if (candidateDir > 0) {
+                                                val isAtEnd = if (isSpread) ((curZero / 2) * 2 >= (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)) else (curZero >= metrics.totalBookPages - 1)
+                                                if (isAtEnd) break
+                                            } else {
+                                                val isAtStart = if (isSpread) ((curZero / 2) * 2 <= 0) else (curZero <= 0)
+                                                if (isAtStart) break
+                                            }
+                                            dragLocked = true
+                                            flipTurnDir = candidateDir
+                                            lockedCurrBmp = curBitmap
+                                            lockedNextBmp = nextBitmap
+                                            lockedPrevBmp = prevBitmap
+                                            lockedCurrFilter = curPdfColorFilter
+                                            lockedNextFilter = nextPdfColorFilter
+                                            lockedPrevFilter = prevPdfColorFilter
+                                            isFlippingInProgress = true
                                             change.consume()
-                                            val signedDelta = if (flipTurnDir > 0) -totalDx else totalDx
-                                            liveDragProgress = (signedDelta / (size.width.toFloat() * 0.85f)).coerceIn(0.01f, 0.99f)
-                                            liveCornerYNorm = (change.position.y / size.height.toFloat()).coerceIn(0.15f, 0.85f)
                                         }
+                                    }
+
+                                    if (dragLocked) {
+                                        change.consume()
+                                        val signedDelta = if (flipTurnDir > 0) -totalDx else totalDx
+                                        liveDragProgress = (signedDelta / (size.width.toFloat() * 0.85f)).coerceIn(0.01f, 0.99f)
+                                        liveCornerYNorm = (change.position.y / size.height.toFloat()).coerceIn(0.15f, 0.85f)
                                     }
                                 }
                             }
+                        }
 
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp)
+                                .then(flipbookGestureModifier),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp)
-                                    .then(flipbookGestureModifier),
-                                contentAlignment = Alignment.Center
+                                    .clipToBounds()
+                                    .graphicsLayer {
+                                        scaleX = readerZoom
+                                        scaleY = readerZoom
+                                        translationX = readerPan.x
+                                        translationY = readerPan.y
+                                    }
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clipToBounds()
-                                        .graphicsLayer {
-                                            scaleX = readerZoom
-                                            scaleY = readerZoom
-                                            translationX = readerPan.x
-                                            translationY = readerPan.y
-                                        }
-                                ) {
-                                    val activeBmp = activeCurrBmp ?: curBitmap
+                                val activeBmp = activeCurrBmp ?: curBitmap
                                 if (activeBmp != null) {
                                     val pdfTintedPaperColor = if (isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE) palette.bgCard else null
 
@@ -1642,8 +1507,8 @@ fun ReaderScreen(
                                         pdfTintedPaperColor = pdfTintedPaperColor,
                                         externalTriggerDir = externalFlipTrigger,
                                         onExternalTriggerConsumed = { externalFlipTrigger = 0 },
-                                        manualProgress = if (isFlippingInProgress) liveDragProgress else null,
-                                        manualCornerYNorm = if (isFlippingInProgress) liveCornerYNorm else null,
+                                        manualProgress = { if (isFlippingInProgress) liveDragProgress else null },
+                                        manualCornerYNorm = { if (isFlippingInProgress) liveCornerYNorm else null },
                                         manualTurnDir = if (isFlippingInProgress) flipTurnDir else null,
                                         onPageTurnCommitted = { dir ->
                                             scope.launch {
@@ -1687,8 +1552,13 @@ fun ReaderScreen(
                                             }
                                         },
                                         onCenterTap = {
-                                            if (hasSelectionActive) hasSelectionActive = false
-                                            selectedQuoteForPopover = null
+                                            if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                hasSelectionActive = false
+                                                clearSelectionTrigger++
+                                                selectedQuoteForPopover = null
+                                            } else {
+                                                showReaderChrome = !showReaderChrome
+                                            }
                                         },
                                         onFlipStateChanged = { flipping ->
                                             if (flipping && !isFlippingInProgress) {
@@ -1716,8 +1586,6 @@ fun ReaderScreen(
                                                 .shadow(14.dp, RoundedCornerShape(6.dp))
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
-                                        } else if (isPdfBook) {
-                                            Modifier.fillMaxSize()
                                         } else {
                                             Modifier.fillMaxSize()
                                         }
@@ -1772,6 +1640,7 @@ fun ReaderScreen(
                                             transparentTextForFlipbook = (activeBmp != null && !hasActivePageTranslation),
                                             topClearanceDp = topClearanceDp,
                                             bottomClearanceDp = bottomClearanceDp,
+                                            clearSelectionTrigger = clearSelectionTrigger,
                                             onSelectionActiveChanged = { active, start, end ->
                                                 hasSelectionActive = active
                                                 selStartHandleAnchor = start
@@ -1786,239 +1655,280 @@ fun ReaderScreen(
                                 }
                             }
                         }
-                } else {
-                    @Composable
-                    fun RenderSpreadPageForNonFlipbook(leftZero: Int, rightZero: Int) {
-                                val leftTriple = getPageAtGlobalZero(leftZero)
-                                val rightTriple = getPageAtGlobalZero(rightZero)
-                                val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
-                                val leftText = leftTriple?.third.orEmpty().ifBlank { if (leftZero == curZero) currentPageRaw else "" }
-                                val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
-                                val rightText = rightTriple?.third.orEmpty()
+                    } else {
+                        @Composable
+                        fun RenderSpreadPageForNonFlipbook(leftZero: Int, rightZero: Int) {
+                            val leftTriple = getPageAtGlobalZero(leftZero)
+                            val rightTriple = getPageAtGlobalZero(rightZero)
+                            val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
+                            val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
+                            val leftText = resolveEffectiveEpubText(leftZero, if (leftZero == curZero) currentPageRaw else "")
+                            val rightText = resolveEffectiveEpubText(rightZero)
 
-                                 var leftPdfBmp by remember(book.id, leftZero) {
-                                     mutableStateOf(
-                                         if (isPdfBook) {
-                                             viewModel?.getCachedPdfBitmap(book.id, leftZero, book.localFilePath)
-                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
-                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
-                                         } else null
-                                     )
-                                 }
-                                 var rightPdfBmp by remember(book.id, rightZero) {
-                                     mutableStateOf(
-                                         if (isPdfBook) {
-                                             viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
-                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
-                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
-                                         } else null
-                                     )
-                                 }
+                            var leftPdfBmp by remember(book.id, leftZero) {
+                                mutableStateOf(
+                                    if (isPdfBook) {
+                                        viewModel?.getCachedPdfBitmap(book.id, leftZero, book.localFilePath)
+                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
+                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    } else null
+                                )
+                            }
+                            var rightPdfBmp by remember(book.id, rightZero) {
+                                mutableStateOf(
+                                    if (isPdfBook) {
+                                        viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
+                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
+                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                    } else null
+                                )
+                            }
 
-                                if (isPdfBook) {
-                                    LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero) {
-                                        val path = book.localFilePath ?: return@LaunchedEffect
-                                        if (leftPdfBmp == null) {
-                                            leftPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, leftZero)
-                                        }
-                                        if (rightPdfBmp == null) {
-                                            rightPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, rightZero)
-                                        }
-                                        viewModel?.prefetchPdfNeighbors(book.id, path, leftZero, isTwoPageSpread = true)
+                            if (isPdfBook) {
+                                LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero) {
+                                    val path = book.localFilePath ?: return@LaunchedEffect
+                                    if (leftPdfBmp == null) {
+                                        leftPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, leftZero)
                                     }
-                                }
-
-                                 val effLeftBmp = getEffectivePdfPageBitmap(leftZero, leftPdfBmp)
-                                 val effRightBmp = getEffectivePdfPageBitmap(rightZero, rightPdfBmp)
-                                 val spreadBmp = remember(
-                                     leftZero, rightZero, stageW, stageH,
-                                     prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
-                                     prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-                                     prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
-                                     palette, isPdfBook, effLeftBmp, effRightBmp
-                                 ) {
-                                     renderTwoPageSpreadSnapshot(
-                                         textMeasurer = textMeasurer,
-                                         widthPx = (stageH * 1.414f).toInt().coerceAtMost(stageW),
-                                         heightPx = stageH,
-                                         density = density,
-                                         leftPageIndex = leftZero,
-                                         rightPageIndex = rightZero,
-                                         leftHeader = leftCh?.title.orEmpty(),
-                                         rightHeader = rightCh?.title.orEmpty(),
-                                         leftText = leftText,
-                                         rightText = rightText,
-                                         leftPdfBitmap = effLeftBmp,
-                                         rightPdfBitmap = effRightBmp,
-                                         bgColor = if (isPdfBook) Color.White else palette.bgCard,
-                                         pageTextStyle = spreadTextStyle,
-                                         palette = palette,
-                                         prefs = prefs
-                                     )
-                                 }
-                                 Box(
-                                     modifier = Modifier
-                                         .fillMaxSize(),
-                                     contentAlignment = Alignment.Center
-                                 ) {
-                                     Image(
-                                         bitmap = spreadBmp,
-                                         contentDescription = null,
-                                         modifier = Modifier
-                                             .fillMaxHeight(0.92f)
-                                             .aspectRatio(1.414f)
-                                             .shadow(14.dp, RoundedCornerShape(6.dp))
-                                             .clip(RoundedCornerShape(6.dp))
-                                             .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
-                                     )
-                                 }
-                             }
-
-                             @Composable
-                             fun RenderPageForNonFlipbook(pageZero: Int) {
-                                 if (isSpread) {
-                                     val leftZero = (pageZero / 2) * 2
-                                     val rightZero = leftZero + 1
-                                     RenderSpreadPageForNonFlipbook(leftZero, rightZero)
-                                   } else if (isPdfBook) {
-                                       val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
-                                       val effPdfBmp = if (isTrans && !peekOriginalPdfPage) {
-                                           viewModel?.getCachedTranslatedPdfBitmap(book.id, pageZero, uiState.translationTargetLang, uiState.translationMode)
-                                       } else if (peekOriginalPdfPage) {
-                                           viewModel?.getCachedPdfBitmap(book.id, pageZero, book.localFilePath)
-                                               ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
-                                       } else null
-                                       if (viewModel != null) {
-                                           val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
-                                               !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                   pageZero, indexedIllustrationPages
-                                               ))
-                                           PdfPageItemContent(
-                                               bookId = book.id,
-                                               filePath = book.localFilePath!!,
-                                               pageIndex = pageZero,
-                                               viewModel = viewModel,
-                                               uiState = uiState,
-                                               modifier = Modifier.fillMaxSize(),
-                                               colorFilter = if (shouldTintPdfPage) pdfThemeColorFilter else null,
-                                               surfaceColor = if (shouldTintPdfPage) palette.bgCard else Color.White,
-                                               overrideBitmap = if (peekOriginalPdfPage) effPdfBmp else null
-                                           )
-                                      } else {
-                                          val displayPdfBmp = effPdfBmp
-                                              ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
-                                              ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, ((stageW / 120) * 120).coerceAtLeast(360))
-                                          val pdfRatio = if (displayPdfBmp != null && displayPdfBmp.height > 0) {
-                                              displayPdfBmp.width.toFloat() / displayPdfBmp.height.toFloat()
-                                          } else {
-                                              PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
-                                          }
-                                         Box(
-                                             modifier = Modifier
-                                                 .fillMaxSize()
-                                                 .background(palette.bgApp)
-                                                 .padding(vertical = 4.dp),
-                                             contentAlignment = Alignment.Center
-                                         ) {
-                                             if (displayPdfBmp != null) {
-                                                 Surface(
-                                                     shape = RoundedCornerShape(4.dp),
-                                                     color = Color.White,
-                                                     shadowElevation = 8.dp,
-                                                     modifier = Modifier
-                                                         .fillMaxWidth()
-                                                         .aspectRatio(pdfRatio, matchHeightConstraintsFirst = false)
-                                                 ) {
-                                                     Image(
-                                                         bitmap = displayPdfBmp.asImageBitmap(),
-                                                         contentDescription = "PDF Page ${pageZero + 1}",
-                                                         contentScale = ContentScale.Fit,
-                                                         modifier = Modifier.fillMaxSize()
-                                                     )
-                                                 }
-                                             }
-                                         }
-                                     }
-                                 } else {
-                                        val pageTriple = getPageAtGlobalZero(pageZero)
-                                        val ch = pageTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
-                                        val pText = pageTriple?.third.orEmpty().ifBlank { if (pageZero == curZero) currentPageRaw else "" }
-                                        val chIdx = pageTriple?.first ?: uiState.activeChapterIndex
-                                        val pInCh = pageTriple?.second ?: uiState.activePageIndex
-                                        InteractiveTextPageContent(
-                                            bookId = book.id,
-                                            displayPageIndex = pageZero,
-                                            chapterTitle = ch?.title.orEmpty(),
-                                            pageText = pText,
-                                            currentChapterIndex = chIdx,
-                                            currentPageInChapter = pInCh,
-                                            showChapterHeader = pInCh == 0,
-                                            scrollable = false,
-                                            prefs = prefs,
-                                            bookHighlights = bookHighlights,
-                                            onParagraphClicked = { paraText, isUpper ->
-                                                selectedQuoteForPopover = paraText
-                                                selectedPopoverInUpperHalf = isUpper
-                                            },
-                                            onIllustrationClicked = { path ->
-                                                val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
-                                                onOpenIllustViewer(idx)
-                                            },
-                                            onSaveHighlightNote = onSaveHighlightNote,
-                                            onDeleteHighlightNote = onDeleteHighlightNote,
-                                            onSearchInBook = { inBookSearchQuery = it },
-                                            isCoverPage = (pageZero == 0),
-                                            bookTitle = book.title,
-                                            fontScale = 1f,
-                                            transparentTextForFlipbook = false,
-                                            topClearanceDp = topClearanceDp,
-                                            bottomClearanceDp = bottomClearanceDp,
-                                            isPageTranslationActive = isPageTranslationActive,
-                                            translatedParagraphs = pageTranslationMap[pageZero],
-                                            viewModel = viewModel,
-                                            uiState = uiState
-                                        )
+                                    if (rightPdfBmp == null) {
+                                        rightPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, rightZero)
                                     }
+                                    viewModel?.prefetchPdfNeighbors(book.id, path, leftZero, isTwoPageSpread = true)
                                 }
+                            }
 
-                            val nonFlipbookZoomGestureModifier = Modifier.pointerInput(
-                                prefs.pageAnimStyle, prefs.readingFlowMode,
-                                uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
+                            val effLeftBmp = getEffectivePdfPageBitmap(leftZero, leftPdfBmp)
+                            val effRightBmp = getEffectivePdfPageBitmap(rightZero, rightPdfBmp)
+                            val spreadCacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                            val spreadBmp by produceState<ImageBitmap?>(
+                                initialValue = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null,
+                                spreadCacheKey, leftZero, rightZero, stageW, stageH,
+                                prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
+                                prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
+                                prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
+                                palette, isPdfBook, effLeftBmp, effRightBmp
                             ) {
-                                awaitEachGesture {
-                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                    if (uiState.showReaderTypeSheet || uiState.showReaderTocDrawer || uiState.showReaderNotesDrawer) {
-                                        return@awaitEachGesture
+                                val cached = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null
+                                value = cached ?: withContext(Dispatchers.Default) {
+                                    renderCachedTwoPageSpreadSnapshot(
+                                        cacheKey = spreadCacheKey,
+                                        textMeasurer = textMeasurer,
+                                        widthPx = spreadW,
+                                        heightPx = stageH,
+                                        density = density,
+                                        leftPageIndex = leftZero,
+                                        rightPageIndex = rightZero,
+                                        leftHeader = leftCh?.title.orEmpty(),
+                                        rightHeader = rightCh?.title.orEmpty(),
+                                        leftText = leftText,
+                                        rightText = rightText,
+                                        leftPdfBitmap = effLeftBmp,
+                                        rightPdfBitmap = effRightBmp,
+                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                        pageTextStyle = spreadTextStyle,
+                                        palette = palette,
+                                        prefs = prefs
+                                    )
+                                }
+                            }
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (spreadBmp != null) {
+                                    Image(
+                                        bitmap = spreadBmp!!,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .fillMaxHeight(0.92f)
+                                            .aspectRatio(1.414f)
+                                            .shadow(14.dp, RoundedCornerShape(6.dp))
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
+                                    )
+                                }
+                            }
+                        }
+
+                        @Composable
+                        fun RenderPageForNonFlipbook(pageZero: Int) {
+                            if (isSpread) {
+                                val leftZero = (pageZero / 2) * 2
+                                val rightZero = leftZero + 1
+                                RenderSpreadPageForNonFlipbook(leftZero, rightZero)
+                            } else if (isPdfBook) {
+                                val isTransPage = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
+                                val effPdfBmp = if (isTransPage && !peekOriginalPdfPage) {
+                                    viewModel?.getCachedTranslatedPdfBitmap(book.id, pageZero, uiState.translationTargetLang, uiState.translationMode)
+                                } else if (peekOriginalPdfPage) {
+                                    viewModel?.getCachedPdfBitmap(book.id, pageZero, book.localFilePath)
+                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
+                                } else null
+                                if (viewModel != null) {
+                                    val shouldTintPdfPage = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                        !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                            pageZero, indexedIllustrationPages
+                                        ))
+                                    PdfPageItemContent(
+                                        bookId = book.id,
+                                        filePath = book.localFilePath!!,
+                                        pageIndex = pageZero,
+                                        viewModel = viewModel,
+                                        uiState = uiState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        colorFilter = if (shouldTintPdfPage) pdfThemeColorFilter else null,
+                                        surfaceColor = if (shouldTintPdfPage) palette.bgCard else Color.White,
+                                        overrideBitmap = if (peekOriginalPdfPage) effPdfBmp else null
+                                    )
+                                } else {
+                                    val displayPdfBmp = effPdfBmp
+                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
+                                        ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, ((stageW / 120) * 120).coerceAtLeast(360))
+                                    val pdfRatio = if (displayPdfBmp != null && displayPdfBmp.height > 0) {
+                                        displayPdfBmp.width.toFloat() / displayPdfBmp.height.toFloat()
+                                    } else {
+                                        PdfNativeRenderer.getCachedPageAspectRatio(book.localFilePath ?: "")
                                     }
-                                    while (true) {
-                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                        val pressedCount = event.changes.count { it.pressed }
-                                        if (pressedCount == 0) {
-                                            if (nonFlipZoomScale < 1.03f) {
-                                                nonFlipZoomScale = 1f
-                                                nonFlipZoomOffset = Offset.Zero
-                                            }
-                                            break
-                                        }
-                                        if (pressedCount >= 2) {
-                                            val zoomChange = event.calculateZoom()
-                                            val panChange = event.calculatePan()
-                                            val newScale = (nonFlipZoomScale * zoomChange).coerceIn(1f, 4f)
-                                            val maxPanX = (size.width.toFloat() * (newScale - 1f)) / 2f
-                                            val maxPanY = (size.height.toFloat() * (newScale - 1f)) / 2f
-                                            nonFlipZoomScale = newScale
-                                            if (newScale > 1.01f) {
-                                                nonFlipZoomOffset = Offset(
-                                                    x = (nonFlipZoomOffset.x + panChange.x * newScale).coerceIn(-maxPanX, maxPanX),
-                                                    y = (nonFlipZoomOffset.y + panChange.y * newScale).coerceIn(-maxPanY, maxPanY)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(palette.bgApp)
+                                            .padding(vertical = 4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (displayPdfBmp != null) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = Color.White,
+                                                shadowElevation = 8.dp,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .aspectRatio(pdfRatio, matchHeightConstraintsFirst = false)
+                                            ) {
+                                                Image(
+                                                    bitmap = displayPdfBmp.asImageBitmap(),
+                                                    contentDescription = "PDF Page ${pageZero + 1}",
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier.fillMaxSize()
                                                 )
-                                            } else {
-                                                nonFlipZoomOffset = Offset.Zero
                                             }
-                                            event.changes.forEach { change ->
-                                                if (change.positionChanged()) change.consume()
+                                        }
+                                    }
+                                }
+                            } else {
+                                val pageTriple = getPageAtGlobalZero(pageZero)
+                                val ch = pageTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
+                                val pText = pageTriple?.third.orEmpty().ifBlank { if (pageZero == curZero) currentPageRaw else "" }
+                                val chIdx = pageTriple?.first ?: uiState.activeChapterIndex
+                                val pInCh = pageTriple?.second ?: uiState.activePageIndex
+                                val curCachedTrans = viewModel?.getCachedTranslatedParagraphs(book.id, pageZero, uiState.translationTargetLang, pText.hashCode())
+                                    ?: pageTranslationMap[pageZero]
+                                InteractiveTextPageContent(
+                                    bookId = book.id,
+                                    displayPageIndex = pageZero,
+                                    chapterTitle = ch?.title.orEmpty(),
+                                    pageText = pText,
+                                    currentChapterIndex = chIdx,
+                                    currentPageInChapter = pInCh,
+                                    showChapterHeader = pInCh == 0,
+                                    scrollable = false,
+                                    prefs = prefs,
+                                    bookHighlights = bookHighlights,
+                                    onParagraphClicked = { paraText, isUpper ->
+                                        selectedQuoteForPopover = paraText
+                                        selectedPopoverInUpperHalf = isUpper
+                                    },
+                                    onIllustrationClicked = { path ->
+                                        val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
+                                        onOpenIllustViewer(idx)
+                                    },
+                                    onSaveHighlightNote = onSaveHighlightNote,
+                                    onDeleteHighlightNote = onDeleteHighlightNote,
+                                    onSearchInBook = { inBookSearchQuery = it },
+                                    isCoverPage = (pageZero == 0),
+                                    bookTitle = book.title,
+                                    fontScale = 1f,
+                                    transparentTextForFlipbook = false,
+                                    topClearanceDp = topClearanceDp,
+                                    bottomClearanceDp = bottomClearanceDp,
+                                    clearSelectionTrigger = clearSelectionTrigger,
+                                    onSelectionActiveChanged = { active, start, end ->
+                                        hasSelectionActive = active
+                                        selStartHandleAnchor = start
+                                        selEndHandleAnchor = end
+                                    },
+                                    isPageTranslationActive = isPageTranslationActive,
+                                    translatedParagraphs = curCachedTrans,
+                                    viewModel = viewModel,
+                                    uiState = uiState
+                                )
+                            }
+                        }
+
+                        val nonFlipbookZoomGestureModifier = Modifier.pointerInput(
+                            prefs.pageAnimStyle, prefs.readingFlowMode,
+                            uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer,
+                            showPageScrubber, showInlinePageSlider, hasSelectionActive
+                        ) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                if (uiState.showReaderTypeSheet || uiState.showReaderTocDrawer || uiState.showReaderNotesDrawer ||
+                                    showPageScrubber || showInlinePageSlider ||
+                                    down.position.y >= size.height - 96.dp.toPx() ||
+                                    down.position.y <= 88.dp.toPx()
+                                ) {
+                                    return@awaitEachGesture
+                                }
+                                val touchSlop = viewConfiguration.touchSlop
+                                var movedBeyondSlop = false
+                                var hadMultiTouch = false
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val pressedCount = event.changes.count { it.pressed }
+                                    if (pressedCount == 0) {
+                                        if (nonFlipZoomScale < 1.03f) {
+                                            nonFlipZoomScale = 1f
+                                            nonFlipZoomOffset = Offset.Zero
+                                        }
+                                        if (!movedBeyondSlop && !hadMultiTouch && nonFlipZoomScale <= 1.02f) {
+                                            val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
+                                            if (relX in 0.24f..0.76f) {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                    hasSelectionActive = false
+                                                    clearSelectionTrigger++
+                                                    selectedQuoteForPopover = null
+                                                } else {
+                                                    showReaderChrome = !showReaderChrome
+                                                }
                                             }
-                                        } else if (pressedCount == 1 && nonFlipZoomScale > 1.02f) {
+                                        }
+                                        break
+                                    }
+                                    if (pressedCount >= 2) {
+                                        hadMultiTouch = true
+                                        val zoomChange = event.calculateZoom()
+                                        val panChange = event.calculatePan()
+                                        val newScale = (nonFlipZoomScale * zoomChange).coerceIn(1f, 4f)
+                                        val maxPanX = (size.width.toFloat() * (newScale - 1f)) / 2f
+                                        val maxPanY = (size.height.toFloat() * (newScale - 1f)) / 2f
+                                        nonFlipZoomScale = newScale
+                                        if (newScale > 1.01f) {
+                                            nonFlipZoomOffset = Offset(
+                                                x = (nonFlipZoomOffset.x + panChange.x * newScale).coerceIn(-maxPanX, maxPanX),
+                                                y = (nonFlipZoomOffset.y + panChange.y * newScale).coerceIn(-maxPanY, maxPanY)
+                                            )
+                                        } else {
+                                            nonFlipZoomOffset = Offset.Zero
+                                        }
+                                        event.changes.forEach { change ->
+                                            if (change.positionChanged()) change.consume()
+                                        }
+                                    } else if (pressedCount == 1) {
+                                        val curChange = event.changes.firstOrNull()
+                                        if (curChange != null && (curChange.position - down.position).getDistance() > touchSlop) {
+                                            movedBeyondSlop = true
+                                        }
+                                        if (nonFlipZoomScale > 1.02f) {
                                             val panChange = event.calculatePan()
                                             if (panChange != Offset.Zero) {
                                                 val maxPanX = (size.width.toFloat() * (nonFlipZoomScale - 1f)) / 2f
@@ -2035,210 +1945,395 @@ fun ReaderScreen(
                                     }
                                 }
                             }
+                        }
 
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clipToBounds()
-                                    .then(nonFlipbookZoomGestureModifier)
-                                    .graphicsLayer {
-                                        scaleX = nonFlipZoomScale
-                                        scaleY = nonFlipZoomScale
-                                        translationX = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.x else 0f
-                                        translationY = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.y else 0f
-                                    }
-                            ) {
-                                if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
-                                    if (isSpread) {
-                                        val totalSpreads = (metrics.totalBookPages + 1) / 2
-                                        val initialSpread = (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
-                                        val spreadPagerState = rememberPagerState(
-                                            initialPage = initialSpread,
-                                            pageCount = { totalSpreads.coerceAtLeast(1) }
-                                        )
-                                        LaunchedEffect(spreadPagerState) {
-                                            snapshotFlow { spreadPagerState.settledPage }
-                                                .distinctUntilChanged()
-                                                .collect { settledSpread ->
-                                                    val targetPage = settledSpread * 2
-                                                    if (targetPage / 2 != displayPageIndex / 2) {
-                                                        displayPageIndex = targetPage
-                                                        val target = getPageAtGlobalZero(targetPage)
-                                                        if (target != null) {
-                                                            onJumpToChapterAndPage(target.first, target.second)
-                                                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clipToBounds()
+                                .then(nonFlipbookZoomGestureModifier)
+                                .graphicsLayer {
+                                    scaleX = nonFlipZoomScale
+                                    scaleY = nonFlipZoomScale
+                                    translationX = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.x else 0f
+                                    translationY = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.y else 0f
+                                }
+                        ) {
+                            if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
+                                if (isSpread) {
+                                    val totalSpreads = (metrics.totalBookPages + 1) / 2
+                                    val initialSpread = (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                    val spreadPagerState = rememberPagerState(
+                                        initialPage = initialSpread,
+                                        pageCount = { totalSpreads.coerceAtLeast(1) }
+                                    )
+                                    LaunchedEffect(spreadPagerState) {
+                                        snapshotFlow { spreadPagerState.settledPage }
+                                            .distinctUntilChanged()
+                                            .collect { settledSpread ->
+                                                val targetPage = settledSpread * 2
+                                                if (targetPage / 2 != displayPageIndex / 2) {
+                                                    displayPageIndex = targetPage
+                                                    val target = getPageAtGlobalZero(targetPage)
+                                                    if (target != null) {
+                                                        onJumpToChapterAndPage(target.first, target.second)
                                                     }
                                                 }
-                                        }
-                                        LaunchedEffect(curZeroFromMetrics) {
-                                            val targetSpread = curZeroFromMetrics / 2
-                                            if (!spreadPagerState.isScrollInProgress &&
-                                                spreadPagerState.settledPage != targetSpread &&
-                                                spreadPagerState.currentPage != targetSpread &&
-                                                spreadPagerState.targetPage != targetSpread
-                                            ) {
-                                                displayPageIndex = curZeroFromMetrics
-                                                spreadPagerState.animateScrollToPage(
-                                                    targetSpread,
-                                                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
-                                                )
                                             }
-                                        }
-                                        HorizontalPager(
-                                            state = spreadPagerState,
-                                            beyondViewportPageCount = 2,
-                                            key = { spreadIndex -> "slide_spread_$spreadIndex" },
-                                            userScrollEnabled = (nonFlipZoomScale <= 1.02f),
-                                            modifier = Modifier.fillMaxSize()
-                                        ) { spreadIndex ->
-                                            val spreadLeftPage = spreadIndex * 2
-                                            val spreadRightPage = spreadIndex * 2 + 1
-                                            RenderSpreadPageForNonFlipbook(spreadLeftPage, spreadRightPage)
-                                        }
-                                    } else {
-                                        val pagerState = rememberPagerState(
-                                            initialPage = displayPageIndex.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
-                                            pageCount = { metrics.totalBookPages.coerceAtLeast(1) }
-                                        )
-                                        LaunchedEffect(pagerState) {
-                                            snapshotFlow { pagerState.settledPage }
-                                                .distinctUntilChanged()
-                                                .collect { settled ->
-                                                    if (settled != displayPageIndex) {
-                                                        displayPageIndex = settled
-                                                        val target = getPageAtGlobalZero(settled)
-                                                        if (target != null) {
-                                                            onJumpToChapterAndPage(target.first, target.second)
-                                                        }
-                                                    }
-                                                }
-                                        }
-                                        LaunchedEffect(curZeroFromMetrics) {
-                                            if (!pagerState.isScrollInProgress &&
-                                                pagerState.settledPage != curZeroFromMetrics &&
-                                                pagerState.currentPage != curZeroFromMetrics &&
-                                                pagerState.targetPage != curZeroFromMetrics
-                                            ) {
-                                                displayPageIndex = curZeroFromMetrics
-                                                pagerState.animateScrollToPage(
-                                                    curZeroFromMetrics,
-                                                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
-                                                )
-                                            }
-                                        }
-                                        HorizontalPager(
-                                            state = pagerState,
-                                            beyondViewportPageCount = 2,
-                                            key = { pIdx -> "slide_page_$pIdx" },
-                                            userScrollEnabled = (nonFlipZoomScale <= 1.02f),
-                                            modifier = Modifier.fillMaxSize()
-                                        ) { pIdx ->
-                                            RenderPageForNonFlipbook(pIdx)
-                                        }
                                     }
-                                } else if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FADE) {
-                                    val fadeSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
-                                        var totalDx = 0f
-                                        var totalDy = 0f
-                                        detectHorizontalDragGestures(
-                                            onDragStart = { totalDx = 0f; totalDy = 0f },
-                                            onDragEnd = {
-                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
-                                                if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
-                                                    if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
-                                                    else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
-                                                }
-                                            },
-                                            onHorizontalDrag = { change, dragAmount ->
-                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
-                                                totalDx += dragAmount
-                                                if (abs(totalDx) > 16.dp.toPx()) change.consume()
-                                            }
-                                        )
-                                    }
-                                    AnimatedContent(
-                                        targetState = curZero,
-                                        transitionSpec = {
-                                            fadeIn(
-                                                animationSpec = tween(
-                                                    durationMillis = 150,
-                                                    delayMillis = 95,
-                                                    easing = LinearOutSlowInEasing
-                                                )
-                                            ).togetherWith(
-                                                fadeOut(
-                                                    animationSpec = tween(
-                                                        durationMillis = 110,
-                                                        delayMillis = 0,
-                                                        easing = FastOutLinearInEasing
-                                                    )
-                                                )
-                                            ).using(
-                                                androidx.compose.animation.SizeTransform(clip = false)
+                                    LaunchedEffect(curZeroFromMetrics) {
+                                        val targetSpread = curZeroFromMetrics / 2
+                                        if (!spreadPagerState.isScrollInProgress &&
+                                            spreadPagerState.settledPage != targetSpread &&
+                                            spreadPagerState.currentPage != targetSpread &&
+                                            spreadPagerState.targetPage != targetSpread
+                                        ) {
+                                            displayPageIndex = curZeroFromMetrics
+                                            spreadPagerState.animateScrollToPage(
+                                                targetSpread,
+                                                animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
                                             )
+                                        }
+                                    }
+                                    HorizontalPager(
+                                        state = spreadPagerState,
+                                        beyondViewportPageCount = 2,
+                                        key = { spreadIndex -> "slide_spread_$spreadIndex" },
+                                        userScrollEnabled = (nonFlipZoomScale <= 1.02f),
+                                        modifier = Modifier.fillMaxSize()
+                                    ) { spreadIndex ->
+                                        val spreadLeftPage = spreadIndex * 2
+                                        val spreadRightPage = spreadIndex * 2 + 1
+                                        RenderSpreadPageForNonFlipbook(spreadLeftPage, spreadRightPage)
+                                    }
+                                } else {
+                                    val pagerState = rememberPagerState(
+                                        initialPage = displayPageIndex.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0)),
+                                        pageCount = { metrics.totalBookPages.coerceAtLeast(1) }
+                                    )
+                                    LaunchedEffect(pagerState) {
+                                        snapshotFlow { pagerState.settledPage }
+                                            .distinctUntilChanged()
+                                            .collect { settled ->
+                                                if (settled != displayPageIndex) {
+                                                    displayPageIndex = settled
+                                                    val target = getPageAtGlobalZero(settled)
+                                                    if (target != null) {
+                                                        onJumpToChapterAndPage(target.first, target.second)
+                                                    }
+                                                }
+                                            }
+                                    }
+                                    LaunchedEffect(curZeroFromMetrics) {
+                                        if (!pagerState.isScrollInProgress &&
+                                            pagerState.settledPage != curZeroFromMetrics &&
+                                            pagerState.currentPage != curZeroFromMetrics &&
+                                            pagerState.targetPage != curZeroFromMetrics
+                                        ) {
+                                            displayPageIndex = curZeroFromMetrics
+                                            pagerState.animateScrollToPage(
+                                                curZeroFromMetrics,
+                                                animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
+                                            )
+                                        }
+                                    }
+                                    HorizontalPager(
+                                        state = pagerState,
+                                        beyondViewportPageCount = 2,
+                                        key = { pIdx -> "slide_page_$pIdx" },
+                                        userScrollEnabled = (nonFlipZoomScale <= 1.02f),
+                                        modifier = Modifier.fillMaxSize()
+                                    ) { pIdx ->
+                                        RenderPageForNonFlipbook(pIdx)
+                                    }
+                                }
+                            } else if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FADE) {
+                                val fadeSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
+                                    var totalDx = 0f
+                                    var totalDy = 0f
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { totalDx = 0f; totalDy = 0f },
+                                        onDragEnd = {
+                                            if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                            if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
+                                                else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
+                                            }
                                         },
-                                        label = "readerFadeTransition",
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                            totalDx += dragAmount
+                                            if (abs(totalDx) > 16.dp.toPx()) change.consume()
+                                        }
+                                    )
+                                }
+                                AnimatedContent(
+                                    targetState = curZero,
+                                    transitionSpec = {
+                                        fadeIn(
+                                            animationSpec = tween(
+                                                durationMillis = 150,
+                                                delayMillis = 95,
+                                                easing = LinearOutSlowInEasing
+                                            )
+                                        ).togetherWith(
+                                            fadeOut(
+                                                animationSpec = tween(
+                                                    durationMillis = 110,
+                                                    delayMillis = 0,
+                                                    easing = FastOutLinearInEasing
+                                                )
+                                            )
+                                        ).using(
+                                            SizeTransform(clip = false)
+                                        )
+                                    },
+                                    label = "readerFadeTransition",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(palette.bgApp)
+                                        .then(fadeSwipeModifier)
+                                ) { pIdx ->
+                                    Box(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .background(palette.bgApp)
-                                            .then(fadeSwipeModifier)
-                                    ) { pIdx ->
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(palette.bgApp)
-                                        ) {
-                                            RenderPageForNonFlipbook(pIdx)
+                                    ) {
+                                        RenderPageForNonFlipbook(pIdx)
+                                    }
+                                }
+                            } else {
+                                val noAnimSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
+                                    var totalDx = 0f
+                                    var totalDy = 0f
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { totalDx = 0f; totalDy = 0f },
+                                        onDragEnd = {
+                                            if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                            if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
+                                                else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
+                                            }
+                                        },
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
+                                            totalDx += dragAmount
+                                            if (abs(totalDx) > 16.dp.toPx()) change.consume()
+                                        }
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier.fillMaxSize().then(noAnimSwipeModifier),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    RenderPageForNonFlipbook(curZero)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. VERTICAL CONTINUOUS SCROLL & WEBTOON MODES (Fixed for both PDF and EPUB/TXT!)
+                ReadingFlowMode.SCROLL, ReadingFlowMode.WEBTOON -> {
+                    val isWebtoon = prefs.readingFlowMode == ReadingFlowMode.WEBTOON
+
+                    val (scrollItemMetas, pageToLazyIndexMap, chapterGlobalStartOffsets) = remember(chapters, isPdfBook, isWebtoon, metrics.totalBookPages) {
+                        if (isPdfBook) {
+                            val totalPages = metrics.totalBookPages.coerceAtLeast(1)
+                            val metas = List(totalPages) { pIdx ->
+                                val triple = getPageAtGlobalZero(pIdx)
+                                ScrollLazyItemMeta(
+                                    globalPageZero = pIdx,
+                                    chapterIndex = triple?.first ?: 0,
+                                    pageInChapter = triple?.second ?: pIdx,
+                                    isPageItem = true
+                                )
+                            }
+                            val idxMap = (0 until totalPages).associateWith { it }
+                            Triple(metas, idxMap, emptyList<Int>())
+                        } else {
+                            val metas = mutableListOf<ScrollLazyItemMeta>()
+                            val idxMap = mutableMapOf<Int, Int>()
+                            val chStarts = mutableListOf<Int>()
+                            var runningGlobalZero = 0
+                            chapters.forEachIndexed { chIdx, ch ->
+                                val chStart = runningGlobalZero
+                                chStarts.add(chStart)
+                                metas.add(
+                                    ScrollLazyItemMeta(
+                                        globalPageZero = chStart,
+                                        chapterIndex = chIdx,
+                                        pageInChapter = 0,
+                                        isPageItem = false
+                                    )
+                                )
+                                ch.pages.forEachIndexed { pIdx, _ ->
+                                    val lazyIdx = metas.size
+                                    idxMap[runningGlobalZero] = lazyIdx
+                                    metas.add(
+                                        ScrollLazyItemMeta(
+                                            globalPageZero = runningGlobalZero,
+                                            chapterIndex = chIdx,
+                                            pageInChapter = pIdx,
+                                            isPageItem = true
+                                        )
+                                    )
+                                    runningGlobalZero++
+                                }
+                                if (!isWebtoon) {
+                                    metas.add(
+                                        ScrollLazyItemMeta(
+                                            globalPageZero = (runningGlobalZero - 1).coerceAtLeast(0),
+                                            chapterIndex = chIdx,
+                                            pageInChapter = ch.pages.lastIndex.coerceAtLeast(0),
+                                            isPageItem = false
+                                        )
+                                    )
+                                }
+                            }
+                            Triple(metas.toList(), idxMap.toMap(), chStarts.toList())
+                        }
+                    }
+
+                    val initialPageZero = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
+                    val initialLazyIdx = if (isPdfBook) {
+                        initialPageZero
+                    } else {
+                        pageToLazyIndexMap[initialPageZero] ?: 0
+                    }
+                    val scrollListState = rememberLazyListState(initialFirstVisibleItemIndex = initialLazyIdx)
+
+                    // Observe scroll position and persist reading progress
+                    LaunchedEffect(scrollListState, scrollItemMetas) {
+                        snapshotFlow { scrollListState.firstVisibleItemIndex to scrollListState.isScrollInProgress }
+                            .distinctUntilChanged()
+                            .collect { (firstVisibleIdx, isScrolling) ->
+                                val meta = scrollItemMetas.getOrNull(firstVisibleIdx) ?: return@collect
+                                val targetGlobalZero = meta.globalPageZero.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0))
+                                if (targetGlobalZero != displayPageIndex) {
+                                    displayPageIndex = targetGlobalZero
+                                    scrubberPageValue = (targetGlobalZero + 1).toFloat()
+                                    onJumpToChapterAndPage(meta.chapterIndex, meta.pageInChapter)
+                                } else if (!isScrolling && targetGlobalZero != (metrics.currentGlobalPage - 1).coerceAtLeast(0)) {
+                                    onJumpToChapterAndPage(meta.chapterIndex, meta.pageInChapter)
+                                }
+                            }
+                    }
+
+                    // Respond to external jumps (e.g. ToC, bookmarks, search results, page scrubber)
+                    LaunchedEffect(metrics.currentGlobalPage, isPdfBook, isWebtoon) {
+                        val targetGlobalZero = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
+                        if (!scrollListState.isScrollInProgress && targetGlobalZero != displayPageIndex) {
+                            displayPageIndex = targetGlobalZero
+                            val targetLazyIdx = if (isPdfBook) {
+                                targetGlobalZero.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0))
+                            } else {
+                                pageToLazyIndexMap[targetGlobalZero] ?: 0
+                            }
+                            scrollListState.scrollToItem(targetLazyIdx)
+                        }
+                    }
+
+                    val scrollZoomGestureModifier = Modifier.pointerInput(
+                        prefs.readingFlowMode,
+                        uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer,
+                        showPageScrubber, hasSelectionActive
+                    ) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            if (uiState.showReaderTypeSheet || uiState.showReaderTocDrawer || uiState.showReaderNotesDrawer ||
+                                showPageScrubber ||
+                                down.position.y >= size.height - 96.dp.toPx() ||
+                                down.position.y <= 88.dp.toPx()
+                            ) {
+                                return@awaitEachGesture
+                            }
+                            val touchSlop = viewConfiguration.touchSlop
+                            var movedBeyondSlop = false
+                            var hadMultiTouch = false
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val pressedCount = event.changes.count { it.pressed }
+                                if (pressedCount == 0) {
+                                    if (nonFlipZoomScale < 1.03f) {
+                                        nonFlipZoomScale = 1f
+                                        nonFlipZoomOffset = Offset.Zero
+                                    }
+                                    if (!movedBeyondSlop && !hadMultiTouch && nonFlipZoomScale <= 1.02f) {
+                                        val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
+                                        if (relX in 0.24f..0.76f) {
+                                            if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                hasSelectionActive = false
+                                                clearSelectionTrigger++
+                                                selectedQuoteForPopover = null
+                                            } else {
+                                                showReaderChrome = !showReaderChrome
+                                            }
                                         }
                                     }
-                                } else {
-                                    val noAnimSwipeModifier = Modifier.pointerInput(curZero, metrics.totalBookPages) {
-                                        var totalDx = 0f
-                                        var totalDy = 0f
-                                        detectHorizontalDragGestures(
-                                            onDragStart = { totalDx = 0f; totalDy = 0f },
-                                            onDragEnd = {
-                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
-                                                if (abs(totalDx) > 42.dp.toPx() && abs(totalDx) > abs(totalDy) * 1.15f) {
-                                                    if (totalDx < 0f && curZero < metrics.totalBookPages - 1) onTurnPage(1)
-                                                    else if (totalDx > 0f && curZero > 0) onTurnPage(-1)
-                                                }
-                                            },
-                                            onHorizontalDrag = { change, dragAmount ->
-                                                if (nonFlipZoomScale > 1.02f) return@detectHorizontalDragGestures
-                                                totalDx += dragAmount
-                                                if (abs(totalDx) > 16.dp.toPx()) change.consume()
-                                            }
+                                    break
+                                }
+                                if (pressedCount >= 2) {
+                                    hadMultiTouch = true
+                                    val zoomChange = event.calculateZoom()
+                                    val panChange = event.calculatePan()
+                                    val newScale = (nonFlipZoomScale * zoomChange).coerceIn(1f, 4f)
+                                    val maxPanX = (size.width.toFloat() * (newScale - 1f)) / 2f
+                                    val maxPanY = (size.height.toFloat() * (newScale - 1f)) / 2f
+                                    nonFlipZoomScale = newScale
+                                    if (newScale > 1.01f) {
+                                        nonFlipZoomOffset = Offset(
+                                            x = (nonFlipZoomOffset.x + panChange.x * newScale).coerceIn(-maxPanX, maxPanX),
+                                            y = (nonFlipZoomOffset.y + panChange.y * newScale).coerceIn(-maxPanY, maxPanY)
                                         )
+                                    } else {
+                                        nonFlipZoomOffset = Offset.Zero
                                     }
-                                    Box(
-                                        modifier = Modifier.fillMaxSize().then(noAnimSwipeModifier),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        RenderPageForNonFlipbook(curZero)
+                                    event.changes.forEach { change ->
+                                        if (change.positionChanged()) change.consume()
+                                    }
+                                } else if (pressedCount == 1) {
+                                    val curChange = event.changes.firstOrNull()
+                                    if (curChange != null && (curChange.position - down.position).getDistance() > touchSlop) {
+                                        movedBeyondSlop = true
+                                    }
+                                    if (nonFlipZoomScale > 1.02f) {
+                                        val panChange = event.calculatePan()
+                                        if (panChange != Offset.Zero) {
+                                            val maxPanX = (size.width.toFloat() * (nonFlipZoomScale - 1f)) / 2f
+                                            val maxPanY = (size.height.toFloat() * (nonFlipZoomScale - 1f)) / 2f
+                                            nonFlipZoomOffset = Offset(
+                                                x = (nonFlipZoomOffset.x + panChange.x).coerceIn(-maxPanX, maxPanX),
+                                                y = (nonFlipZoomOffset.y + panChange.y).coerceIn(-maxPanY, maxPanY)
+                                            )
+                                            event.changes.forEach { change ->
+                                                if (change.positionChanged()) change.consume()
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    // 3. VERTICAL CONTINUOUS SCROLL & WEBTOON MODES (Fixed for both PDF and EPUB/TXT!)
-                    ReadingFlowMode.SCROLL, ReadingFlowMode.WEBTOON -> {
-                        val isWebtoon = prefs.readingFlowMode == ReadingFlowMode.WEBTOON
-                        val scrollListState = rememberLazyListState()
-
-                        LaunchedEffect(metrics.currentGlobalPage) {
-                            val targetIdx = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
-                            if (!scrollListState.isScrollInProgress) {
-                                scrollListState.scrollToItem(targetIdx)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                            .then(scrollZoomGestureModifier)
+                            .graphicsLayer {
+                                scaleX = nonFlipZoomScale
+                                scaleY = nonFlipZoomScale
+                                translationX = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.x else 0f
+                                translationY = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.y else 0f
                             }
-                        }
-
+                    ) {
                         if (isPdfBook) {
                             val totalPdfPages = metrics.totalBookPages.coerceAtLeast(1)
                             val pdfPath = book.localFilePath!!
                             LazyColumn(
                                 state = scrollListState,
+                                userScrollEnabled = (nonFlipZoomScale <= 1.02f),
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = if (isWebtoon) 0.dp else 12.dp),
@@ -2269,6 +2364,7 @@ fun ReaderScreen(
                         } else {
                             LazyColumn(
                                 state = scrollListState,
+                                userScrollEnabled = (nonFlipZoomScale <= 1.02f),
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = prefs.pageMarginDp.dp)
@@ -2304,36 +2400,49 @@ fun ReaderScreen(
                                     itemsIndexed(
                                         items = ch.pages,
                                         key = { pIdx, _ -> "ch_${chIdx}_p_$pIdx" }
-                                    ) { _, pgRaw ->
+                                    ) { pIdx, pgRaw ->
+                                        val globalPageZero = chapterGlobalStartOffsets.getOrElse(chIdx) { 0 } + pIdx
+                                        val curCachedTrans = viewModel?.getCachedTranslatedParagraphs(
+                                            book.id,
+                                            globalPageZero,
+                                            uiState.translationTargetLang,
+                                            pgRaw.hashCode()
+                                        ) ?: pageTranslationMap[globalPageZero]
                                         InteractiveTextPageContent(
                                             bookId = book.id,
-                                            displayPageIndex = -1,
+                                            displayPageIndex = globalPageZero,
                                             chapterTitle = ch.title,
                                             pageText = pgRaw,
+                                            currentChapterIndex = chIdx,
+                                            currentPageInChapter = pIdx,
                                             showChapterHeader = false,
                                             scrollable = false, // Must be false inside LazyColumn to prevent crash!
                                             prefs = prefs,
                                             bookHighlights = bookHighlights,
                                             onParagraphClicked = { paraText, isUpper ->
-                                            selectedQuoteForPopover = paraText
+                                                selectedQuoteForPopover = paraText
                                                 selectedPopoverInUpperHalf = isUpper
                                             },
                                             onIllustrationClicked = { path ->
                                                 val idx = uiState.activeBookIllustrations.indexOfFirst { it.uriOrPath == path }.coerceAtLeast(0)
                                                 onOpenIllustViewer(idx)
                                             },
-                                                            onSaveHighlightNote = onSaveHighlightNote,
-                                                            onDeleteHighlightNote = onDeleteHighlightNote,
-                                                            onSearchInBook = { inBookSearchQuery = it },
-                                                            bookTitle = book.title,
-                                                             onSelectionActiveChanged = { active, start, end ->
-                                                                 hasSelectionActive = active
-                                                                 selStartHandleAnchor = start
-                                                                 selEndHandleAnchor = end
-                                                             },
-                                                             viewModel = viewModel,
-                                                             uiState = uiState
-                                                         )
+                                            onSaveHighlightNote = onSaveHighlightNote,
+                                            onDeleteHighlightNote = onDeleteHighlightNote,
+                                            onSearchInBook = { inBookSearchQuery = it },
+                                            isCoverPage = (globalPageZero == 0),
+                                            bookTitle = book.title,
+                                            clearSelectionTrigger = clearSelectionTrigger,
+                                            onSelectionActiveChanged = { active, start, end ->
+                                                hasSelectionActive = active
+                                                selStartHandleAnchor = start
+                                                selEndHandleAnchor = end
+                                            },
+                                            isPageTranslationActive = isPageTranslationActive,
+                                            translatedParagraphs = curCachedTrans,
+                                            viewModel = viewModel,
+                                            uiState = uiState
+                                        )
                                     }
                                     if (!isWebtoon) {
                                         item(key = "ch_div_$chIdx") {
@@ -2345,1035 +2454,103 @@ fun ReaderScreen(
                                     }
                                 }
                             }
+                        }
                     }
                 }
             }
-
-        }
-
-        if (showLangDropdown) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { showLangDropdown = false }
-            )
         }
 
         // 2. OVERLAY TOP CHROME BAR (`#readerTopChrome` in `llunevie_prototype.html`)
-        AnimatedVisibility(
-            visible = showReaderChrome,
-            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { -it } + fadeIn(tween(180)),
-            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(140)),
-            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
-        ) {
-            val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
-            val topBarStartPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
-            val topBarEndPad = if (isSpread) maxOf(16.dp, cutoutStart + 16.dp) else 16.dp
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .windowInsetsPadding(WindowInsets.displayCutout)
-                        .padding(start = topBarStartPad, end = topBarEndPad, top = 10.dp, bottom = 10.dp)
-                ) {
-                // Left: 34.dp circular Back button
-                Surface(
-                    onClick = onBack,
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .minimumInteractiveComponentSize()
-                        .size(34.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        PrototypeSvgIcon(
-                            type = PrototypeIconType.ARROW_LEFT,
-                            tint = palette.textMain,
-                            modifier = Modifier.size(15.dp),
-                            contentDescription = if (strings.isId) "Kembali" else "Back"
-                        )
-                    }
-                }
-
-                // Center Morphing Pill (`#readerTitlePill`) - 100% mathematically centered on screen
+        ReaderTopChrome(
+            book = book,
+            uiState = uiState,
+            prefs = prefs,
+            bookBookmarks = bookBookmarks,
+            strings = strings,
+            chapters = chapters,
+            currentChapter = currentChapter,
+            currentPageRaw = currentPageRaw,
+            displayPageIndex = displayPageIndex,
+            isSpread = isSpread,
+            isPdfBook = isPdfBook,
+            showReaderChrome = showReaderChrome,
+            showLangDropdown = showLangDropdown,
+            onShowLangDropdownChange = { showLangDropdown = it },
+            isPageTranslationActive = isPageTranslationActive,
+            onIsPageTranslationActiveChange = { isPageTranslationActive = it },
+            peekOriginalPdfPage = peekOriginalPdfPage,
+            onPeekOriginalPdfPageChange = { peekOriginalPdfPage = it },
+            isTranslatingPage = isTranslatingPage,
+            readerZoom = readerZoom,
+            readerPan = readerPan,
+            nonFlipZoomScale = nonFlipZoomScale,
+            nonFlipZoomOffset = nonFlipZoomOffset,
+            onResetZoom = {
                 val isFlipbookMode = prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK
-                val effectiveZoom = if (isFlipbookMode) readerZoom else nonFlipZoomScale
-                val effectivePan = if (isFlipbookMode) readerPan else nonFlipZoomOffset
-
-                val topPillState = when {
-                    effectiveZoom > 1.01f -> TopCenterPillState.ZOOM
-                    isPageTranslationActive || uiState.isTranslationActive -> TopCenterPillState.TRANSLATION
-                    else -> TopCenterPillState.TITLE
-                }
-
-                Surface(
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 0.dp,
-                    modifier = Modifier
-                        .height(32.dp)
-                        .align(Alignment.Center)
-                        .animateContentSize(animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f))
-                ) {
-                    AnimatedContent(
-                        targetState = topPillState,
-                        transitionSpec = {
-                            (fadeIn(tween(180)) + scaleIn(initialScale = 0.94f, animationSpec = tween(180)))
-                                .togetherWith(fadeOut(tween(130)) + scaleOut(targetScale = 0.94f, animationSpec = tween(130)))
-                        },
-                        label = "topCenterPillTransition"
-                    ) { state ->
-                        when (state) {
-                            TopCenterPillState.ZOOM -> {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .clickable {
-                                            scope.launch {
-                                                val startZ = effectiveZoom
-                                                val startP = effectivePan
-                                                Animatable(0f).animateTo(
-                                                    targetValue = 1f,
-                                                    animationSpec = tween(220, easing = FastOutSlowInEasing)
-                                                ) {
-                                                    val f = 1f - value
-                                                    if (isFlipbookMode) {
-                                                        readerZoom = 1f + (startZ - 1f) * f
-                                                        readerPan = Offset(startP.x * f, startP.y * f)
-                                                    } else {
-                                                        nonFlipZoomScale = 1f + (startZ - 1f) * f
-                                                        nonFlipZoomOffset = Offset(startP.x * f, startP.y * f)
-                                                    }
-                                                }
-                                                readerZoom = 1f
-                                                readerPan = Offset.Zero
-                                                nonFlipZoomScale = 1f
-                                                nonFlipZoomOffset = Offset.Zero
-                                            }
-                                        }
-                                        .padding(horizontal = 14.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val pct = (effectiveZoom * 100f).roundToInt()
-                                    Text(
-                                        text = "$pct% · Reset",
-                                        color = palette.textMain,
-                                        fontSize = 11.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        style = TextStyle(
-                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                            lineHeight = 11.sp
-                                        )
-                                    )
-                                }
-                            }
-                            TopCenterPillState.TRANSLATION -> {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .padding(horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    // Chip 1 (Replace / Ganti)
-                                    val isReplaceActive = !peekOriginalPdfPage && uiState.translationMode == "replace"
-                                    Box(
-                                        modifier = Modifier
-                                            .height(24.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isReplaceActive) palette.pillActiveBg else Color.Transparent)
-                                            .clickable {
-                                                peekOriginalPdfPage = false
-                                                viewModel?.setTranslationMode("replace")
-                                            }
-                                            .padding(horizontal = 10.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = if (strings.isId) "Ganti" else "Replace",
-                                            color = if (isReplaceActive) palette.textMain else palette.textMuted,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isReplaceActive) FontWeight.SemiBold else FontWeight.Medium,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 11.sp
-                                            )
-                                        )
-                                    }
-
-                                    // Chip 2 (Bilingual for EPUB / Original for PDF)
-                                    if (isPdfBook) {
-                                        val isOrigActive = peekOriginalPdfPage
-                                        Box(
-                                            modifier = Modifier
-                                                .height(24.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isOrigActive) palette.pillActiveBg else Color.Transparent)
-                                                .clickable {
-                                                    peekOriginalPdfPage = !peekOriginalPdfPage
-                                                }
-                                                .padding(horizontal = 10.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = if (strings.isId) "Asli" else "Original",
-                                                color = if (isOrigActive) palette.textMain else palette.textMuted,
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isOrigActive) FontWeight.SemiBold else FontWeight.Medium,
-                                                style = TextStyle(
-                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                    lineHeight = 11.sp
-                                                )
-                                            )
-                                        }
-                                    } else {
-                                        val isBilingualActive = uiState.translationMode == "bilingual"
-                                        Box(
-                                            modifier = Modifier
-                                                .height(24.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isBilingualActive) palette.pillActiveBg else Color.Transparent)
-                                                .clickable {
-                                                    viewModel?.setTranslationMode("bilingual")
-                                                }
-                                                .padding(horizontal = 10.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = if (strings.isId) "Dwibahasa" else "Bilingual",
-                                                color = if (isBilingualActive) palette.textMain else palette.textMuted,
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isBilingualActive) FontWeight.SemiBold else FontWeight.Medium,
-                                                style = TextStyle(
-                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                    lineHeight = 11.sp
-                                                )
-                                            )
-                                        }
-                                    }
-
-                                    // Vertical Divider
-                                    Box(
-                                        modifier = Modifier
-                                            .width(1.dp)
-                                            .height(12.dp)
-                                            .background(palette.borderSoft)
-                                    )
-
-                                     // Chip 3 (Target Language Selector)
-                                     Box(
-                                         modifier = Modifier
-                                             .height(24.dp)
-                                             .clip(CircleShape)
-                                             .clickable { showLangDropdown = !showLangDropdown }
-                                             .padding(horizontal = 8.dp),
-                                         contentAlignment = Alignment.Center
-                                     ) {
-                                         val activeNormCode = normalizeTranslationLangCode(uiState.translationTargetLang)
-                                         val activeLangs = remember(prefs.customTranslationLangs) {
-                                             getActiveTranslationLanguages(prefs.customTranslationLangs)
-                                         }
-                                         val activeLangOption = activeLangs.find { normalizeTranslationLangCode(it.code) == activeNormCode }
-                                             ?: DEFAULT_TRANSLATION_LANGUAGES.find { normalizeTranslationLangCode(it.code) == activeNormCode }
-                                             ?: TranslationLangOption(code = activeNormCode, badgeCode = activeNormCode.uppercase().take(2), nativeName = activeNormCode)
-                                         val currentLangLabel = activeLangOption.badgeCode
-                                         Text(
-                                             text = "$currentLangLabel ▾",
-                                             fontSize = 11.sp,
-                                             fontFamily = FontFamily.Monospace,
-                                             fontWeight = FontWeight.SemiBold,
-                                             color = palette.textMain,
-                                             style = TextStyle(
-                                                 platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                 lineHeight = 11.sp
-                                             )
-                                         )
-                                     }
-
-                                    // Loading Indicator (only while current page translation is actively fetching)
-                                    if (isTranslatingPage) {
-                                        Box(
-                                            modifier = Modifier.padding(horizontal = 4.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                strokeWidth = 1.5.dp,
-                                                color = palette.textMuted,
-                                                modifier = Modifier.size(10.dp)
-                                            )
-                                        }
-                                    }
-
-                                    // Vertical Divider
-                                    Box(
-                                        modifier = Modifier
-                                            .width(1.dp)
-                                            .height(12.dp)
-                                            .background(palette.borderSoft)
-                                    )
-
-                                    // Chip 4 (Close Translation ✕)
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .clickable {
-                                                isPageTranslationActive = false
-                                                peekOriginalPdfPage = false
-                                                viewModel?.setTranslationActive(false)
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "✕",
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = palette.textMuted,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 11.sp
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                            TopCenterPillState.TITLE -> {
-                                if (isSpread) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(CircleShape)
-                                            .clickable {
-                                                isPageTranslationActive = true
-                                                peekOriginalPdfPage = false
-                                                viewModel?.setTranslationActive(true)
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        PrototypeSvgIcon(
-                                            type = PrototypeIconType.TRANSLATE,
-                                            tint = palette.textMain,
-                                            modifier = Modifier.size(14.dp),
-                                            contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
-                                        )
-                                    }
-                                } else {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .padding(start = 14.dp, end = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = book.title,
-                                            color = palette.textMain,
-                                            fontSize = 11.5.sp,
-                                            fontFamily = FontFamily.Serif,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 12.sp
-                                            ),
-                                            modifier = Modifier
-                                                .widthIn(max = 168.dp)
-                                                .clickable { onToggleTocDrawer(true) }
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Box(
-                                            Modifier
-                                                .width(1.dp)
-                                                .height(13.dp)
-                                                .background(palette.borderSoft)
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .clickable {
-                                                    isPageTranslationActive = true
-                                                    peekOriginalPdfPage = false
-                                                    viewModel?.setTranslationActive(true)
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            PrototypeSvgIcon(
-                                                type = PrototypeIconType.TRANSLATE,
-                                                tint = palette.textMain,
-                                                modifier = Modifier.size(13.5.dp),
-                                                contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Right: 34.dp circular Bookmark button
-                val isCurrentPageBookmarked = if (isSpread) {
-                    val sStart = (displayPageIndex / 2) * 2
-                    bookBookmarks.any { it.pageNumber == sStart + 1 || it.pageNumber == sStart + 2 }
-                } else {
-                    bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
-                }
-                Surface(
-                    onClick = {
-                        val curPageNum = displayPageIndex + 1
-                        val curTriple = getPageAtGlobalZero(displayPageIndex)
-                        val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
-                            ?: currentChapter?.title
-                            ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
-                        val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
-                        val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
-                            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                            .trim()
-                            .take(100)
-                        viewModel?.togglePageBookmark(
-                            bookId = book.id,
-                            pageNumber = curPageNum,
-                            chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
-                            chapterTitle = chTitle,
-                            snippetText = snippet
-                        )
-                    },
-                    shape = CircleShape,
-                    color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
-                    border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
-                    modifier = Modifier
-                        .size(34.dp)
-                        .align(Alignment.CenterEnd)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                            contentDescription = "Bookmark",
-                            tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-            }
-
-            AnimatedVisibility(
-                visible = showLangDropdown && uiState.isTranslationActive,
-                enter = fadeIn(animationSpec = tween(150)) +
-                    scaleIn(initialScale = 0.96f, animationSpec = tween(150)) +
-                    expandVertically(expandFrom = Alignment.Top, animationSpec = tween(160)),
-                exit = fadeOut(animationSpec = tween(110)) +
-                    scaleOut(targetScale = 0.96f, animationSpec = tween(110)) +
-                    shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(120))
-            ) {
-                val activeNormCode = normalizeTranslationLangCode(uiState.translationTargetLang)
-                val activeLangs = remember(prefs.customTranslationLangs) {
-                    getActiveTranslationLanguages(prefs.customTranslationLangs)
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    shadowElevation = 0.dp,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier
-                        .padding(top = 4.dp)
-                        .width(200.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(5.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                val startZ = if (isFlipbookMode) readerZoom else nonFlipZoomScale
+                val startP = if (isFlipbookMode) readerPan else nonFlipZoomOffset
+                scope.launch {
+                    Animatable(0f).animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(220, easing = FastOutSlowInEasing)
                     ) {
-                        activeLangs.forEach { langOpt ->
-                            val isSelected = normalizeTranslationLangCode(langOpt.code) == activeNormCode
-                            Surface(
-                                onClick = {
-                                    showLangDropdown = false
-                                    viewModel?.setTranslationTargetLang(langOpt.code)
-                                },
-                                shape = RoundedCornerShape(11.dp),
-                                color = if (isSelected) palette.pillActiveBg else Color.Transparent,
-                                border = if (isSelected) BorderStroke(1.dp, palette.pillActiveBorder) else null,
-                                shadowElevation = 0.dp,
-                                tonalElevation = 0.dp,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(34.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 11.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Text(
-                                            text = langOpt.badgeCode.lowercase(),
-                                            color = if (isSelected) palette.textMain else palette.textSecondary,
-                                            fontSize = 12.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold,
-                                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                        )
-                                        Text(
-                                            text = "(${langOpt.nativeName})",
-                                            color = if (isSelected) palette.textMain else palette.textMuted,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                        )
-                                    }
-                                    if (isSelected) {
-                                        PrototypeSvgIcon(
-                                            type = PrototypeIconType.CHECK,
-                                            tint = palette.textMain,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-        // 3. BOTTOM FLOATING CHROME BAR (`#readerBottomChrome` in `llunevie_prototype.html`)
-        AnimatedVisibility(
-            visible = showReaderChrome && !isTwoPageSpread,
-            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { it } + fadeIn(tween(180)),
-            exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(140)),
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-        ) {
-            val showArrows = prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD
-            val pageIndicatorLabel = when (prefs.readingFlowMode) {
-                ReadingFlowMode.WEBTOON -> {
-                    if (strings.isId) "WEBTOON · ${metrics.totalBookPages} HAL (${chapters.size.coerceAtLeast(1)} BAB)"
-                    else "WEBTOON · ${metrics.totalBookPages} P (${chapters.size.coerceAtLeast(1)} CH)"
-                }
-                ReadingFlowMode.SCROLL -> {
-                    if (strings.isId) "GULIR · ${metrics.totalBookPages} HAL (${chapters.size.coerceAtLeast(1)} BAB)"
-                    else "SCROLL · ${metrics.totalBookPages} P (${chapters.size.coerceAtLeast(1)} CH)"
-                }
-                ReadingFlowMode.SPREAD -> {
-                    val rightNum = (metrics.currentGlobalPage + 1).coerceAtMost(metrics.totalBookPages)
-                    val rangeStr = if (rightNum > metrics.currentGlobalPage) "${metrics.currentGlobalPage}–$rightNum" else "${metrics.currentGlobalPage}"
-                    if (strings.isId) "HAL $rangeStr DARI ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                    else "PAGE $rangeStr OF ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                }
-                ReadingFlowMode.PAGINATED -> {
-                    if (strings.isId) "HAL ${metrics.currentGlobalPage} DARI ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                    else "PAGE ${metrics.currentGlobalPage} OF ${metrics.totalBookPages} · ${metrics.globalPct}%"
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 20.dp)
-                    .padding(top = 4.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                    Surface(
-                        onClick = { onToggleTocDrawer(true) },
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .size(40.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.TOC_LIST,
-                                tint = palette.textMain,
-                                modifier = Modifier.size(16.dp),
-                                contentDescription = if (strings.isId) "Daftar Isi" else "Table of contents"
-                            )
-                        }
-                    }
-
-                    // In-Place Animated Bottom Scrubber Capsule (Never shrinks book viewport!)
-                    AnimatedContent(
-                        targetState = showPageScrubber,
-                        transitionSpec = {
-                            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
-                        },
-                        label = "bottomScrubberTransition",
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 8.dp)
-                            .height(40.dp)
-                    ) { isScrubberOpen ->
-                        if (!isScrubberOpen) {
-                            Surface(
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    if (showArrows) {
-                                        Text(
-                                            text = "‹",
-                                            color = palette.textMain.copy(alpha = 0.75f),
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier
-                                                .clip(CircleShape)
-                                                .clickable {
-                                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                                        externalFlipTrigger = -1
-                                                    } else {
-                                                        onTurnPage(-1)
-                                                    }
-                                                }
-                                                .padding(horizontal = 6.dp)
-                                        )
-                                    }
-                                    Text(
-                                        text = pageIndicatorLabel,
-                                        color = palette.textMain,
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        letterSpacing = 1.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .clickable { showPageScrubber = true }
-                                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                                    )
-                                    if (showArrows) {
-                                        Text(
-                                            text = "›",
-                                            color = palette.textMain.copy(alpha = 0.75f),
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier
-                                                .clip(CircleShape)
-                                                .clickable {
-                                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                                        externalFlipTrigger = 1
-                                                    } else {
-                                                        onTurnPage(1)
-                                                    }
-                                                }
-                                                .padding(horizontal = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
+                        val f = 1f - value
+                        if (isFlipbookMode) {
+                            readerZoom = 1f + (startZ - 1f) * f
+                            readerPan = Offset(startP.x * f, startP.y * f)
                         } else {
-                            Surface(
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = "${scrubberPageValue.toInt().coerceIn(1, metrics.totalBookPages)} / ${metrics.totalBookPages}",
-                                        color = palette.textMain,
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    LlunevieThinSlider(
-                                        value = scrubberPageValue,
-                                        onValueChange = { newVal ->
-                                            scrubberPageValue = newVal
-                                            val target = newVal.toInt().coerceIn(1, metrics.totalBookPages)
-                                            val targetZero = target - 1
-                                            val triple = getPageAtGlobalZero(targetZero)
-                                            if (triple != null) {
-                                                onJumpToChapterAndPage(triple.first, triple.second)
-                                            }
-                                        },
-                                        valueRange = 1f..metrics.totalBookPages.toFloat().coerceAtLeast(1f),
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Surface(
-                                        onClick = { showPageScrubber = false },
-                                        shape = CircleShape,
-                                        color = palette.accentDark,
-                                        modifier = Modifier.size(26.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text("✓", color = palette.bgApp, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
+                            nonFlipZoomScale = 1f + (startZ - 1f) * f
+                            nonFlipZoomOffset = Offset(startP.x * f, startP.y * f)
                         }
                     }
-
-                    Surface(
-                        onClick = { onToggleTypeSheet(!uiState.showReaderTypeSheet, null) },
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Aa",
-                                color = palette.textMain,
-                                fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
+                    readerZoom = 1f
+                    readerPan = Offset.Zero
+                    nonFlipZoomScale = 1f
+                    nonFlipZoomOffset = Offset.Zero
                 }
-            }
+            },
+            getPageAtGlobalZero = getPageAtGlobalZero,
+            onBack = onBack,
+            onToggleTocDrawer = onToggleTocDrawer,
+            viewModel = viewModel
+        )
 
-        // Left Vertical Page Bar in 2-Page Spread Mode (Notch-safe with in-place transition to vertical page slider)
-        if (isSpread) {
-            val cutoutStart = WindowInsets.displayCutout.asPaddingValues().calculateStartPadding(LocalLayoutDirection.current)
-            val leftBarStartPad = maxOf(36.dp, cutoutStart + 18.dp)
-            var scrubPage by remember(metrics.currentGlobalPage) {
-                mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
-            }
+        // 3. BOTTOM FLOATING CHROME BAR & SPREAD VERTICAL DOCK
+        ReaderBottomChrome(
+            uiState = uiState,
+            prefs = prefs,
+            strings = strings,
+            metrics = metrics,
+            chaptersCount = chapters.size,
+            showReaderChrome = showReaderChrome,
+            isTwoPageSpread = isTwoPageSpread,
+            showPageScrubber = showPageScrubber,
+            onShowPageScrubberChange = { showPageScrubber = it },
+            scrubberPageValue = scrubberPageValue,
+            onScrubberPageValueChange = { scrubberPageValue = it },
+            onExternalFlipTrigger = { externalFlipTrigger = it },
+            getPageAtGlobalZero = getPageAtGlobalZero,
+            onTurnPage = onTurnPage,
+            onJumpToChapterAndPage = onJumpToChapterAndPage,
+            onToggleTocDrawer = onToggleTocDrawer,
+            onToggleTypeSheet = onToggleTypeSheet
+        )
 
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .windowInsetsPadding(WindowInsets.displayCutout)
-                    .padding(start = 18.dp)
-                    .width(46.dp)
-                    .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
-                    .clip(CircleShape)
-                    .background(color = palette.bgSurface, shape = CircleShape)
-                    .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
-                    .animateContentSize(
-                        animationSpec = spring<IntSize>(dampingRatio = 0.82f, stiffness = 380f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                AnimatedContent(
-                    targetState = showInlinePageSlider,
-                    transitionSpec = {
-                        (fadeIn(animationSpec = tween(durationMillis = 160, delayMillis = 60)) +
-                            scaleIn(initialScale = 0.92f, animationSpec = tween(durationMillis = 160, delayMillis = 60)))
-                            .togetherWith(
-                                fadeOut(animationSpec = tween(durationMillis = 70)) +
-                                    scaleOut(targetScale = 0.92f, animationSpec = tween(durationMillis = 70))
-                            ) using SizeTransform(clip = false)
-                    },
-                    label = "LeftVerticalBarContent"
-                ) { isSliderMode ->
-                    if (!isSliderMode) {
-                        // Inner Column of buttons + page numbers (NO outer background/shadow/border here!)
-                        Column(
-                            modifier = Modifier
-                                .width(46.dp)
-                                .padding(vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // 1. Chapters & Illustrations button (32.dp circle)
-                            Surface(
-                                onClick = { onToggleTocDrawer(true) },
-                                shape = CircleShape,
-                                color = Color.Transparent,
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    PrototypeSvgIcon(
-                                        type = PrototypeIconType.TOC_LIST,
-                                        tint = palette.textMain,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                }
-                            }
-
-                            // 2. Previous Spread button (28.dp circle)
-                            Surface(
-                                onClick = {
-                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                        externalFlipTrigger = -1
-                                    } else {
-                                        onTurnPage(-1)
-                                    }
-                                },
-                                shape = CircleShape,
-                                color = Color.Transparent,
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("⌃", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            // 3. Compact Clickable Page Indicator: tapping morphs capsule into vertical slider!
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable {
-                                        scrubPage = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
-                                        showInlinePageSlider = true
-                                    }
-                                    .padding(vertical = 4.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = "${metrics.currentGlobalPage}",
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = palette.textPrimary,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .padding(vertical = 3.dp)
-                                        .width(14.dp)
-                                        .height(1.dp)
-                                        .background(palette.borderSoft)
-                                )
-                                Text(
-                                    text = "${metrics.totalBookPages}",
-                                    fontSize = 9.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = palette.textMuted,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                )
-                            }
-
-                            // 4. Next Spread button (28.dp circle)
-                            Surface(
-                                onClick = {
-                                    if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
-                                        externalFlipTrigger = 1
-                                    } else {
-                                        onTurnPage(1)
-                                    }
-                                },
-                                shape = CircleShape,
-                                color = Color.Transparent,
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("⌄", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            // 5. Aa Reader Settings button (32.dp circle)
-                            Surface(
-                                onClick = { onToggleTypeSheet(!uiState.showReaderTypeSheet, null) },
-                                shape = CircleShape,
-                                color = Color.Transparent,
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = "Aa",
-                                        color = palette.textMain,
-                                        fontSize = 12.sp,
-                                        fontFamily = FontFamily.Serif,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        // Inner Column of page readout + vertical slider + close '✕' button (NO outer background/shadow/border here!)
-                        val totalPages = metrics.totalBookPages.coerceAtLeast(1)
-                        val initialFraction = if (totalPages > 1) {
-                            (displayPageIndex.toFloat() / (totalPages - 1).toFloat()).coerceIn(0f, 1f)
-                        } else 0f
-
-                        var isVerticalDragging by remember { mutableStateOf(false) }
-                        var verticalDragFraction by remember(showInlinePageSlider) {
-                            mutableFloatStateOf(initialFraction)
-                        }
-
-                        if (!isVerticalDragging) {
-                            verticalDragFraction = initialFraction
-                        }
-
-                        val currentFraction = verticalDragFraction
-                        val previewPage = (currentFraction * (totalPages - 1)).roundToInt().coerceIn(0, totalPages - 1)
-
-                        Column(
-                            modifier = Modifier
-                                .width(46.dp)
-                                .height(230.dp)
-                                .padding(vertical = 10.dp, horizontal = 4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            // Top: Live page number readout ("${previewPage + 1}" bold monospace above "$totalPages" muted monospace)
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            ) {
-                                Text(
-                                    text = "${previewPage + 1}",
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = palette.textPrimary,
-                                    maxLines = 1,
-                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                )
-                                Text(
-                                    text = "$totalPages",
-                                    fontSize = 8.5.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = palette.textMuted,
-                                    maxLines = 1,
-                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                )
-                            }
-
-                            // Middle: Interactive Vertical Slider Track & Thumb (dragging vertically from top = Page 1 to bottom = totalPages)
-                            val currentTotalPages by rememberUpdatedState(totalPages)
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth()
-                                    .pointerInput(Unit) {
-                                        awaitEachGesture {
-                                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                            down.consume()
-                                            isVerticalDragging = true
-                                            val thumbRadiusPx = 8.dp.toPx()
-                                            val trackHeightPx = (size.height.toFloat() - thumbRadiusPx * 2f).coerceAtLeast(1f)
-                                            fun updateFromY(y: Float) {
-                                                val totPages = currentTotalPages
-                                                val frac = ((y - thumbRadiusPx) / trackHeightPx).coerceIn(0f, 1f)
-                                                verticalDragFraction = frac
-                                                val targetZero = (frac * (totPages - 1)).roundToInt().coerceIn(0, (totPages - 1).coerceAtLeast(0))
-                                                val leftZero = if (isSpread) (targetZero / 2) * 2 else targetZero
-                                                if (leftZero != displayPageIndex) {
-                                                    displayPageIndex = leftZero
-                                                    viewModel?.jumpToGlobalPage(leftZero)
-                                                }
-                                            }
-                                            updateFromY(down.position.y)
-
-                                            while (true) {
-                                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                                if (!change.pressed) {
-                                                    change.consume()
-                                                    break
-                                                }
-                                                change.consume()
-                                                updateFromY(change.position.y)
-                                            }
-                                            isVerticalDragging = false
-                                        }
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // Background vertical track (width = 4.dp, height = fillMaxHeight, CircleShape, borderSoft)
-                                Box(
-                                    modifier = Modifier
-                                        .width(4.dp)
-                                        .fillMaxHeight()
-                                        .clip(CircleShape)
-                                        .background(palette.borderSoft)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .fillMaxHeight(currentFraction)
-                                            .background(palette.textPrimary)
-                                    )
-                                }
-
-                                // Active Vertical Thumb
-                                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                                    val trackH = maxHeight
-                                    val thumbSize = 16.dp
-                                    val availableH = (trackH - thumbSize).coerceAtLeast(0.dp)
-                                    val thumbOffset = availableH * currentFraction
-
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopCenter)
-                                            .offset(y = thumbOffset)
-                                            .size(thumbSize)
-                                            .shadow(3.dp, CircleShape)
-                                            .clip(CircleShape)
-                                            .background(palette.textPrimary)
-                                            .border(1.5.dp, palette.bgSurface, CircleShape)
-                                    )
-                                }
-                            }
-
-                            // Bottom: Compact 28.dp circular close button that sets showInlinePageSlider = false
-                            Surface(
-                                onClick = { showInlinePageSlider = false },
-                                shape = CircleShape,
-                                color = palette.bgCard,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .padding(top = 2.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = "✕",
-                                        color = palette.textMain,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        ReaderSpreadLeftVerticalBar(
+            uiState = uiState,
+            prefs = prefs,
+            metrics = metrics,
+            isSpread = isSpread,
+            displayPageIndex = displayPageIndex,
+            onDisplayPageIndexChange = { displayPageIndex = it },
+            showInlinePageSlider = showInlinePageSlider,
+            onShowInlinePageSliderChange = { showInlinePageSlider = it },
+            onExternalFlipTrigger = { externalFlipTrigger = it },
+            onTurnPage = onTurnPage,
+            onToggleTocDrawer = onToggleTocDrawer,
+            onToggleTypeSheet = onToggleTypeSheet,
+            viewModel = viewModel
+        )
 
         // Middle-Right Quick Notes Drawer Handle Tab
         Surface(
@@ -3399,4755 +2576,105 @@ fun ReaderScreen(
         }
 
         // HIGHLIGHT & NOTE POPOVER (`#highlightPopover`)
-        var cachedQuoteForPopover by remember { mutableStateOf<String?>(null) }
-        if (selectedQuoteForPopover != null) {
-            cachedQuoteForPopover = selectedQuoteForPopover
-        }
-
-        AnimatedVisibility(
-            visible = selectedQuoteForPopover != null,
-            enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)),
-            exit = fadeOut(tween(130)) + scaleOut(targetScale = 0.94f, animationSpec = tween(130)),
-            modifier = Modifier
-                .align(if (selectedPopoverInUpperHalf) Alignment.BottomCenter else Alignment.TopCenter)
-                .padding(horizontal = 16.dp, vertical = 52.dp)
-                .fillMaxWidth()
-        ) {
-            val quote = cachedQuoteForPopover ?: selectedQuoteForPopover.orEmpty()
-            val existingHl = bookHighlights.find { it.quoteText.equals(quote, ignoreCase = true) }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = palette.sheetBg.copy(alpha = 0.97f),
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 16.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = quote,
-                                color = palette.textMain,
-                                fontSize = 13.5.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = existingHl?.noteText?.ifBlank { null }
-                                    ?: (if (strings.isId) "Sorotan tersimpan di bab ini" else "Highlight saved in this chapter"),
-                                color = palette.textMuted,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-                        Surface(
-                            onClick = {
-                                selectedQuoteForPopover = null
-                                showInlineNoteInput = false
-                                showInlineTranslation = false
-                                inlineTranslationText = null
-                                inlineTranslationError = null
-                            },
-                            shape = CircleShape,
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("✕", color = palette.textMain, fontSize = 10.sp)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            HighlightColorKey.entries.forEach { key ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(CircleShape)
-                                        .background(palette.highlightDot(key))
-                                        .border(1.5.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                                        .clickable {
-                                            onSaveHighlightNote(quote, existingHl?.noteText.orEmpty(), key, existingHl?.id, -1, -1)
-                                            selectedQuoteForPopover = null
-                                        }
-                                )
-                            }
-                        }
-                        Surface(
-                            onClick = {
-                                if (existingHl != null) onDeleteHighlightNote(existingHl.id)
-                                selectedQuoteForPopover = null
-                            },
-                            shape = CircleShape,
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier.size(30.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.TRASH_CAN,
-                                    tint = palette.textMain,
-                                    modifier = Modifier.size(15.dp),
-                                    strokeWidthDp = 1.8f
-                                )
-                            }
-                        }
-                    }
-
-                    if (showInlineNoteInput) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        HorizontalDivider(color = palette.borderSoft)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                    if (inlineNoteText.isEmpty()) {
-                                        Text(
-                                            text = if (strings.isId) "Tulis catatan untuk kutipan ini..." else "Write note...",
-                                            color = palette.textMuted,
-                                            fontSize = 11.5.sp
-                                        )
-                                    }
-                                    BasicTextField(
-                                        value = inlineNoteText,
-                                        onValueChange = { inlineNoteText = it },
-                                        singleLine = true,
-                                        textStyle = TextStyle(color = palette.textMain, fontSize = 11.5.sp),
-                                        cursorBrush = SolidColor(palette.textMain),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                            }
-                            Surface(
-                                onClick = {
-                                    onSaveHighlightNote(
-                                        quote,
-                                        inlineNoteText,
-                                        HighlightColorKey.fromKey(existingHl?.colorKey),
-                                        existingHl?.id,
-                                        -1,
-                                        -1
-                                    )
-                                    showInlineNoteInput = false
-                                    selectedQuoteForPopover = null
-                                },
-                                shape = CircleShape,
-                                color = palette.accentDark,
-                                modifier = Modifier.height(30.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 12.dp)) {
-                                    Text(
-                                        text = if (strings.isId) "Simpan" else "Save",
-                                        color = palette.bgApp,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(visible = showInlineTranslation) {
-                        Column {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            HorizontalDivider(color = palette.borderSoft)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        val badge = if (prefs.translatorEngine == "free") "FREE INSTANT"
-                                        else "AI · ${prefs.aiModelName.substringAfterLast('/').uppercase()}"
-                                        Text(
-                                            text = badge,
-                                            fontSize = 9.5.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = palette.textMuted
-                                        )
-                                        Surface(
-                                            onClick = {
-                                                val langs = getActiveTranslationLanguages(prefs.customTranslationLangs).map { it.code }
-                                                val currentNorm = normalizeTranslationLangCode(prefs.translatorTargetLang)
-                                                val currentIdx = langs.indexOfFirst { normalizeTranslationLangCode(it) == currentNorm }.let { if (it == -1) 0 else it }
-                                                val nextIdx = (currentIdx + 1) % langs.size
-                                                val newLang = langs[nextIdx]
-                                                viewModel?.updateTranslatorPrefs(targetLang = newLang)
-                                                scope.launch {
-                                                    isTranslatingInline = true
-                                                    inlineTranslationError = null
-                                                    val updatedPrefs = prefs.copy(translatorTargetLang = newLang)
-                                                    val res = translationRepo.translate(quote, updatedPrefs, context)
-                                                    if (res.isSuccess) {
-                                                        inlineTranslationText = res.getOrNull()
-                                                    } else {
-                                                        inlineTranslationError = res.exceptionOrNull()?.message ?: "Translation error"
-                                                    }
-                                                    isTranslatingInline = false
-                                                }
-                                            },
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = palette.accent.copy(alpha = 0.12f),
-                                            modifier = Modifier.clip(RoundedCornerShape(6.dp))
-                                        ) {
-                                            Text(
-                                                text = "→ ${targetLanguageDisplayName(prefs.translatorTargetLang, strings.isEn)} ▾",
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = palette.accent,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    if (isTranslatingInline) {
-                                        Text(
-                                            text = if (strings.isId) "Menerjemahkan kutipan..." else "Translating passage...",
-                                            fontSize = 11.5.sp,
-                                            fontFamily = FontFamily.Serif,
-                                            color = palette.textMuted,
-                                            modifier = Modifier.padding(vertical = 8.dp)
-                                        )
-                                    } else if (inlineTranslationError != null) {
-                                        Column {
-                                            Text(
-                                                text = inlineTranslationError.orEmpty(),
-                                                fontSize = 11.5.sp,
-                                                color = Color(0xFFE53935),
-                                                modifier = Modifier.padding(vertical = 4.dp)
-                                            )
-                                            Surface(
-                                                onClick = {
-                                                    scope.launch {
-                                                        isTranslatingInline = true
-                                                        inlineTranslationError = null
-                                                        val res = translationRepo.translate(quote, prefs, context)
-                                                        if (res.isSuccess) {
-                                                            inlineTranslationText = res.getOrNull()
-                                                        } else {
-                                                            inlineTranslationError = res.exceptionOrNull()?.message ?: "Translation error"
-                                                        }
-                                                        isTranslatingInline = false
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = palette.accentDark,
-                                                modifier = Modifier.padding(top = 4.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (strings.isId) "Coba Lagi" else "Retry",
-                                                    color = palette.bgApp,
-                                                    fontSize = 10.5.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                                )
-                                            }
-                                        }
-                                    } else if (!inlineTranslationText.isNullOrBlank()) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(max = 150.dp)
-                                                .verticalScroll(rememberScrollState())
-                                        ) {
-                                            Text(
-                                                text = inlineTranslationText.orEmpty(),
-                                                fontSize = 13.sp,
-                                                fontFamily = FontFamily.Serif,
-                                                lineHeight = 19.sp,
-                                                color = palette.textMain
-                                            )
-                                        }
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        HorizontalDivider(color = palette.borderSoft)
-                                        Spacer(modifier = Modifier.height(6.dp))
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Surface(
-                                                onClick = {
-                                                    clipboard.setText(AnnotatedString(inlineTranslationText.orEmpty()))
-                                                    viewModel?.showToast(if (strings.isId) "Terjemahan disalin" else "Translation copied")
-                                                },
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = palette.bgCard,
-                                                border = BorderStroke(1.dp, palette.borderSoft)
-                                            ) {
-                                                Text(
-                                                    text = if (strings.isId) "Salin Terjemahan" else "Copy",
-                                                    fontSize = 10.5.sp,
-                                                    color = palette.textMain,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                )
-                                            }
-
-                                            Surface(
-                                                onClick = {
-                                                    onSaveHighlightNote(
-                                                        quote,
-                                                        inlineTranslationText.orEmpty(),
-                                                        HighlightColorKey.fromKey(existingHl?.colorKey),
-                                                        existingHl?.id,
-                                                        -1,
-                                                        -1
-                                                    )
-                                                    selectedQuoteForPopover = null
-                                                    showInlineTranslation = false
-                                                },
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = palette.accentDark
-                                            ) {
-                                                Text(
-                                                    text = if (strings.isId) "Simpan ke Catatan" else "Save to Note",
-                                                    fontSize = 10.5.sp,
-                                                    color = palette.bgApp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    HorizontalDivider(color = palette.borderSoft)
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(38.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        // 1. [Pen/Note Icon] Catatan
-                        Surface(
-                            onClick = {
-                                inlineNoteText = existingHl?.noteText.orEmpty()
-                                showInlineNoteInput = !showInlineNoteInput
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (showInlineNoteInput) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.EDIT_PEN,
-                                    tint = if (showInlineNoteInput && !palette.isGlass) palette.bgApp else palette.textMain,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = strings.hlNote,
-                                    color = if (showInlineNoteInput && !palette.isGlass) palette.bgApp else palette.textMain,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        // 2. [Copy Icon] Salin
-                        Surface(
-                            onClick = {
-                                clipboard.setText(AnnotatedString(quote))
-                                selectedQuoteForPopover = null
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.BOOKMARK_OUTLINE,
-                                    tint = palette.textMain,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = strings.hlCopy,
-                                    color = palette.textMain,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        // 3. [Bookmark/List Icon] Di Buku
-                        Surface(
-                            onClick = {
-                                onSaveHighlightNote(
-                                    quote,
-                                    existingHl?.noteText.orEmpty(),
-                                    HighlightColorKey.fromKey(existingHl?.colorKey),
-                                    existingHl?.id,
-                                    -1,
-                                    -1
-                                )
-                                selectedQuoteForPopover = null
-                                onToggleNotesDrawer(true)
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.TOC_LIST,
-                                    tint = palette.textMain,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = strings.hlInBook,
-                                    color = palette.textMain,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        // 4. [Search Icon] Cari
-                        Surface(
-                            onClick = {
-                                val q = quote.take(50)
-                                selectedQuoteForPopover = null
-                                inBookSearchQuery = q
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.SEARCH,
-                                    tint = palette.textMain,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = strings.hlFind,
-                                    color = palette.textMain,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        // 5. [Translate Icon] Terjemah
-                        Surface(
-                            onClick = {
-                                showInlineTranslation = !showInlineTranslation
-                                if (showInlineTranslation && inlineTranslationText == null) {
-                                    scope.launch {
-                                        isTranslatingInline = true
-                                        inlineTranslationError = null
-                                        val res = translationRepo.translate(quote, prefs, context)
-                                        if (res.isSuccess) {
-                                            inlineTranslationText = res.getOrNull()
-                                        } else {
-                                            inlineTranslationError = res.exceptionOrNull()?.message ?: "Translation error"
-                                        }
-                                        isTranslatingInline = false
-                                    }
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (showInlineTranslation) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.TRANSLATE,
-                                    tint = if (showInlineTranslation && !palette.isGlass) palette.bgApp else palette.textMain,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = strings.hlTranslate,
-                                    color = if (showInlineTranslation && !palette.isGlass) palette.bgApp else palette.textMain,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        ReaderHighlightNotePopover(
+            selectedQuoteForPopover = selectedQuoteForPopover,
+            selectedPopoverInUpperHalf = selectedPopoverInUpperHalf,
+            onDismissQuotePopover = {
+                selectedQuoteForPopover = null
+                showInlineNoteInput = false
+                showInlineTranslation = false
+                inlineTranslationText = null
+                inlineTranslationError = null
+            },
+            showInlineNoteInput = showInlineNoteInput,
+            onShowInlineNoteInputChange = { showInlineNoteInput = it },
+            inlineNoteText = inlineNoteText,
+            onInlineNoteTextChange = { inlineNoteText = it },
+            showInlineTranslation = showInlineTranslation,
+            onShowInlineTranslationChange = { showInlineTranslation = it },
+            inlineTranslationText = inlineTranslationText,
+            onInlineTranslationTextChange = { inlineTranslationText = it },
+            isTranslatingInline = isTranslatingInline,
+            onIsTranslatingInlineChange = { isTranslatingInline = it },
+            inlineTranslationError = inlineTranslationError,
+            onInlineTranslationErrorChange = { inlineTranslationError = it },
+            bookHighlights = bookHighlights,
+            prefs = prefs,
+            strings = strings,
+            translationRepo = translationRepo,
+            onSaveHighlightNote = onSaveHighlightNote,
+            onDeleteHighlightNote = onDeleteHighlightNote,
+            onToggleNotesDrawer = onToggleNotesDrawer,
+            onOpenInBookSearch = { inBookSearchQuery = it },
+            viewModel = viewModel
+        )
 
         // IN-BOOK SEARCH OVERLAY (`#inBookSearchDrawer`)
-        var cachedSearchQuery by remember { mutableStateOf<String?>(null) }
-        if (inBookSearchQuery != null) {
-            cachedSearchQuery = inBookSearchQuery
-        }
+        ReaderInBookSearchOverlay(
+            inBookSearchQuery = inBookSearchQuery,
+            onDismissSearch = { inBookSearchQuery = null },
+            chapters = chapters,
+            strings = strings,
+            onJumpToChapterAndPage = onJumpToChapterAndPage
+        )
 
-        // Search Scrim
-        AnimatedVisibility(
-            visible = inBookSearchQuery != null,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(160)),
-            modifier = Modifier.zIndex(90f)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { inBookSearchQuery = null }
-            )
-        }
-
-        // Search Panel
-        AnimatedVisibility(
-            visible = inBookSearchQuery != null,
-            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
-            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .zIndex(91f)
-        ) {
-            val initialQuery = cachedSearchQuery ?: inBookSearchQuery.orEmpty()
-            var currentQuery by remember(cachedSearchQuery) { mutableStateOf(initialQuery) }
-            val searchResults = remember(currentQuery, chapters) {
-                val q = currentQuery.trim()
-                if (q.length < 2) emptyList()
-                else {
-                    val list = mutableListOf<Triple<Int, Int, String>>() // chIdx, pgIdx, snippet
-                    for ((chIdx, ch) in chapters.withIndex()) {
-                        for ((pgIdx, pageContent) in ch.pages.withIndex()) {
-                            val clean = pageContent
-                                .replace(Regex("\\[ILLUST:[^]]+]"), "")
-                                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                                .trim()
-                            if (clean.contains(q, ignoreCase = true)) {
-                                val matchIdx = clean.indexOf(q, ignoreCase = true)
-                                val start = maxOf(0, matchIdx - 30)
-                                val end = minOf(clean.length, matchIdx + q.length + 45)
-                                val snip = (if (start > 0) "…" else "") + clean.substring(start, end).trim() + (if (end < clean.length) "…" else "")
-                                list.add(Triple(chIdx, pgIdx, snip))
-                            }
-                        }
-                    }
-                    list
-                }
-            }
-
-            Surface(
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = palette.sheetBg,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 24.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.72f)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {}
-            ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .navigationBarsPadding()
-                            .padding(20.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (strings.isId) "CARI DI BUKU INI" else "SEARCH IN THIS BOOK",
-                                    color = palette.textMuted,
-                                    fontSize = 9.5.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    letterSpacing = 1.2.sp
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${searchResults.size} ${if (strings.isId) "hasil ditemukan" else "results found"}",
-                                    color = palette.textMain,
-                                    fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Surface(
-                                onClick = { inBookSearchQuery = null },
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("✕", color = palette.textMain, fontSize = 11.sp)
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text("🔍", fontSize = 13.sp)
-                                BasicTextField(
-                                    value = currentQuery,
-                                    onValueChange = { currentQuery = it },
-                                    singleLine = true,
-                                    textStyle = TextStyle(color = palette.textMain, fontSize = 13.sp),
-                                    cursorBrush = SolidColor(palette.textMain),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (currentQuery.isNotEmpty()) {
-                                    Text(
-                                        text = "✕",
-                                        color = palette.textMuted,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .clickable { currentQuery = "" }
-                                            .padding(4.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = palette.borderSoft)
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        if (searchResults.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (currentQuery.trim().length < 2)
-                                        (if (strings.isId) "Ketik kata kunci untuk mencari..." else "Type keywords to search...")
-                                    else
-                                        (if (strings.isId) "Tidak ada kata yang cocok ditemukan" else "No matching text found"),
-                                    color = palette.textMuted,
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                itemsIndexed(searchResults, key = { idx, _ -> "sr_$idx" }) { _, (chIdx, pgIdx, snippet) ->
-                                    val chTitle = chapters.getOrNull(chIdx)?.title.orEmpty()
-                                    Surface(
-                                        onClick = {
-                                            onJumpToChapterAndPage(chIdx, pgIdx)
-                                            inBookSearchQuery = null
-                                        },
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = palette.bgSurface,
-                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = chTitle,
-                                                    color = palette.textMain,
-                                                    fontSize = 12.sp,
-                                                    fontFamily = FontFamily.Serif,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                Surface(
-                                                    shape = CircleShape,
-                                                    color = palette.pillActiveBg,
-                                                    border = BorderStroke(1.dp, palette.pillActiveBorder)
-                                                ) {
-                                                    Text(
-                                                        text = "${strings.pagesUnit} ${pgIdx + 1}",
-                                                        color = palette.textMain,
-                                                        fontSize = 9.5.sp,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = snippet,
-                                                color = palette.textMuted,
-                                                fontSize = 12.sp,
-                                                lineHeight = 16.sp,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-        val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
         // 4. IN-HIERARCHY READER TYPOGRAPHY & FLOW SHEET (`#readerTypeSheet` in `llunevie_prototype.html`)
-        // Using an in-hierarchy overlay instead of ModalBottomSheet prevents WindowManager crashes during orientation switches!
-        val scrimAlpha by animateFloatAsState(
-            targetValue = if (activeDraggingSliderKey != null) 0f else 0.35f,
-            animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-            label = "settingsScrimAlpha"
+        ReaderTypographySheet(
+            uiState = uiState,
+            prefs = prefs,
+            strings = strings,
+            isPdfBook = isPdfBook,
+            activeDraggingSliderKey = activeDraggingSliderKey,
+            onActiveDraggingSliderKeyChanged = { activeDraggingSliderKey = it },
+            onToggleTypeSheet = onToggleTypeSheet,
+            onSetTheme = onSetTheme,
+            onSetReadingFlowMode = onSetReadingFlowMode,
+            onSetPageAnimStyle = onSetPageAnimStyle,
+            onUpdateTypography = onUpdateTypography,
+            viewModel = viewModel
         )
-        val nonActiveAlpha by animateFloatAsState(
-            targetValue = if (activeDraggingSliderKey != null) 0f else 1f,
-            animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
-            label = "nonActiveAlpha"
-        )
-
-        // Backdrop Scrim
-        AnimatedVisibility(
-            visible = uiState.showReaderTypeSheet,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(160))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = scrimAlpha))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onToggleTypeSheet(false, null) }
-            )
-        }
-
-        // Bottom Sheet Panel
-        AnimatedVisibility(
-            visible = uiState.showReaderTypeSheet,
-            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
-            exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(150)),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = palette.bgSurface.copy(alpha = nonActiveAlpha),
-                border = BorderStroke(1.dp, palette.borderSoft.copy(alpha = nonActiveAlpha)),
-                shadowElevation = (8f * nonActiveAlpha).dp,
-                modifier = Modifier
-                    .widthIn(min = 340.dp, max = 420.dp)
-                    .fillMaxWidth()
-                    .heightIn(max = if (isLandscape) 310.dp else 460.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {}
-            ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 18.dp, vertical = 14.dp)
-                    ) {
-                        // Top Tab Switcher (TEXT | THEME | FLOW / ALUR | TEMA) + Close Button (✕)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .alpha(nonActiveAlpha),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val availableTabs = if (isPdfBook) {
-                                listOf(
-                                    "turn" to (if (strings.isId) "ALUR" else "FLOW"),
-                                    "page" to (if (strings.isId) "TEMA" else "THEME")
-                                )
-                            } else {
-                                listOf(
-                                    "text" to (if (strings.isId) "TEKS" else "TEXT"),
-                                    "page" to (if (strings.isId) "TEMA" else "THEME"),
-                                    "turn" to (if (strings.isId) "ALUR" else "FLOW")
-                                )
-                            }
-                            val effectiveTab = if (isPdfBook && uiState.activeReaderSheetTab == "text") "turn" else uiState.activeReaderSheetTab
-
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(36.dp)
-                                    .clip(CircleShape)
-                                    .background(palette.bgCard)
-                                    .border(1.dp, palette.borderSoft, CircleShape)
-                                    .padding(3.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                availableTabs.forEach { (tabKey, label) ->
-                                    val isSelected = (effectiveTab == tabKey)
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxHeight()
-                                            .then(
-                                                if (isSelected) {
-                                                    Modifier
-                                                        .shadow(elevation = 1.dp, shape = CircleShape, clip = false)
-                                                        .clip(CircleShape)
-                                                        .background(palette.bgSurface, CircleShape)
-                                                        .border(0.75.dp, palette.borderSoft, CircleShape)
-                                                } else {
-                                                    Modifier.clip(CircleShape)
-                                                }
-                                            )
-                                            .clickable { onToggleTypeSheet(true, tabKey) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = label,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                            color = if (isSelected) palette.textPrimary else palette.textSecondary,
-                                            maxLines = 1,
-                                            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Surface(
-                                onClick = { onToggleTypeSheet(false, null) },
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Canvas(modifier = Modifier.size(11.dp)) {
-                                        val strokePx = 1.5.dp.toPx()
-                                        drawLine(
-                                            color = palette.textPrimary,
-                                            start = Offset(0f, 0f),
-                                            end = Offset(size.width, size.height),
-                                            strokeWidth = strokePx,
-                                            cap = StrokeCap.Round
-                                        )
-                                        drawLine(
-                                            color = palette.textPrimary,
-                                            start = Offset(size.width, 0f),
-                                            end = Offset(0f, size.height),
-                                            strokeWidth = strokePx,
-                                            cap = StrokeCap.Round
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        val currentTabKey = if (isPdfBook && uiState.activeReaderSheetTab == "text") "turn" else uiState.activeReaderSheetTab
-
-                        AnimatedContent(
-                            targetState = currentTabKey,
-                            transitionSpec = {
-                                val tabOrder = listOf("text", "page", "turn")
-                                val initialIdx = when (initialState) {
-                                    "text", "type" -> 0
-                                    "page" -> 1
-                                    "turn" -> 2
-                                    else -> 0
-                                }
-                                val targetIdx = when (targetState) {
-                                    "text", "type" -> 0
-                                    "page" -> 1
-                                    "turn" -> 2
-                                    else -> 0
-                                }
-                                val dir = if (targetIdx >= initialIdx) 1 else -1
-                                (slideInHorizontally(spring(dampingRatio = 0.88f, stiffness = 420f)) { w -> dir * (w / 3) } + fadeIn(tween(180)))
-                                    .togetherWith(slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { w -> -dir * (w / 3) } + fadeOut(tween(140)))
-                            },
-                            modifier = Modifier.animateContentSize(spring(dampingRatio = 0.88f, stiffness = 420f)),
-                            label = "readerTypeTabContent"
-                        ) { tab ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                when (tab) {
-                                    // TAB 1: SIZE, ALIGNMENT, WEIGHT & UNIFIED "FONT" SECTION (1:1 with #sheetTabText)
-                                    "text", "type" -> {
-                                    Column(
-                                        modifier = Modifier.alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "FONT_SIZE") 1f else nonActiveAlpha)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(
-                                                text = if (strings.isId) "UKURAN HURUF" else "FONT SIZE",
-                                                color = palette.textMuted,
-                                                fontSize = 10.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                letterSpacing = 1.sp
-                                            )
-                                            Text(
-                                                text = "${prefs.fontSizeSp}px",
-                                                color = palette.textMain,
-                                                fontSize = 10.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                        FlyleafThinSlider(
-                                            value = prefs.fontSizeSp.toFloat(),
-                                            onValueChange = {
-                                                activeDraggingSliderKey = "FONT_SIZE"
-                                                onUpdateTypography(null, it.roundToInt(), null, null, null, null, null, null, null, null, false)
-                                            },
-                                            onValueChangeFinished = {
-                                                activeDraggingSliderKey = null
-                                                viewModel?.commitTypography()
-                                            },
-                                            valueRange = 12f..28f
-                                        )
-                                    }
-
-                                    // 2-Column Grid: PERATAAN TEKS + KETEBALAN HURUF
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .alpha(nonActiveAlpha),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = if (strings.isId) "PERATAAN TEKS" else "TEXT ALIGNMENT",
-                                                color = palette.textMuted,
-                                                fontSize = 9.5.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                letterSpacing = 1.sp,
-                                                modifier = Modifier.padding(bottom = 6.dp)
-                                            )
-                                            ClassicGlassSegmentedControl(
-                                                items = listOf(
-                                                    "left" to (if (strings.isId) "Kiri" else "Left"),
-                                                    "justify" to "Justify",
-                                                    "center" to (if (strings.isId) "Tengah" else "Center")
-                                                ),
-                                                selectedItem = prefs.textAlign.lowercase(),
-                                                onItemSelected = { onUpdateTypography(null, null, null, it, null, null, null, null, null, null, true) },
-                                                height = 34.dp
-                                            )
-                                        }
-
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = if (strings.isId) "KETEBALAN HURUF" else "FONT WEIGHT",
-                                                color = palette.textMuted,
-                                                fontSize = 9.5.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                letterSpacing = 1.sp,
-                                                modifier = Modifier.padding(bottom = 6.dp)
-                                            )
-                                            ClassicGlassSegmentedControl(
-                                                items = listOf(
-                                                    400 to "Normal",
-                                                    500 to "Medium",
-                                                    600 to (if (strings.isId) "Tebal" else "Bold")
-                                                ),
-                                                selectedItem = prefs.fontWeight,
-                                                onItemSelected = { onUpdateTypography(null, null, it, null, null, null, null, null, null, null, true) },
-                                                height = 34.dp
-                                            )
-                                        }
-                                    }
-
-                                    // FONT SECTION
-                                    Column(modifier = Modifier.alpha(nonActiveAlpha)) {
-                                        Text(
-                                            text = "FONT",
-                                            color = palette.textMuted,
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            letterSpacing = 1.sp,
-                                            modifier = Modifier.padding(bottom = 8.dp)
-                                        )
-                                        val readerFontContext = LocalContext.current
-                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            CURATED_READER_FONTS.chunked(3).forEach { rowFonts ->
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    rowFonts.forEach { (famKey, famDisplay) ->
-                                                        val selected = prefs.fontFamily == famKey
-                                                        val chipFontFamily = remember(famKey) { getReaderFontFamily(readerFontContext, famKey) }
-                                                        Surface(
-                                                            onClick = { onUpdateTypography(famKey, null, null, null, null, null, null, null, null, null, true) },
-                                                            shape = RoundedCornerShape(8.dp),
-                                                            color = if (selected) palette.textPrimary else palette.bgSurface,
-                                                            border = BorderStroke(1.dp, if (selected) palette.textPrimary else palette.borderSoft),
-                                                            modifier = Modifier
-                                                                .weight(1f)
-                                                                .height(32.dp)
-                                                                .clip(RoundedCornerShape(8.dp))
-                                                        ) {
-                                                            Box(contentAlignment = Alignment.Center) {
-                                                                Text(
-                                                                    text = famDisplay,
-                                                                    color = if (selected) palette.bgApp else palette.textPrimary,
-                                                                    fontSize = 11.sp,
-                                                                    fontFamily = chipFontFamily,
-                                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    textAlign = TextAlign.Center
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                    if (rowFonts.size < 3) {
-                                                        repeat(3 - rowFonts.size) {
-                                                            Spacer(modifier = Modifier.weight(1f))
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // TAB 2: THEME & COMFORT SPACING (1:1 with #sheetTabPage)
-                                "page" -> {
-                                    Column(modifier = Modifier.alpha(nonActiveAlpha)) {
-                                        Text(
-                                            text = if (strings.isId) "TEMA BACA" else "READING THEME",
-                                            color = palette.textMuted,
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            letterSpacing = 1.sp,
-                                            modifier = Modifier.padding(bottom = 8.dp)
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            val isSystemDark = isSystemInDarkTheme()
-                                            val effectiveTheme = prefs.effectiveTheme(isSystemDark)
-                                            val themeColors = listOf(
-                                                Triple(AppThemeMode.PAPER, Color(0xFFF5F2EA), Color(0xFF23201A)),
-                                                Triple(AppThemeMode.WHITE, Color(0xFFFFFFFF), Color(0xFF18181B)),
-                                                Triple(AppThemeMode.SEPIA, Color(0xFFEFE6D5), Color(0xFF2C2217)),
-                                                Triple(AppThemeMode.BLACK, Color(0xFF141413), Color(0xFFEDEAE2))
-                                            )
-                                            themeColors.forEach { (mode, chipBg, chipFg) ->
-                                                val active = effectiveTheme == mode
-                                                Surface(
-                                                    onClick = { onSetTheme(mode) },
-                                                    shape = RoundedCornerShape(16.dp),
-                                                    color = chipBg,
-                                                    border = BorderStroke(
-                                                        width = if (active) 2.dp else 1.dp,
-                                                        color = if (active) palette.textMain else palette.borderSoft
-                                                    ),
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Text(
-                                                        text = mode.displayLabel,
-                                                        color = chipFg,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                                        textAlign = TextAlign.Center,
-                                                        modifier = Modifier.padding(vertical = 8.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                     // PDF Theme Settings (only for PDF books)
-                                     if (isPdfBook) {
-                                         Spacer(modifier = Modifier.height(16.dp))
-
-                                         // Apply Theme to PDF Pages toggle
-                                         Row(
-                                             modifier = Modifier
-                                                 .fillMaxWidth()
-                                                 .clickable { viewModel?.setPdfThemeTintEnabled(!prefs.pdfThemeTintEnabled) }
-                                                 .padding(vertical = 12.dp),
-                                             horizontalArrangement = Arrangement.SpaceBetween,
-                                             verticalAlignment = Alignment.CenterVertically
-                                         ) {
-                                             Column(modifier = Modifier.weight(1f)) {
-                                                 Text(
-                                                     text = if (strings.isId) "Adaptasi Tema pada Kertas PDF" else "Apply Theme to PDF Pages",
-                                                     color = palette.textMain,
-                                                     fontSize = 13.sp,
-                                                     fontWeight = FontWeight.Medium
-                                                 )
-                                                 Spacer(modifier = Modifier.height(2.dp))
-                                                 Text(
-                                                     text = if (strings.isId) "Sesuaikan warna halaman teks PDF dengan tema Paper, Sepia, atau Gelap" else "Tint or invert PDF text pages to match Paper, Sepia, or Dark theme",
-                                                     color = palette.textMuted,
-                                                     fontSize = 10.sp,
-                                                     lineHeight = 13.sp
-                                                 )
-                                             }
-                                             Spacer(modifier = Modifier.width(12.dp))
-                                             ModernSwitch(
-                                                 checked = prefs.pdfThemeTintEnabled,
-                                                 onCheckedChange = { viewModel?.setPdfThemeTintEnabled(it) }
-                                             )
-                                         }
-
-                                         // Preserve Illustration Colors toggle
-                                         Row(
-                                             modifier = Modifier
-                                                 .fillMaxWidth()
-                                                 .clickable(enabled = prefs.pdfThemeTintEnabled) {
-                                                     viewModel?.setPdfProtectIllustrations(!prefs.pdfProtectIllustrations)
-                                                 }
-                                                 .padding(vertical = 12.dp)
-                                                 .alpha(if (prefs.pdfThemeTintEnabled) 1f else 0.5f),
-                                             horizontalArrangement = Arrangement.SpaceBetween,
-                                             verticalAlignment = Alignment.CenterVertically
-                                         ) {
-                                             Column(modifier = Modifier.weight(1f)) {
-                                                 Text(
-                                                     text = if (strings.isId) "Jaga Warna Asli Ilustrasi & Sampul" else "Preserve Original Illustration Colors",
-                                                     color = palette.textMain,
-                                                     fontSize = 13.sp,
-                                                     fontWeight = FontWeight.Medium
-                                                 )
-                                                 Spacer(modifier = Modifier.height(2.dp))
-                                                 Text(
-                                                     text = if (strings.isId) "Jangan inversi halaman sampul dan gambar ilustrasi saat mode gelap/sepia aktif" else "Keep original colors on cover and artwork pages in dark/sepia mode",
-                                                     color = palette.textMuted,
-                                                     fontSize = 10.sp,
-                                                     lineHeight = 13.sp
-                                                 )
-                                             }
-                                             Spacer(modifier = Modifier.width(12.dp))
-                                             ModernSwitch(
-                                                 checked = prefs.pdfProtectIllustrations,
-                                                 onCheckedChange = { if (prefs.pdfThemeTintEnabled) viewModel?.setPdfProtectIllustrations(it) }
-                                             )
-                                         }
-                                     }
-
-                                     // If not PDF, show 2x2 Comfort Sliders Grid & Margins/Indents
-                                     if (!isPdfBook) {
-                                         Row(
-                                             modifier = Modifier.fillMaxWidth(),
-                                             horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                         ) {
-                                             Column(
-                                                 modifier = Modifier
-                                                     .weight(1f)
-                                                     .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "LINE_SPACING") 1f else nonActiveAlpha)
-                                             ) {
-                                                 Row(
-                                                     modifier = Modifier.fillMaxWidth(),
-                                                     horizontalArrangement = Arrangement.SpaceBetween
-                                                 ) {
-                                                     Text(
-                                                         text = if (strings.isId) "SPASI BARIS" else "LINE SPACING",
-                                                         color = palette.textMuted,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                     Text(
-                                                         text = String.format("%.2f", prefs.lineHeightMultiplier),
-                                                         color = palette.textMain,
-                                                         fontSize = 9.sp,
-                                                         fontFamily = FontFamily.Monospace
-                                                     )
-                                                 }
-                                                   FlyleafThinSlider(
-                                                       value = prefs.lineHeightMultiplier,
-                                                       onValueChange = {
-                                                           activeDraggingSliderKey = "LINE_SPACING"
-                                                           onUpdateTypography(null, null, null, null, it, null, null, null, null, null, false)
-                                                       },
-                                                       onValueChangeFinished = {
-                                                           activeDraggingSliderKey = null
-                                                           viewModel?.commitTypography()
-                                                       },
-                                                       valueRange = 1.2f..2.4f
-                                                   )
-                                               }
-
-                                               Column(
-                                                   modifier = Modifier
-                                                       .weight(1f)
-                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PARA_SPACING") 1f else nonActiveAlpha)
-                                               ) {
-                                                   Row(
-                                                       modifier = Modifier.fillMaxWidth(),
-                                                       horizontalArrangement = Arrangement.SpaceBetween
-                                                   ) {
-                                                       Text(
-                                                           text = if (strings.isId) "JARAK PARAGRAF" else "PARA SPACING",
-                                                           color = palette.textMuted,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                       Text(
-                                                           text = String.format("%.1fem", prefs.paraSpacingEm),
-                                                           color = palette.textMain,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                   }
-                                                   FlyleafThinSlider(
-                                                       value = prefs.paraSpacingEm,
-                                                       onValueChange = {
-                                                           activeDraggingSliderKey = "PARA_SPACING"
-                                                           onUpdateTypography(null, null, null, null, null, it, null, null, null, null, false)
-                                                       },
-                                                       onValueChangeFinished = {
-                                                           activeDraggingSliderKey = null
-                                                           viewModel?.commitTypography()
-                                                       },
-                                                       valueRange = 0.4f..2.2f
-                                                   )
-                                               }
-                                           }
-
-                                           Row(
-                                               modifier = Modifier.fillMaxWidth(),
-                                               horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                           ) {
-                                               Column(
-                                                   modifier = Modifier
-                                                       .weight(1f)
-                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "LETTER_SPACING") 1f else nonActiveAlpha)
-                                               ) {
-                                                   Row(
-                                                       modifier = Modifier.fillMaxWidth(),
-                                                       horizontalArrangement = Arrangement.SpaceBetween
-                                                   ) {
-                                                       Text(
-                                                           text = if (strings.isId) "SPASI HURUF" else "LETTER SPACING",
-                                                           color = palette.textMuted,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                       Text(
-                                                           text = String.format("%.2fem", prefs.letterSpacingEm),
-                                                           color = palette.textMain,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                   }
-                                                   FlyleafThinSlider(
-                                                       value = prefs.letterSpacingEm,
-                                                       onValueChange = {
-                                                           activeDraggingSliderKey = "LETTER_SPACING"
-                                                           onUpdateTypography(null, null, null, null, null, null, it, null, null, null, false)
-                                                       },
-                                                       onValueChangeFinished = {
-                                                           activeDraggingSliderKey = null
-                                                           viewModel?.commitTypography()
-                                                       },
-                                                       valueRange = -0.02f..0.10f
-                                                   )
-                                               }
-
-                                               Column(
-                                                   modifier = Modifier
-                                                       .weight(1f)
-                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "WORD_SPACING") 1f else nonActiveAlpha)
-                                               ) {
-                                                   Row(
-                                                       modifier = Modifier.fillMaxWidth(),
-                                                       horizontalArrangement = Arrangement.SpaceBetween
-                                                   ) {
-                                                       Text(
-                                                           text = if (strings.isId) "SPASI KATA" else "WORD SPACING",
-                                                           color = palette.textMuted,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                       Text(
-                                                           text = "${prefs.wordSpacingPx}px",
-                                                           color = palette.textMain,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                   }
-                                                   FlyleafThinSlider(
-                                                       value = prefs.wordSpacingPx.toFloat(),
-                                                       onValueChange = {
-                                                           activeDraggingSliderKey = "WORD_SPACING"
-                                                           onUpdateTypography(null, null, null, null, null, null, null, it.roundToInt(), null, null, false)
-                                                       },
-                                                       onValueChangeFinished = {
-                                                           activeDraggingSliderKey = null
-                                                           viewModel?.commitTypography()
-                                                       },
-                                                       valueRange = 0f..8f
-                                                   )
-                                               }
-                                           }
-
-                                           // Bottom Row: MARGIN TEPI + INDENTASI PARAGRAF
-                                           Row(
-                                               modifier = Modifier.fillMaxWidth(),
-                                               horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                               verticalAlignment = Alignment.CenterVertically
-                                           ) {
-                                               Column(
-                                                   modifier = Modifier
-                                                       .weight(1f)
-                                                       .alpha(if (activeDraggingSliderKey == null || activeDraggingSliderKey == "PAGE_MARGIN") 1f else nonActiveAlpha)
-                                               ) {
-                                                   Row(
-                                                       modifier = Modifier.fillMaxWidth(),
-                                                       horizontalArrangement = Arrangement.SpaceBetween
-                                                   ) {
-                                                       Text(
-                                                           text = if (strings.isId) "MARGIN TEPI" else "PAGE MARGIN",
-                                                           color = palette.textMuted,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                       Text(
-                                                           text = "${prefs.pageMarginDp}px",
-                                                           color = palette.textMain,
-                                                           fontSize = 9.sp,
-                                                           fontFamily = FontFamily.Monospace
-                                                       )
-                                                   }
-                                                   FlyleafThinSlider(
-                                                       value = prefs.pageMarginDp.toFloat(),
-                                                       onValueChange = {
-                                                           activeDraggingSliderKey = "PAGE_MARGIN"
-                                                           onUpdateTypography(null, null, null, null, null, null, null, null, it.roundToInt(), null, false)
-                                                       },
-                                                       onValueChangeFinished = {
-                                                           activeDraggingSliderKey = null
-                                                           viewModel?.commitTypography()
-                                                       },
-                                                       valueRange = 12f..48f
-                                                   )
-                                             }
-
-                                             Column(
-                                                 modifier = Modifier
-                                                     .weight(1f)
-                                                     .alpha(nonActiveAlpha)
-                                             ) {
-                                                  Text(
-                                                      text = if (strings.isId) "INDENTASI PARAGRAF" else "PARA INDENT",
-                                                      color = palette.textMuted,
-                                                      fontSize = 9.sp,
-                                                      fontFamily = FontFamily.Monospace,
-                                                      modifier = Modifier.padding(bottom = 6.dp)
-                                                  )
-                                                    ClassicGlassSegmentedControl(
-                                                        items = listOf(
-                                                            false to (if (strings.isId) "Tanpa" else "None"),
-                                                            true to "Indent"
-                                                        ),
-                                                        selectedItem = prefs.paraIndent,
-                                                        onItemSelected = { onUpdateTypography(null, null, null, null, null, null, null, null, null, it, true) },
-                                                        height = 34.dp
-                                                    )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // TAB 3: FLOW MODES & PAGE ANIMATION (1:1 with #sheetTabTurn)
-                                   "turn" -> {
-                                       Column(
-                                           modifier = Modifier
-                                               .fillMaxWidth()
-                                               .alpha(nonActiveAlpha),
-                                           verticalArrangement = Arrangement.spacedBy(10.dp)
-                                       ) {
-                                           Text(
-                                               text = if (strings.isId) "MODE ALUR BACA" else "READING FLOW MODE",
-                                               color = palette.textMuted,
-                                               fontSize = 10.sp,
-                                               fontFamily = FontFamily.Monospace,
-                                               letterSpacing = 1.sp
-                                           )
-                                           val modePairs = ReadingFlowMode.entries.chunked(2)
-                                           modePairs.forEach { rowModes ->
-                                               Row(
-                                                   modifier = Modifier.fillMaxWidth(),
-                                                   horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                               ) {
-                                                   rowModes.forEach { mode ->
-                                                       val selected = prefs.readingFlowMode == mode
-                                                       val cardBg = if (palette.isGlass) {
-                                                           if (selected) palette.pillActiveBg else palette.bgSurface
-                                                       } else {
-                                                           if (selected) palette.accentDark else palette.bgSurface
-                                                       }
-                                                       val cardBorder = if (palette.isGlass) {
-                                                           if (selected) palette.pillActiveBorder else palette.borderSoft
-                                                       } else {
-                                                           if (selected) palette.accentDark else palette.borderSoft
-                                                       }
-                                                       val titleColor = if (selected && !palette.isGlass) palette.bgApp else palette.textMain
-                                                       val subtitleColor = if (selected && !palette.isGlass) palette.bgApp.copy(alpha = 0.75f) else palette.textMuted
-                                                        val modeIcon = when (mode) {
-                                                            ReadingFlowMode.PAGINATED -> PrototypeIconType.CHEVRON_RIGHT
-                                                            ReadingFlowMode.SCROLL -> PrototypeIconType.CHEVRON_DOWN
-                                                            ReadingFlowMode.WEBTOON -> PrototypeIconType.LIST_BULLETS
-                                                            ReadingFlowMode.SPREAD -> PrototypeIconType.FULL_COVER
-                                                        }
-
-                                                        Row(
-                                                            modifier = Modifier
-                                                                .weight(1f)
-                                                                .heightIn(min = 62.dp)
-                                                                .clip(RoundedCornerShape(14.dp))
-                                                                .background(if (selected) palette.textPrimary else palette.bgCard)
-                                                                .border(1.dp, if (selected) palette.textPrimary else palette.borderSoft, RoundedCornerShape(14.dp))
-                                                                .clickable { onSetReadingFlowMode(mode) }
-                                                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            PrototypeSvgIcon(
-                                                                type = modeIcon,
-                                                                tint = if (selected) palette.bgApp else palette.textSecondary,
-                                                                modifier = Modifier.size(16.dp),
-                                                                strokeWidthDp = 1.8f
-                                                            )
-                                                            Spacer(modifier = Modifier.width(10.dp))
-                                                            Column(modifier = Modifier.weight(1f)) {
-                                                                Text(
-                                                                    text = mode.localizedLabel(prefs.lang),
-                                                                    fontSize = 12.5.sp,
-                                                                    lineHeight = 15.sp,
-                                                                    fontWeight = FontWeight.SemiBold,
-                                                                    color = if (selected) palette.bgApp else palette.textPrimary,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                                                )
-                                                                Spacer(modifier = Modifier.height(2.dp))
-                                                                Text(
-                                                                    text = mode.localizedDesc(prefs.lang),
-                                                                    fontSize = 10.sp,
-                                                                    lineHeight = 13.sp,
-                                                                    color = if (selected) palette.bgApp.copy(alpha = 0.78f) else palette.textSecondary,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                           HorizontalDivider(color = palette.borderSoft)
-
-                                           Text(
-                                               text = if (strings.isId) "GAYA ANIMASI HALAMAN" else "PAGE ANIMATION STYLE",
-                                               color = palette.textMuted,
-                                               fontSize = 10.sp,
-                                               fontFamily = FontFamily.Monospace,
-                                               letterSpacing = 1.sp
-                                           )
-                                           ClassicGlassSegmentedControl(
-                                               items = PageAnimStyle.entries.map { it to it.label },
-                                               selectedItem = prefs.pageAnimStyle,
-                                               onItemSelected = { onSetPageAnimStyle(it) },
-                                               height = 36.dp
-                                           )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
 
         // 5. LEFT SIDEBAR TOC & ILLUSTRATIONS DRAWER (`#readerTocDrawer` with Footer Progress Bar!)
-        // Backdrop Scrim
-        AnimatedVisibility(
-            visible = uiState.showReaderTocDrawer,
-            enter = fadeIn(tween(220)),
-            exit = fadeOut(tween(180))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onToggleTocDrawer(false) }
-            )
-        }
-
-        // Left Drawer Panel
-        AnimatedVisibility(
-            visible = uiState.showReaderTocDrawer,
-            enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { -it } + fadeIn(tween(180)),
-            exit = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(160)),
-            modifier = Modifier.align(Alignment.CenterStart)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
-                color = palette.sheetBg,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 24.dp,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.82f)
-                    .widthIn(max = 300.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {}
-            ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 14.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (strings.isId) "DAFTAR BAB & ILUSTRASI" else "CHAPTERS & ILLUSTRATIONS",
-                                        color = palette.textMuted.copy(alpha = 0.7f),
-                                        fontSize = 9.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        letterSpacing = 1.4.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = book.title,
-                                        color = palette.textMain,
-                                        fontSize = 17.sp,
-                                        fontFamily = FontFamily.Serif,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = if (strings.isEn) "${book.displayFormatLabel(true)} · ${chapters.size} chapters" else "${book.displayFormatLabel(false)} · ${chapters.size} bab",
-                                        color = palette.textMuted,
-                                        fontSize = 11.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    if (isPdfBook && uiState.pdfIndexingState[book.id] == null) {
-                                        Surface(
-                                            onClick = { viewModel?.forceReindexCurrentPdfBook() },
-                                            shape = CircleShape,
-                                            color = palette.bgSurface,
-                                            border = BorderStroke(1.dp, palette.borderSoft),
-                                            modifier = Modifier.size(28.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text("↻", color = palette.textMain, fontSize = 13.sp)
-                                            }
-                                        }
-                                    }
-                                    Surface(
-                                        onClick = { onToggleTocDrawer(false) },
-                                        shape = CircleShape,
-                                        color = palette.bgSurface,
-                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text("✕", color = palette.textMain, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(14.dp))
-                            HorizontalDivider(color = palette.borderSoft)
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            val allIllusts = uiState.activeBookIllustrations
-                            val pdfIndexingProgress = uiState.pdfIndexingState[book.id]
-
-                            if (pdfIndexingProgress != null) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 10.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(palette.bgCard)
-                                        .border(1.dp, palette.borderSoft, RoundedCornerShape(12.dp))
-                                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = palette.textPrimary
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = if (strings.isEn) "Indexing chapters & illustrations..." else "Mengindeks daftar bab & ilustrasi...",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = palette.textPrimary
-                                        )
-                                        Text(
-                                            text = "${pdfIndexingProgress}%",
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = palette.textSecondary
-                                        )
-                                    }
-                                }
-                            }
-
-                            var isManualTocEditExpanded by remember { mutableStateOf(false) }
-                            var inlineEditingChIdx by remember { mutableStateOf<Int?>(null) }
-                            var inlineEditTitle by remember { mutableStateOf("") }
-                            var inlineEditPageStr by remember { mutableStateOf("") }
-                            var newChapterTitle by remember { mutableStateOf("") }
-                            var newChapterPageStr by remember(metrics.currentGlobalPage) { mutableStateOf(metrics.currentGlobalPage.toString()) }
-
-                            val chapterStartPages = remember(chapters, isPdfBook) {
-                                var cum = 0
-                                chapters.map { ch ->
-                                    val pageOne = if (isPdfBook) {
-                                        val first = ch.pages.firstOrNull().orEmpty()
-                                        val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(first)
-                                        if (match != null) {
-                                            (match.groupValues[1].toIntOrNull() ?: cum) + 1
-                                        } else {
-                                            cum + 1
-                                        }
-                                    } else {
-                                        cum + 1
-                                    }
-                                    cum += ch.pages.size.coerceAtLeast(1)
-                                    pageOne
-                                }
-                            }
-
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                // Section 1: Pure chapter rows
-                                itemsIndexed(chapters, key = { idx, _ -> "toc_ch_$idx" }) { idx, ch ->
-                                    val active = idx == uiState.activeChapterIndex
-                                    val startPage = chapterStartPages.getOrElse(idx) { 1 }
-                                    val isRowSelected = active && !isManualTocEditExpanded
-                                    Surface(
-                                        onClick = {
-                                            if (isManualTocEditExpanded) {
-                                                if (inlineEditingChIdx == idx) {
-                                                    inlineEditingChIdx = null
-                                                } else {
-                                                    inlineEditingChIdx = idx
-                                                    inlineEditTitle = ch.title
-                                                    inlineEditPageStr = startPage.toString()
-                                                }
-                                            } else {
-                                                onJumpToChapterAndPage(idx, 0)
-                                                onToggleTocDrawer(false)
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = if (isRowSelected) palette.textMain else palette.bgSurface,
-                                        border = BorderStroke(1.dp, if (isRowSelected) palette.textMain else if (inlineEditingChIdx == idx) palette.textMain.copy(alpha = 0.5f) else palette.borderSoft),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.weight(1f),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Text(
-                                                        text = String.format("%02d", idx + 1),
-                                                        color = if (isRowSelected) palette.bgApp.copy(alpha = 0.70f) else palette.textMuted.copy(alpha = 0.65f),
-                                                        fontSize = 10.sp,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        fontWeight = FontWeight.Normal
-                                                    )
-                                                    Text(
-                                                        text = sanitizeBookOrChapterText(localizeChapterTitle(ch.title, strings.isEn)),
-                                                        color = if (isRowSelected) palette.bgApp else palette.textMain,
-                                                        fontSize = 13.5.sp,
-                                                        fontFamily = FontFamily.Serif,
-                                                        fontWeight = if (isRowSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "${if (strings.isEn) "p." else "Hal"} $startPage · ${ch.pages.size} ${strings.pagesUnit}",
-                                                        color = if (isRowSelected) palette.bgApp.copy(alpha = 0.8f) else palette.textMuted,
-                                                        fontSize = 10.sp,
-                                                        fontFamily = FontFamily.Monospace
-                                                    )
-                                                    if (isManualTocEditExpanded) {
-                                                        PrototypeSvgIcon(
-                                                            type = if (inlineEditingChIdx == idx) PrototypeIconType.CHEVRON_UP else PrototypeIconType.EDIT_PEN,
-                                                            tint = if (isRowSelected) palette.bgApp else palette.textMuted,
-                                                            modifier = Modifier.size(12.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            AnimatedVisibility(
-                                                visible = isManualTocEditExpanded && inlineEditingChIdx == idx,
-                                                enter = expandVertically() + fadeIn(),
-                                                exit = shrinkVertically() + fadeOut()
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(start = 14.dp, end = 14.dp, bottom = 12.dp)
-                                                ) {
-                                                    HorizontalDivider(color = palette.borderSoft.copy(alpha = 0.5f))
-                                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                                    // Row 1 (Title Edit)
-                                                    Surface(
-                                                        shape = RoundedCornerShape(10.dp),
-                                                        color = palette.bgCard,
-                                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    ) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .padding(horizontal = 10.dp, vertical = 8.dp)
-                                                        ) {
-                                                            if (inlineEditTitle.isEmpty()) {
-                                                                Text(
-                                                                    text = if (strings.isEn) "Chapter title..." else "Judul bab...",
-                                                                    fontSize = 12.5.sp,
-                                                                    fontFamily = FontFamily.Serif,
-                                                                    color = palette.textMuted
-                                                                )
-                                                            }
-                                                            BasicTextField(
-                                                                value = inlineEditTitle,
-                                                                onValueChange = { inlineEditTitle = it },
-                                                                textStyle = androidx.compose.ui.text.TextStyle(
-                                                                    fontSize = 12.5.sp,
-                                                                    fontFamily = FontFamily.Serif,
-                                                                    color = palette.textMain
-                                                                ),
-                                                                singleLine = true,
-                                                                modifier = Modifier.fillMaxWidth()
-                                                            )
-                                                        }
-                                                    }
-
-                                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                                    // Row 2 (Page Stepper + Delete + Save)
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        // Left: Start page adjuster capsule [ - ]  Hal [ inlineEditPageStr ]  [ + ]
-                                                        Surface(
-                                                            shape = RoundedCornerShape(10.dp),
-                                                            color = palette.bgCard,
-                                                            border = BorderStroke(1.dp, palette.borderSoft)
-                                                        ) {
-                                                            Row(
-                                                                verticalAlignment = Alignment.CenterVertically,
-                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                                            ) {
-                                                                Box(
-                                                                    modifier = Modifier
-                                                                        .size(26.dp)
-                                                                        .clip(CircleShape)
-                                                                        .clickable {
-                                                                            val cur = inlineEditPageStr.toIntOrNull() ?: startPage
-                                                                            val next = (cur - 1).coerceIn(1, metrics.totalBookPages)
-                                                                            inlineEditPageStr = next.toString()
-                                                                        },
-                                                                    contentAlignment = Alignment.Center
-                                                                ) {
-                                                                    Text("-", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                                                }
-                                                                Spacer(modifier = Modifier.width(4.dp))
-                                                                Text(
-                                                                    text = if (strings.isEn) "p. " else "Hal ",
-                                                                    color = palette.textMuted,
-                                                                    fontSize = 11.sp,
-                                                                    fontFamily = FontFamily.Monospace
-                                                                )
-                                                                BasicTextField(
-                                                                    value = inlineEditPageStr,
-                                                                    onValueChange = { str ->
-                                                                        val filtered = str.filter { it.isDigit() }
-                                                                        inlineEditPageStr = filtered
-                                                                    },
-                                                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                                                        fontSize = 12.sp,
-                                                                        fontFamily = FontFamily.Monospace,
-                                                                        fontWeight = FontWeight.SemiBold,
-                                                                        color = palette.textMain,
-                                                                        textAlign = TextAlign.Center
-                                                                    ),
-                                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                                    singleLine = true,
-                                                                    modifier = Modifier.width(36.dp)
-                                                                )
-                                                                Spacer(modifier = Modifier.width(4.dp))
-                                                                Box(
-                                                                    modifier = Modifier
-                                                                        .size(26.dp)
-                                                                        .clip(CircleShape)
-                                                                        .clickable {
-                                                                            val cur = inlineEditPageStr.toIntOrNull() ?: startPage
-                                                                            val next = (cur + 1).coerceIn(1, metrics.totalBookPages)
-                                                                            inlineEditPageStr = next.toString()
-                                                                        },
-                                                                    contentAlignment = Alignment.Center
-                                                                ) {
-                                                                    Text("+", color = palette.textMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                                                }
-                                                            }
-                                                        }
-
-                                                        // Right: Delete + Save
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                        ) {
-                                                            if (chapters.size > 1) {
-                                                                Surface(
-                                                                    onClick = {
-                                                                        viewModel?.deleteManualChapter(book.id, idx)
-                                                                        inlineEditingChIdx = null
-                                                                    },
-                                                                    shape = CircleShape,
-                                                                    color = palette.bgCard,
-                                                                    border = BorderStroke(1.dp, palette.borderSoft),
-                                                                    modifier = Modifier.size(30.dp)
-                                                                ) {
-                                                                    Box(contentAlignment = Alignment.Center) {
-                                                                        PrototypeSvgIcon(
-                                                                            type = PrototypeIconType.TRASH_CAN,
-                                                                            tint = palette.textMain,
-                                                                            modifier = Modifier.size(13.dp)
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            Surface(
-                                                                onClick = {
-                                                                    val parsed = inlineEditPageStr.toIntOrNull() ?: startPage
-                                                                    viewModel?.updateManualChapter(book.id, idx, inlineEditTitle, parsed)
-                                                                    inlineEditingChIdx = null
-                                                                },
-                                                                shape = CircleShape,
-                                                                color = palette.textMain,
-                                                                modifier = Modifier.height(30.dp)
-                                                            ) {
-                                                                Box(
-                                                                    contentAlignment = Alignment.Center,
-                                                                    modifier = Modifier.padding(horizontal = 14.dp)
-                                                                ) {
-                                                                    Text(
-                                                                        text = if (strings.isEn) "Save" else "Simpan",
-                                                                        color = palette.bgApp,
-                                                                        fontSize = 11.sp,
-                                                                        fontWeight = FontWeight.SemiBold
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Section 1b: Expandable Manual Chapter Editor
-                                item(key = "toc_manual_chapter_editor") {
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = palette.bgSurface,
-                                        border = BorderStroke(1.dp, if (isManualTocEditExpanded) palette.textMain.copy(alpha = 0.5f) else palette.borderSoft),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 4.dp)
-                                    ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            // Collapsed / Header Bar
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable {
-                                                        isManualTocEditExpanded = !isManualTocEditExpanded
-                                                        if (!isManualTocEditExpanded) inlineEditingChIdx = null
-                                                    }
-                                                    .padding(horizontal = 14.dp, vertical = 11.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    PrototypeSvgIcon(
-                                                        type = PrototypeIconType.EDIT_PEN,
-                                                        tint = palette.textMain,
-                                                        modifier = Modifier.size(13.dp)
-                                                    )
-                                                    Text(
-                                                        text = if (strings.isEn) "Edit & Manage Chapters" else "Edit & Kelola Bab Manual",
-                                                        color = palette.textMain,
-                                                        fontSize = 12.5.sp,
-                                                        fontFamily = FontFamily.Serif,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                }
-                                                Text(
-                                                    text = if (isManualTocEditExpanded) (if (strings.isEn) "Done ▴" else "Selesai ▴") else (if (strings.isEn) "Expand ▾" else "Kelola ▾"),
-                                                    fontSize = 10.sp,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    color = palette.textMuted
-                                                )
-                                            }
-
-                                            // Expanded Inline Panel
-                                            AnimatedVisibility(
-                                                visible = isManualTocEditExpanded,
-                                                enter = expandVertically() + fadeIn(),
-                                                exit = shrinkVertically() + fadeOut()
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
-                                                ) {
-                                                    HorizontalDivider(color = palette.borderSoft)
-                                                    Spacer(modifier = Modifier.height(10.dp))
-                                                    Text(
-                                                        text = if (strings.isEn) "Tap any chapter above to rename, adjust its page, or delete it—or add a new chapter below:" else "Ketuk bab di atas untuk ubah judul, sesuaikan halaman, atau hapus—atau tambah bab baru di bawah:",
-                                                        color = palette.textMuted,
-                                                        fontSize = 11.sp,
-                                                        lineHeight = 15.sp
-                                                    )
-                                                    Spacer(modifier = Modifier.height(10.dp))
-
-                                                    // Title Input Field
-                                                    Surface(
-                                                        shape = RoundedCornerShape(10.dp),
-                                                        color = palette.bgCard,
-                                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    ) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .padding(horizontal = 10.dp, vertical = 8.dp)
-                                                        ) {
-                                                            if (newChapterTitle.isEmpty()) {
-                                                                Text(
-                                                                    text = if (strings.isEn) "New chapter title (e.g. Chapter 1)..." else "Judul bab baru (mis. Bab 1)...",
-                                                                    fontSize = 12.sp,
-                                                                    fontFamily = FontFamily.Serif,
-                                                                    color = palette.textMuted
-                                                                )
-                                                            }
-                                                            BasicTextField(
-                                                                value = newChapterTitle,
-                                                                onValueChange = { newChapterTitle = it },
-                                                                textStyle = androidx.compose.ui.text.TextStyle(
-                                                                    fontSize = 12.sp,
-                                                                    fontFamily = FontFamily.Serif,
-                                                                    color = palette.textMain
-                                                                ),
-                                                                singleLine = true,
-                                                                modifier = Modifier.fillMaxWidth()
-                                                            )
-                                                        }
-                                                    }
-
-                                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                                    // Page Number + Quick Current Page Pill + + Add Button Row
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                    ) {
-                                                        // Left: numeric BasicTextField for newChapterPageStr
-                                                        Surface(
-                                                            shape = RoundedCornerShape(10.dp),
-                                                            color = palette.bgCard,
-                                                            border = BorderStroke(1.dp, palette.borderSoft),
-                                                            modifier = Modifier
-                                                                .width(86.dp)
-                                                                .height(34.dp)
-                                                        ) {
-                                                            Row(
-                                                                verticalAlignment = Alignment.CenterVertically,
-                                                                modifier = Modifier
-                                                                    .fillMaxSize()
-                                                                    .padding(horizontal = 8.dp)
-                                                            ) {
-                                                                Text(
-                                                                    text = if (strings.isEn) "p. " else "Hal ",
-                                                                    color = palette.textMuted,
-                                                                    fontSize = 11.sp,
-                                                                    fontFamily = FontFamily.Monospace
-                                                                )
-                                                                BasicTextField(
-                                                                    value = newChapterPageStr,
-                                                                    onValueChange = { str ->
-                                                                        val filtered = str.filter { it.isDigit() }
-                                                                        newChapterPageStr = filtered
-                                                                    },
-                                                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                                                        fontSize = 11.5.sp,
-                                                                        fontFamily = FontFamily.Monospace,
-                                                                        fontWeight = FontWeight.Medium,
-                                                                        color = palette.textMain
-                                                                    ),
-                                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                                    singleLine = true,
-                                                                    modifier = Modifier.weight(1f)
-                                                                )
-                                                            }
-                                                        }
-
-                                                        // Middle: Compact clickable pill
-                                                        Surface(
-                                                            onClick = {
-                                                                newChapterPageStr = metrics.currentGlobalPage.toString()
-                                                            },
-                                                            shape = CircleShape,
-                                                            color = palette.bgCard,
-                                                            border = BorderStroke(1.dp, palette.borderSoft),
-                                                            modifier = Modifier.height(34.dp)
-                                                        ) {
-                                                            Box(
-                                                                contentAlignment = Alignment.Center,
-                                                                modifier = Modifier.padding(horizontal = 10.dp)
-                                                            ) {
-                                                                Text(
-                                                                    text = if (strings.isEn) "Current (${metrics.currentGlobalPage})" else "Hal. Ini (${metrics.currentGlobalPage})",
-                                                                    color = palette.textMain,
-                                                                    fontSize = 10.5.sp,
-                                                                    fontFamily = FontFamily.Monospace,
-                                                                    fontWeight = FontWeight.Medium
-                                                                )
-                                                            }
-                                                        }
-
-                                                        Spacer(modifier = Modifier.weight(1f))
-
-                                                        // Right: + Tambah / + Add Pill Button
-                                                        Surface(
-                                                            onClick = {
-                                                                val pNum = newChapterPageStr.toIntOrNull() ?: metrics.currentGlobalPage
-                                                                viewModel?.addManualChapter(book.id, newChapterTitle, pNum)
-                                                                newChapterTitle = ""
-                                                            },
-                                                            shape = CircleShape,
-                                                            color = palette.textMain,
-                                                            modifier = Modifier.height(34.dp)
-                                                        ) {
-                                                            Box(
-                                                                contentAlignment = Alignment.Center,
-                                                                modifier = Modifier.padding(horizontal = 14.dp)
-                                                            ) {
-                                                                Text(
-                                                                    text = if (strings.isEn) "+ Add" else "+ Tambah",
-                                                                    color = palette.bgApp,
-                                                                    fontSize = 11.5.sp,
-                                                                    fontWeight = FontWeight.SemiBold
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Section 2: Insert Illustrations (Directly below chapters in 2-column grid!)
-                                if (allIllusts.isNotEmpty()) {
-                                    item(key = "toc_illust_header") {
-                                        Spacer(modifier = Modifier.height(14.dp))
-                                        Text(
-                                            text = (if (strings.isEn) "INSERT ILLUSTRATIONS" else "ILUSTRASI SISIPAN") + " (${allIllusts.size})",
-                                            color = palette.textMuted,
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            letterSpacing = 1.2.sp
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                    }
-
-                                    val rows = allIllusts.chunked(2)
-                                    itemsIndexed(rows, key = { rIdx, _ -> "toc_illust_row_$rIdx" }) { rIdx, pair ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            pair.forEachIndexed { colIdx, illust ->
-                                                val globalIdx = rIdx * 2 + colIdx
-                                                val pNum = illust.pageIndexInBook + 1
-                                                val parentChTitle = chapters.find { ch ->
-                                                    val target = getPageAtGlobalZero(illust.pageIndexInBook)
-                                                    target?.first == ch.index
-                                                }?.title ?: ""
-
-                                                Surface(
-                                                    onClick = {
-                                                        val target = getPageAtGlobalZero(illust.pageIndexInBook)
-                                                        if (target != null) {
-                                                            onJumpToChapterAndPage(target.first, target.second)
-                                                        }
-                                                        onToggleTocDrawer(false)
-                                                    },
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    color = palette.bgCard,
-                                                    border = BorderStroke(1.dp, palette.borderSoft),
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Column(modifier = Modifier.padding(6.dp)) {
-                                                        AsyncImage(
-                                                            model = File(illust.uriOrPath),
-                                                            contentDescription = illust.caption,
-                                                            contentScale = ContentScale.Crop,
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .aspectRatio(0.74f)
-                                                                .clip(RoundedCornerShape(10.dp))
-                                                                .clickable { onOpenIllustViewer(globalIdx) }
-                                                        )
-                                                        Spacer(modifier = Modifier.height(6.dp))
-                                                        Text(
-                                                            text = if (strings.isEn) "Page $pNum" else "Hal $pNum",
-                                                            color = palette.textMain,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
-                                                        )
-                                                        if (parentChTitle.isNotBlank()) {
-                                                            Text(
-                                                                text = sanitizeBookOrChapterText(parentChTitle),
-                                                                color = palette.textMuted,
-                                                                fontSize = 9.5.sp,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if (pair.size == 1) {
-                                                Spacer(modifier = Modifier.weight(1f))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Sidebar Footer Progress (`#tocSidebarProgressBar` in `llunevie_prototype.html`)
-                        Column(modifier = Modifier.padding(top = 12.dp)) {
-                            HorizontalDivider(color = palette.borderSoft)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = if (strings.isId) "PROGRES BACA" else "READING PROGRESS",
-                                    color = palette.textMuted,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Text(
-                                    text = "${metrics.globalPct}%",
-                                    color = palette.textMuted,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = { (metrics.globalPct / 100f).coerceIn(0f, 1f) },
-                                color = palette.textMain,
-                                trackColor = palette.borderSoft,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(CircleShape)
-                            )
-                        }
-                    }
-                }
-            }
+        ReaderTocDrawer(
+            book = book,
+            uiState = uiState,
+            strings = strings,
+            metrics = metrics,
+            chapters = chapters,
+            isSpread = isSpread,
+            isPdfBook = isPdfBook,
+            getPageAtGlobalZero = getPageAtGlobalZero,
+            onJumpToChapterAndPage = onJumpToChapterAndPage,
+            onToggleTocDrawer = onToggleTocDrawer,
+            onOpenIllustViewer = onOpenIllustViewer,
+            viewModel = viewModel
+        )
 
         // 6. RIGHT SAVED NOTES & HIGHLIGHTS DRAWER (`#readerNotesDrawer`)
-        // Backdrop Scrim
-        AnimatedVisibility(
-            visible = uiState.showReaderNotesDrawer,
-            enter = fadeIn(tween(220)),
-            exit = fadeOut(tween(180))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onToggleNotesDrawer(false) }
-            )
-        }
-
-        // Right Drawer Panel
-        AnimatedVisibility(
-            visible = uiState.showReaderNotesDrawer,
-            enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 380f)) { it } + fadeIn(tween(180)),
-            exit = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(160)),
-            modifier = Modifier.align(Alignment.CenterEnd)
-        ) {
-            var isAddingManualNote by remember { mutableStateOf(false) }
-            var manualNoteText by remember { mutableStateOf("") }
-            var manualQuoteText by remember { mutableStateOf("") }
-            var selectedNoteColor by remember { mutableStateOf(HighlightColorKey.GOLD) }
-
-            Surface(
-                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
-                color = palette.sheetBg,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 24.dp,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(if (isSpread || isLandscape) 0.38f else 0.84f)
-                    .widthIn(max = 300.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {}
-            ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .navigationBarsPadding()
-                            .padding(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = strings.notesDrawerTag,
-                                    color = palette.textMuted,
-                                    fontSize = 9.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    letterSpacing = 1.4.sp
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = book.title,
-                                    color = palette.textMain,
-                                    fontSize = 17.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (strings.isId) "${bookBookmarks.size} penanda · ${bookHighlights.size} catatan"
-                                    else "${bookBookmarks.size} bookmark(s) · ${bookHighlights.size} note(s)",
-                                    color = palette.textMuted,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Surface(
-                                onClick = { onToggleNotesDrawer(false) },
-                                shape = CircleShape,
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("✕", color = palette.textMain, fontSize = 12.sp)
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                        HorizontalDivider(color = palette.borderSoft)
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Manual Note Creator (clean & minimal, perfect for PDF & EPUB reading)
-                        if (!isAddingManualNote) {
-                            Surface(
-                                onClick = { isAddingManualNote = true },
-                                shape = RoundedCornerShape(14.dp),
-                                color = palette.bgSurface,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    PrototypeSvgIcon(
-                                        type = PrototypeIconType.PLUS,
-                                        tint = palette.textMain,
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidthDp = 1.8f
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = if (strings.isId) "Tambah Catatan Manual" else "Add Manual Note",
-                                        color = palette.textMain,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                        } else {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = palette.bgCard,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = if (strings.isId) "CATATAN HAL ${metrics.currentGlobalPage}"
-                                            else "NOTE PAGE ${metrics.currentGlobalPage}",
-                                            color = palette.textMuted,
-                                            fontSize = 9.5.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            letterSpacing = 1.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            HighlightColorKey.entries.forEach { key ->
-                                                val colorBorder = palette.highlightBorder(key)
-                                                val colorBg = palette.highlightBg(key)
-                                                val isSelected = selectedNoteColor == key
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(18.dp)
-                                                        .clip(CircleShape)
-                                                        .background(colorBg)
-                                                        .border(
-                                                            width = if (isSelected) 2.dp else 1.dp,
-                                                            color = if (isSelected) palette.textMain else colorBorder,
-                                                            shape = CircleShape
-                                                        )
-                                                        .clickable { selectedNoteColor = key }
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = palette.bgSurface,
-                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                            if (manualQuoteText.isEmpty()) {
-                                                Text(
-                                                    text = if (strings.isId) "Judul / topik (opsional)..." else "Title / topic (optional)...",
-                                                    color = palette.textMuted.copy(alpha = 0.6f),
-                                                    fontSize = 12.sp
-                                                )
-                                            }
-                                            BasicTextField(
-                                                value = manualQuoteText,
-                                                onValueChange = { manualQuoteText = it },
-                                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp),
-                                                singleLine = true,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    }
-
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = palette.bgSurface,
-                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .padding(horizontal = 12.dp, vertical = 8.dp)
-                                                .heightIn(min = 60.dp)
-                                        ) {
-                                            if (manualNoteText.isEmpty()) {
-                                                Text(
-                                                    text = if (strings.isId) "Tulis catatan penting Anda di sini..." else "Write your note here...",
-                                                    color = palette.textMuted.copy(alpha = 0.6f),
-                                                    fontSize = 12.sp
-                                                )
-                                            }
-                                            BasicTextField(
-                                                value = manualNoteText,
-                                                onValueChange = { manualNoteText = it },
-                                                textStyle = TextStyle(color = palette.textMain, fontSize = 12.sp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    }
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Surface(
-                                            onClick = {
-                                                isAddingManualNote = false
-                                                manualNoteText = ""
-                                                manualQuoteText = ""
-                                            },
-                                            shape = CircleShape,
-                                            color = Color.Transparent
-                                        ) {
-                                            Text(
-                                                text = strings.cancelBtn,
-                                                color = palette.textMuted,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            onClick = {
-                                                if (manualNoteText.isNotBlank() || manualQuoteText.isNotBlank()) {
-                                                    val finalQuote = manualQuoteText.ifBlank {
-                                                        if (strings.isId) "Catatan Hal ${metrics.currentGlobalPage}" else "Note Page ${metrics.currentGlobalPage}"
-                                                    }
-                                                    onSaveHighlightNote(finalQuote, manualNoteText.trim(), selectedNoteColor, null, -1, -1)
-                                                    isAddingManualNote = false
-                                                    manualNoteText = ""
-                                                    manualQuoteText = ""
-                                                }
-                                            },
-                                            shape = CircleShape,
-                                            color = palette.accentDark
-                                        ) {
-                                            Text(
-                                                text = if (strings.isId) "Simpan" else "Save",
-                                                color = palette.bgApp,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        if (bookHighlights.isEmpty() && bookBookmarks.isEmpty()) {
-                            Surface(
-                                shape = RoundedCornerShape(22.dp),
-                                color = palette.bgCard,
-                                border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(22.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = if (strings.isId) "Belum ada penanda atau catatan" else "No saved bookmarks or notes yet",
-                                        color = palette.textMain,
-                                        fontSize = 15.sp,
-                                        fontFamily = FontFamily.Serif,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = if (strings.isId) "Ketuk tombol penanda di kanan atas atau tandai sorotan pada halaman baca."
-                                        else "Tap the top-right bookmark button or highlight text on reading pages.",
-                                        color = palette.textMuted,
-                                        fontSize = 12.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                if (bookBookmarks.isNotEmpty()) {
-                                    item(key = "hdr_bookmarks") {
-                                        Text(
-                                            text = if (strings.isId) "HALAMAN TERSIMPAN (${bookBookmarks.size})" else "BOOKMARKED PAGES (${bookBookmarks.size})",
-                                            color = palette.textMuted,
-                                            fontSize = 9.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            letterSpacing = 1.2.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    itemsIndexed(bookBookmarks, key = { _, b -> b.id }) { _, bm ->
-                                        Surface(
-                                            onClick = {
-                                                onToggleNotesDrawer(false)
-                                                val targetZero = (bm.pageNumber - 1).coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0))
-                                                displayPageIndex = targetZero
-                                                viewModel?.jumpToGlobalPage(targetZero)
-                                            },
-                                            shape = RoundedCornerShape(14.dp),
-                                            color = palette.bgCard,
-                                            border = BorderStroke(1.dp, palette.borderSoft),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.weight(1f),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Rounded.Bookmark,
-                                                        contentDescription = null,
-                                                        tint = palette.accent,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text(
-                                                            text = if (strings.isId) "Halaman ${bm.pageNumber}" else "Page ${bm.pageNumber}",
-                                                            color = palette.textMain,
-                                                            fontSize = 12.sp,
-                                                            fontWeight = FontWeight.SemiBold
-                                                        )
-                                                        if (bm.chapterTitle.isNotBlank()) {
-                                                            Text(
-                                                                text = bm.chapterTitle,
-                                                                color = palette.textMuted,
-                                                                fontSize = 10.5.sp,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
-                                                        if (bm.snippetText.isNotBlank()) {
-                                                            Text(
-                                                                text = "“${bm.snippetText}”",
-                                                                color = palette.textMuted.copy(alpha = 0.8f),
-                                                                fontSize = 10.5.sp,
-                                                                fontFamily = FontFamily.Serif,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                Surface(
-                                                    onClick = { viewModel?.deletePageBookmark(bm.id) },
-                                                    shape = CircleShape,
-                                                    color = Color.Transparent,
-                                                    modifier = Modifier.size(26.dp)
-                                                ) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        Text("✕", color = palette.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    item(key = "divider_bookmarks") {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        HorizontalDivider(color = palette.borderSoft)
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                    }
-                                }
-
-                                if (bookHighlights.isNotEmpty()) {
-                                    item(key = "hdr_highlights") {
-                                        Text(
-                                            text = if (strings.isId) "CATATAN & HIGHLIGHT (${bookHighlights.size})" else "NOTES & HIGHLIGHTS (${bookHighlights.size})",
-                                            color = palette.textMuted,
-                                            fontSize = 9.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            letterSpacing = 1.2.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    itemsIndexed(bookHighlights, key = { _, h -> h.id }) { _, hl ->
-                                    val colorKey = HighlightColorKey.fromKey(hl.colorKey)
-                                    val hlBg = palette.highlightBg(colorKey)
-                                    val hlBorder = palette.highlightBorder(colorKey)
-
-                                    Surface(
-                                        onClick = { onJumpToChapterAndPage(hl.chapterIndex, hl.pageIndex) },
-                                        shape = RoundedCornerShape(20.dp),
-                                        color = palette.bgCard,
-                                        border = BorderStroke(1.dp, palette.borderSoft),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.padding(14.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(9.dp)
-                                                            .clip(CircleShape)
-                                                            .background(hlBorder)
-                                                    )
-                                                    Text(
-                                                        text = "${hl.chapterTitle} · ${if (strings.isId) "Hal" else "Page"} ${hl.pageIndex + 1}",
-                                                        color = palette.textMuted,
-                                                        fontSize = 10.sp,
-                                                        fontFamily = FontFamily.Monospace
-                                                    )
-                                                }
-                                                Text(
-                                                    text = "✕",
-                                                    color = palette.textMuted,
-                                                    fontSize = 12.sp,
-                                                    modifier = Modifier.clickable { onDeleteHighlightNote(hl.id) }
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Surface(
-                                                shape = RoundedCornerShape(12.dp),
-                                                color = hlBg,
-                                                border = BorderStroke(1.dp, hlBorder),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Text(
-                                                    text = "“${hl.quoteText}”",
-                                                    color = palette.hlText,
-                                                    fontSize = 13.sp,
-                                                    fontFamily = FontFamily.Serif,
-                                                    lineHeight = 18.sp,
-                                                    modifier = Modifier.padding(10.dp)
-                                                )
-                                            }
-                                            if (hl.noteText.isNotBlank()) {
-                                                Spacer(modifier = Modifier.height(6.dp))
-                                                Text(
-                                                    text = hl.noteText,
-                                                    color = palette.textMuted,
-                                                    fontSize = 12.sp,
-                                                    lineHeight = 17.sp
-                                                )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        ReaderNotesDrawer(
+            book = book,
+            uiState = uiState,
+            strings = strings,
+            metrics = metrics,
+            bookHighlights = bookHighlights,
+            bookBookmarks = bookBookmarks,
+            isSpread = isSpread,
+            onDisplayPageIndexChanged = { displayPageIndex = it },
+            onJumpToChapterAndPage = onJumpToChapterAndPage,
+            onToggleNotesDrawer = onToggleNotesDrawer,
+            onSaveHighlightNote = onSaveHighlightNote,
+            onDeleteHighlightNote = onDeleteHighlightNote,
+            viewModel = viewModel
+        )
 
         // 7. OPAQUE ILLUSTRATION VIEWER MODAL (`#illustViewerModal`)
-        AnimatedVisibility(
-            visible = uiState.showIllustViewer && uiState.activeBookIllustrations.isNotEmpty(),
-            enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.95f, animationSpec = tween(200)),
-            exit = fadeOut(tween(160)) + scaleOut(targetScale = 0.95f, animationSpec = tween(160)),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            val illusts = uiState.activeBookIllustrations
-            val activeItem = illusts.getOrElse(uiState.activeIllustIndex) { illusts.firstOrNull() ?: return@AnimatedVisibility }
-            var manualScale by remember(uiState.activeIllustIndex) { mutableFloatStateOf(1f) }
-            var panOffset by remember(uiState.activeIllustIndex) { mutableStateOf(Offset.Zero) }
-            val currentZoom = manualScale.coerceIn(1f, 4f)
-
-            val pdfPath = book.localFilePath.orEmpty()
-            var pdfHighResBmp by remember(activeItem.pageIndexInBook, pdfPath) {
-                mutableStateOf(if (isPdfBook && pdfPath.isNotBlank()) PdfNativeRenderer.getCachedHighResIllustration(pdfPath, activeItem.pageIndexInBook) else null)
-            }
-            var epubHighResBmp by remember(activeItem.uriOrPath) {
-                mutableStateOf(if (!isPdfBook) EpubNativeParser.getCachedFullResImage(activeItem.uriOrPath) else null)
-            }
-
-            LaunchedEffect(uiState.activeIllustIndex, isPdfBook, pdfPath, activeItem.uriOrPath) {
-                withContext(Dispatchers.IO) {
-                    if (isPdfBook && pdfPath.isNotBlank()) {
-                        val bmp = PdfNativeRenderer.renderHighResIllustrationPage(pdfPath, activeItem.pageIndexInBook, 1800)
-                        withContext(Dispatchers.Main) {
-                            pdfHighResBmp = bmp
-                        }
-                        // Prefetch next and previous illustrations
-                        val nextIdx = uiState.activeIllustIndex + 1
-                        if (nextIdx < illusts.size) {
-                            PdfNativeRenderer.renderHighResIllustrationPage(pdfPath, illusts[nextIdx].pageIndexInBook, 1800)
-                        }
-                        val prevIdx = uiState.activeIllustIndex - 1
-                        if (prevIdx >= 0) {
-                            PdfNativeRenderer.renderHighResIllustrationPage(pdfPath, illusts[prevIdx].pageIndexInBook, 1800)
-                        }
-                    } else if (!isPdfBook) {
-                        val bmp = EpubNativeParser.decodeFullResImage(activeItem.uriOrPath)
-                        withContext(Dispatchers.Main) {
-                            epubHighResBmp = bmp
-                        }
-                        // Prefetch next and previous illustrations
-                        val nextIdx = uiState.activeIllustIndex + 1
-                        if (nextIdx < illusts.size) {
-                            EpubNativeParser.decodeFullResImage(illusts[nextIdx].uriOrPath)
-                        }
-                        val prevIdx = uiState.activeIllustIndex - 1
-                        if (prevIdx >= 0) {
-                            EpubNativeParser.decodeFullResImage(illusts[prevIdx].uriOrPath)
-                        }
-                    }
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(palette.bgApp)
-                    .clickable(enabled = false) {}
-            ) {
-                // Top Bar (Row with statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), Arrangement.SpaceBetween, Alignment.CenterVertically)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val pageNum = activeItem.pageIndexInBook + 1
-                    val pageLabel = if (strings.isEn) "Page $pageNum" else "Hal $pageNum"
-
-                    // Left — Refined Counter & Page Pill
-                    Surface(
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .padding(horizontal = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "${uiState.activeIllustIndex + 1} / ${illusts.size}",
-                                fontSize = 11.5.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold,
-                                color = palette.textPrimary
-                            )
-                            Text(
-                                text = " · ",
-                                fontSize = 11.sp,
-                                color = palette.textMuted
-                            )
-                            Text(
-                                text = pageLabel,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = palette.textSecondary
-                            )
-                        }
-                    }
-
-                    // Right — Clean Circular Close (✕) Button
-                    Surface(
-                        onClick = onCloseIllustViewer,
-                        shape = CircleShape,
-                        color = palette.bgSurface,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .size(36.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.CLOSE_X,
-                                tint = palette.textPrimary,
-                                modifier = Modifier.size(12.dp),
-                                strokeWidthDp = 1.5f,
-                                contentDescription = if (strings.isId) "Tutup penampil ilustrasi" else "Close illustration viewer"
-                            )
-                        }
-                    }
-                }
-
-                // Interactive Pinch-to-Zoom & Drag-to-Pan Viewport
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .background(palette.bgApp)
-                        .clipToBounds()
-                        .pointerInput(uiState.activeIllustIndex) {
-                            detectTapGestures(
-                                onDoubleTap = {
-                                    if (manualScale > 1.2f) {
-                                        manualScale = 1f
-                                        panOffset = Offset.Zero
-                                    } else {
-                                        manualScale = 2.2f
-                                        panOffset = Offset.Zero
-                                    }
-                                }
-                            )
-                        }
-                        .pointerInput(uiState.activeIllustIndex) {
-                            detectTransformGestures { centroid: Offset, pan: Offset, zoom: Float, rotation: Float ->
-                                val nextScale = (manualScale * zoom).coerceIn(1f, 4f)
-                                manualScale = nextScale
-                                if (nextScale > 1.02f) {
-                                    val maxPanX = (size.width.toFloat() * (nextScale - 1f)) / 2f
-                                    val maxPanY = (size.height.toFloat() * (nextScale - 1f)) / 2f
-                                    val nextPanX = (panOffset.x + pan.x).coerceIn(-maxPanX, maxPanX)
-                                    val nextPanY = (panOffset.y + pan.y).coerceIn(-maxPanY, maxPanY)
-                                    panOffset = Offset(nextPanX, nextPanY)
-                                } else {
-                                    panOffset = Offset.Zero
-                                }
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(8.dp)
-                            .graphicsLayer {
-                                scaleX = currentZoom
-                                scaleY = currentZoom
-                                translationX = if (currentZoom > 1.02f) panOffset.x else 0f
-                                translationY = if (currentZoom > 1.02f) panOffset.y else 0f
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AsyncImage(
-                            model = File(activeItem.uriOrPath),
-                            contentDescription = activeItem.caption,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        val displayBitmap = if (isPdfBook) pdfHighResBmp else epubHighResBmp
-                        if (displayBitmap != null && !displayBitmap.isRecycled) {
-                            Image(
-                                bitmap = displayBitmap.asImageBitmap(),
-                                contentDescription = activeItem.caption,
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
-                }
-
-                // Bottom Bar (Column with navigationBarsPadding().padding(horizontal = 20.dp, vertical = 14.dp))
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (activeItem.caption.isNotBlank()) {
-                        Text(
-                            text = activeItem.caption,
-                            color = palette.textSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 10.dp)
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val canGoPrev = uiState.activeIllustIndex > 0
-                        val canGoNext = uiState.activeIllustIndex < illusts.size - 1
-
-                        Surface(
-                            onClick = {
-                                if (canGoPrev) {
-                                    manualScale = 1f
-                                    panOffset = Offset.Zero
-                                    onOpenIllustViewer(uiState.activeIllustIndex - 1)
-                                }
-                            },
-                            enabled = canGoPrev,
-                            shape = CircleShape,
-                            color = palette.bgSurface,
-                            border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                                .alpha(if (canGoPrev) 1.0f else 0.4f)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = if (strings.isEn) "‹  Previous" else "‹  Sebelumnya",
-                                    color = palette.textPrimary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-
-                        Surface(
-                            onClick = {
-                                if (canGoNext) {
-                                    manualScale = 1f
-                                    panOffset = Offset.Zero
-                                    onOpenIllustViewer(uiState.activeIllustIndex + 1)
-                                }
-                            },
-                            enabled = canGoNext,
-                            shape = CircleShape,
-                            color = palette.textPrimary,
-                            border = BorderStroke(1.dp, palette.textPrimary),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                                .alpha(if (canGoNext) 1.0f else 0.4f)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = if (strings.isEn) "Next  ›" else "Berikutnya  ›",
-                                    color = palette.bgApp,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Renders a single PDF page inside `LazyColumn` for `ReadingFlowMode.SCROLL` and `ReadingFlowMode.WEBTOON`.
- * Uses `PdfNativeRenderer`'s LruCache and cached aspect ratio so vertical PDF scrolling is 100% glitch-free.
- */
-@Composable
-private fun PdfVerticalPageItem(
-    pdfFilePath: String,
-    pageIndex: Int,
-    targetWidthPx: Int,
-    isWebtoon: Boolean,
-    colorFilter: ColorFilter? = null,
-    surfaceColor: Color = Color.White,
-    overrideBitmap: Bitmap? = null
-) {
-    val widthBucket = ((targetWidthPx.coerceIn(360, 1280) / 120) * 120).coerceAtLeast(360)
-    val pageBmp by produceState<Bitmap?>(
-        initialValue = overrideBitmap ?: PdfNativeRenderer.getCachedBitmap(pdfFilePath, pageIndex, widthBucket),
-        pdfFilePath, pageIndex, widthBucket, overrideBitmap
-    ) {
-        if (overrideBitmap != null) {
-            value = overrideBitmap
-        } else if (value == null) {
-            value = PdfNativeRenderer.renderPageBitmap(pdfFilePath, pageIndex, widthBucket)
-        }
-    }
-    val bmp = overrideBitmap ?: pageBmp
-    val ratio = if (bmp != null && bmp.height > 0) {
-        (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f)
-    } else {
-        PdfNativeRenderer.getCachedPageAspectRatio(pdfFilePath)
-    }
-
-    Surface(
-        shape = if (isWebtoon) RoundedCornerShape(0.dp) else RoundedCornerShape(6.dp),
-        color = surfaceColor,
-        shadowElevation = if (isWebtoon) 0.dp else 4.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(ratio)
-    ) {
-        if (bmp != null && !bmp.isRecycled) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = "PDF Page ${pageIndex + 1}",
-                contentScale = ContentScale.FillWidth,
-                colorFilter = colorFilter,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(surfaceColor),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "${pageIndex + 1}",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
-    }
-}
-
-private fun buildEpubPageAnnotatedString(
-    textParagraphs: List<String>,
-    prefs: UserPreferencesState,
-    fontScale: Float = 1f,
-    resolvedTextAlign: TextAlign,
-    bookHighlights: List<HighlightNoteEntity>,
-    currentChapterIndex: Int,
-    currentPageInChapter: Int,
-    displayPageIndex: Int = -1,
-    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette
-): AnnotatedString {
-    val lineHeightSp = (prefs.fontSizeSp * fontScale * prefs.lineHeightMultiplier).sp
-    val paraGapSp = (prefs.fontSizeSp * fontScale * prefs.paraSpacingEm.coerceIn(0.2f, 2.5f) * 0.85f).sp
-    val wordExtraSp = (prefs.wordSpacingPx * 0.28f).sp
-    val indentSpec = if (prefs.paraIndent) {
-        TextIndent(firstLine = (prefs.fontSizeSp * fontScale * 1.6f).sp)
-    } else {
-        TextIndent.None
-    }
-
-    return buildAnnotatedString {
-        textParagraphs.forEachIndexed { idx, rawPara ->
-            val cleanPara = sanitizeBookOrChapterText(rawPara)
-            val paraStart = length
-            withStyle(
-                ParagraphStyle(
-                    textAlign = resolvedTextAlign,
-                    lineHeight = lineHeightSp,
-                    textIndent = indentSpec
-                )
-            ) {
-                append(cleanPara)
-            }
-            val paraEnd = length
-
-            if (prefs.wordSpacingPx > 0) {
-                for (cIdx in paraStart until paraEnd) {
-                    if (cleanPara[cIdx - paraStart] == ' ') {
-                        addStyle(SpanStyle(letterSpacing = wordExtraSp), cIdx, cIdx + 1)
-                    }
-                }
-            }
-
-            if (idx < textParagraphs.lastIndex) {
-                withStyle(ParagraphStyle(lineHeight = paraGapSp)) {
-                    withStyle(SpanStyle(fontSize = paraGapSp)) {
-                        append("\n")
-                    }
-                }
-            }
-        }
-
-        val fullText = toAnnotatedString().text
-        val pageHls = bookHighlights.filter { hl ->
-            (hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter) ||
-            (displayPageIndex >= 0 && hl.pageIndex == displayPageIndex) ||
-            (hl.quoteText.isNotBlank() && fullText.contains(hl.quoteText.trim(), ignoreCase = true))
-        }
-        pageHls.forEach { hl ->
-            val hlStart = if (hl.startCharIndex in 0 until fullText.length &&
-                hl.endCharIndex in (hl.startCharIndex + 1)..fullText.length) {
-                hl.startCharIndex
-            } else {
-                val quote = hl.quoteText.trim()
-                if (quote.isNotBlank()) fullText.indexOf(quote, ignoreCase = true) else -1
-            }
-            val hlEnd = if (hl.startCharIndex in 0 until fullText.length &&
-                hl.endCharIndex in (hl.startCharIndex + 1)..fullText.length) {
-                hl.endCharIndex
-            } else if (hlStart >= 0) {
-                hlStart + hl.quoteText.trim().length
-            } else -1
-
-            if (hlStart in 0 until fullText.length && hlEnd in (hlStart + 1)..fullText.length) {
-                addStyle(
-                    SpanStyle(
-                        color = Color(0xFF18181B),
-                        fontWeight = FontWeight.Medium
-                    ),
-                    hlStart,
-                    hlEnd
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun InteractiveTextPageContent(
-    chapterTitle: String,
-    pageText: String,
-    currentChapterIndex: Int = 0,
-    currentPageInChapter: Int = 0,
-    bookId: String = "",
-    displayPageIndex: Int = 0,
-    showChapterHeader: Boolean,
-    scrollable: Boolean,
-    prefs: UserPreferencesState,
-    bookHighlights: List<HighlightNoteEntity>,
-    onParagraphClicked: (String, Boolean) -> Unit,
-    onIllustrationClicked: (String) -> Unit,
-    onSaveHighlightNote: (String, String, HighlightColorKey, String?, Int, Int) -> Unit,
-    onDeleteHighlightNote: (String) -> Unit = {},
-    onSearchInBook: (String) -> Unit,
-    isCoverPage: Boolean = false,
-    bookTitle: String = "",
-    fontScale: Float = 1f,
-    transparentTextForFlipbook: Boolean = false,
-    topClearanceDp: Dp = 0.dp,
-    bottomClearanceDp: Dp = 0.dp,
-    onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> },
-    isPageTranslationActive: Boolean = false,
-    translatedParagraphs: List<Pair<String, String?>>? = null,
-    viewModel: LlunevieViewModel? = null,
-    uiState: LlunevieUiState? = null
-) {
-    val palette = LocalLluneviePalette.current
-    val context = LocalContext.current
-    val density = LocalDensity.current
-    val haptic = LocalHapticFeedback.current
-    val clipboardManager = LocalClipboardManager.current
-
-    val rawParagraphs = remember(pageText) {
-        pageText.split("\n\n")
-            .map { it.trim() }
-            .filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
-    }
-
-    val isCover = isCoverPage || (
-        (chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) &&
-        rawParagraphs.any { it.startsWith("[ILLUST:") }
-    ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
-
-    // 1. Standalone / Full-Page EPUB Illustration & Cover (1:1 with Flipbook Canvas!)
-    if (isCover) {
-        val illustPara = rawParagraphs.firstOrNull { it.startsWith("[ILLUST:") }
-        val imgPath = illustPara?.removePrefix("[ILLUST:")?.substringBefore("|")?.substringBefore("]")
-        if (imgPath != null && File(imgPath).exists()) {
-            if (transparentTextForFlipbook) {
-                // Flipbook canvas underneath already renders the full-page illustration; only provide tap target
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onIllustrationClicked(imgPath) }
-                )
-                return
-            }
-            val coverBitmap = remember(imgPath) {
-                EpubNativeParser.decodeFullResImage(imgPath, maxDimPx = 1440)
-            }
-            if (coverBitmap != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onIllustrationClicked(imgPath) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        bitmap = coverBitmap.asImageBitmap(),
-                        contentDescription = bookTitle.ifBlank { "Illustration" },
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                return
-            }
-        }
-    }
-
-    val textParagraphs = remember(rawParagraphs) {
-        rawParagraphs.filter { !it.startsWith("[ILLUST:") }
-    }
-
-    val isTrans = (uiState?.isTranslationActive ?: isPageTranslationActive) &&
-        !(uiState?.translationMode ?: prefs.translatorDisplayMode).equals("original", ignoreCase = true)
-    val targetLang = uiState?.translationTargetLang ?: prefs.translatorTargetLang
-    val transMode = uiState?.translationMode ?: prefs.translatorDisplayMode
-    val transRev = uiState?.translationRevision ?: 0
-
-    var currentTranslatedParas by remember(
-        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev, translatedParagraphs
-    ) {
-        mutableStateOf(
-            if (isTrans) {
-                viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-                    ?: translatedParagraphs
-            } else null
+        ReaderIllustrationViewer(
+            book = book,
+            uiState = uiState,
+            strings = strings,
+            isPdfBook = isPdfBook,
+            onOpenIllustViewer = onOpenIllustViewer,
+            onCloseIllustViewer = onCloseIllustViewer
         )
     }
-
-    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev) {
-        if (isTrans && !pageText.startsWith("[PDF_PAGE:")) {
-            val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-            if (cached != null) {
-                currentTranslatedParas = cached
-            } else if (viewModel != null) {
-                val res = viewModel.loadOrTranslatePageParagraphs(
-                    bookId = bookId,
-                    pageIndex = displayPageIndex,
-                    pageRaw = pageText,
-                    targetLang = targetLang
-                )
-                if (res != null) {
-                    currentTranslatedParas = res
-                }
-            }
-        }
-    }
-
-    val activeTranslatedParagraphs = currentTranslatedParas ?: translatedParagraphs
-    val isBilingual = isTrans && transMode == "bilingual" && !activeTranslatedParagraphs.isNullOrEmpty()
-    val isReplace = isTrans && transMode == "replace" && !activeTranslatedParagraphs.isNullOrEmpty()
-    val effectiveFontScale = if (isBilingual) 1.0f else fontScale
-
-    val effectiveParagraphs = remember(textParagraphs, isReplace, activeTranslatedParagraphs) {
-        if (isReplace && !activeTranslatedParagraphs.isNullOrEmpty()) {
-            activeTranslatedParagraphs.map { it.second ?: it.first }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
-        } else {
-            textParagraphs
-        }
-    }
-
-    val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
-        "justify" -> TextAlign.Justify
-        "center" -> TextAlign.Center
-        else -> TextAlign.Start
-    }
-    val resolvedFontFamily = remember(prefs.fontFamily, prefs.fontWeight) {
-        getReaderFontFamily(context, prefs.fontFamily, prefs.fontWeight)
-    }
-    val resolvedFontWeight = when {
-        prefs.fontWeight >= 600 -> FontWeight.Bold
-        prefs.fontWeight == 500 -> FontWeight.Medium
-        else -> FontWeight.Normal
-    }
-
-    val lineHeightSp = (prefs.fontSizeSp * effectiveFontScale * prefs.lineHeightMultiplier).sp
-    val paraGapSp = (prefs.fontSizeSp * effectiveFontScale * prefs.paraSpacingEm.coerceIn(0.2f, 2.5f) * 0.85f).sp
-    val wordExtraSp = (prefs.wordSpacingPx * 0.28f).sp
-    val indentSpec = if (prefs.paraIndent) {
-        TextIndent(firstLine = (prefs.fontSizeSp * effectiveFontScale * 1.6f).sp)
-    } else {
-        TextIndent.None
-    }
-
-    val pageHighlights = remember(bookHighlights, currentChapterIndex, currentPageInChapter, displayPageIndex, pageText) {
-        val clean = sanitizeBookOrChapterText(pageText)
-        bookHighlights.filter { hl ->
-            (hl.chapterIndex == currentChapterIndex && hl.pageIndex == currentPageInChapter) ||
-            (displayPageIndex >= 0 && hl.pageIndex == displayPageIndex) ||
-            (hl.quoteText.isNotBlank() && clean.contains(hl.quoteText.trim(), ignoreCase = true))
-        }
-    }
-
-    // Build unified AnnotatedString with ParagraphStyle, word spacing, indent, and dark ink highlighted text
-    val annotatedString = remember(
-        effectiveParagraphs, prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.paraIndent,
-        prefs.pageMargin, prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
-        effectiveFontScale, prefs.fontWeight, prefs.textAlign, prefs.fontFamily, pageHighlights,
-        currentChapterIndex, currentPageInChapter, displayPageIndex, palette
-    ) {
-        buildEpubPageAnnotatedString(
-            textParagraphs = effectiveParagraphs,
-            prefs = prefs,
-            fontScale = effectiveFontScale,
-            resolvedTextAlign = resolvedTextAlign,
-            bookHighlights = pageHighlights,
-            currentChapterIndex = currentChapterIndex,
-            currentPageInChapter = currentPageInChapter,
-            displayPageIndex = displayPageIndex,
-            palette = palette
-        )
-    }
-
-    val fullPageText = annotatedString.text
-
-    var selStart by remember(pageText) { mutableIntStateOf(-1) }
-    var selEnd by remember(pageText) { mutableIntStateOf(-1) }
-    var activeDraggingHandle by remember { mutableStateOf<Int?>(null) } // 0 = start handle, 1 = end handle
-    var selectedHighlightId by remember(pageText) { mutableStateOf<String?>(null) }
-    val hasActiveSelection = selStart >= 0 && selEnd > selStart && selEnd <= fullPageText.length
-    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-
-    val pageTextStyle = TextStyle(
-        color = if (transparentTextForFlipbook) Color.Transparent else palette.textMain,
-        fontSize = (prefs.fontSizeSp * effectiveFontScale).sp,
-        letterSpacing = (prefs.letterSpacingEm * prefs.fontSizeSp * effectiveFontScale).sp,
-        fontFamily = resolvedFontFamily,
-        fontWeight = resolvedFontWeight,
-        platformStyle = PlatformTextStyle(includeFontPadding = false)
-    )
-
-    val layout = textLayoutResult
-    val startBox = remember(layout, selStart, fullPageText.length) {
-        if (layout != null && selStart in 0 until fullPageText.length) {
-            layout.getBoundingBox(selStart)
-        } else Rect.Zero
-    }
-    val endBox = remember(layout, selEnd, fullPageText.length) {
-        if (layout != null && selEnd in 1..fullPageText.length) {
-            layout.getBoundingBox(selEnd - 1)
-        } else Rect.Zero
-    }
-    val horizontalMarginDp = when (prefs.pageMargin) {
-        0 -> 12.dp
-        2 -> 36.dp
-        else -> 22.dp
-    }
-    val verticalMarginDp = when (prefs.pageMargin) {
-        0 -> 12.dp
-        2 -> 26.dp
-        else -> 18.dp
-    }
-
-    val topPadDp = if (isBilingual) 56.dp else if (!scrollable && topClearanceDp > 0.dp) topClearanceDp else verticalMarginDp
-    val bottomPadDp = if (isBilingual) 68.dp else if (!scrollable && bottomClearanceDp > 0.dp) bottomClearanceDp else verticalMarginDp + 4.dp
-
-    val padX = with(density) { horizontalMarginDp.toPx() }
-    val padTop = with(density) { topPadDp.toPx() }
-
-    LaunchedEffect(hasActiveSelection, layout, selStart, selEnd) {
-        if (hasActiveSelection && layout != null && fullPageText.isNotEmpty()) {
-            val safeStart = selStart.coerceIn(0, fullPageText.lastIndex)
-            val safeEnd = (selEnd - 1).coerceIn(safeStart, fullPageText.lastIndex)
-            val sRect = layout.getCursorRect(safeStart)
-            val eRect = layout.getCursorRect((safeEnd + 1).coerceAtMost(fullPageText.length))
-            val hRadius = with(density) { 7.dp.toPx() }
-            val startAnchor = Offset(sRect.left + padX, sRect.bottom + padTop + hRadius)
-            val endAnchor = Offset(eRect.left + padX, eRect.bottom + padTop + hRadius)
-            onSelectionActiveChanged(true, startAnchor, endAnchor)
-        } else {
-            onSelectionActiveChanged(false, Offset.Zero, Offset.Zero)
-        }
-    }
-
-    val effectiveScrollable = scrollable || isBilingual
-    val outerScrollModifier = if (effectiveScrollable) {
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    } else {
-        Modifier
-            .fillMaxSize()
-    }
-
-    Box(
-        modifier = outerScrollModifier
-            .background(if (transparentTextForFlipbook) Color.Transparent else palette.bgApp)
-            .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = topPadDp, bottom = bottomPadDp)
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            if (showChapterHeader && chapterTitle.isNotBlank()) {
-                Text(
-                    text = chapterTitle,
-                    color = if (transparentTextForFlipbook) Color.Transparent else palette.textMain,
-                    fontSize = (prefs.fontSizeSp + 6).sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp)
-                )
-            }
-
-            // Inline illustrations inside the chapter
-            if (!transparentTextForFlipbook) {
-                rawParagraphs.filter { it.startsWith("[ILLUST:") && it.endsWith("]") }.forEach { para ->
-                    val inner = para.removePrefix("[ILLUST:").removeSuffix("]")
-                    val path = inner.substringBefore("|")
-                    val caption = inner.substringAfter("|", "")
-                    Surface(
-                        onClick = { onIllustrationClicked(path) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = palette.bgCard,
-                        border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 14.dp)
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            AsyncImage(
-                                model = File(path),
-                                contentDescription = caption,
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(260.dp)
-                            )
-                            if (caption.isNotBlank()) {
-                                Text(
-                                    text = caption,
-                                    color = palette.textMuted,
-                                    fontSize = 10.5.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.padding(8.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Deterministic Single-Text Selection Canvas
-            val currentTextLayout by rememberUpdatedState(textLayoutResult)
-            val currentFullText by rememberUpdatedState(fullPageText)
-            val currentPageHighlights by rememberUpdatedState(pageHighlights)
-
-            Box(modifier = Modifier.fillMaxWidth()) {
-                if (isBilingual) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-                        activeTranslatedParagraphs.orEmpty().forEach { (origPara, transPara) ->
-                            if (origPara.isNotBlank() && !origPara.startsWith("[ILLUST:") && !origPara.startsWith("[PDF_PAGE:")) {
-                                Text(
-                                    text = origPara,
-                                    fontFamily = resolvedFontFamily,
-                                    fontSize = prefs.fontSizeSp.sp,
-                                    lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
-                                    textAlign = resolvedTextAlign,
-                                    color = palette.textMain,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onParagraphClicked(origPara, false) }
-                                )
-                                if (!transPara.isNullOrBlank()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(start = 2.dp, bottom = (prefs.paraSpacingEm * 6f).dp),
-                                        verticalAlignment = Alignment.Top
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .padding(top = 4.dp)
-                                                .width(2.dp)
-                                                .heightIn(min = 16.dp)
-                                                .background(palette.accent.copy(alpha = 0.55f), RoundedCornerShape(1.dp))
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Text(
-                                            text = transPara,
-                                            fontFamily = resolvedFontFamily,
-                                            fontSize = (prefs.fontSizeSp - 1).coerceAtLeast(13).sp,
-                                            lineHeight = ((prefs.fontSizeSp - 1).coerceAtLeast(13) * prefs.lineHeightMultiplier * 0.95f).sp,
-                                            textAlign = resolvedTextAlign,
-                                            color = palette.textMuted.copy(alpha = 0.92f),
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                } else {
-                                    Spacer(modifier = Modifier.height((prefs.paraSpacingEm * 6f).dp))
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val padBottomPx = with(density) { bottomPadDp.toPx() }
-                    val availHeightPx = (with(density) { maxHeight.toPx() } - padBottomPx).coerceAtLeast(100f)
-                    Text(
-                        text = annotatedString,
-                        style = pageTextStyle,
-                        onTextLayout = { textLayoutResult = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .drawWithContent {
-                                val l = textLayoutResult
-                                if (!transparentTextForFlipbook && l != null) {
-                                    // 1. Draw saved highlights pastel background rounded rects BEFORE drawing text
-                                    pageHighlights.forEach { hl ->
-                                        val colorKey = HighlightColorKey.fromKey(hl.colorKey)
-                                        val pastelBg = palette.highlightBg(colorKey)
-                                        val hlStart = if (hl.startCharIndex in 0 until fullPageText.length &&
-                                            hl.endCharIndex in (hl.startCharIndex + 1)..fullPageText.length) {
-                                            hl.startCharIndex
-                                        } else {
-                                            val q = hl.quoteText.trim()
-                                            if (q.isNotBlank()) fullPageText.indexOf(q, ignoreCase = true) else -1
-                                        }
-                                        val hlEnd = if (hl.startCharIndex in 0 until fullPageText.length &&
-                                            hl.endCharIndex in (hl.startCharIndex + 1)..fullPageText.length) {
-                                            hl.endCharIndex
-                                        } else if (hlStart >= 0) {
-                                            hlStart + hl.quoteText.trim().length
-                                        } else -1
-
-                                        if (hlStart in 0 until fullPageText.length && hlEnd in (hlStart + 1)..fullPageText.length) {
-                                            val sLine = l.getLineForOffset(hlStart)
-                                            val eLine = l.getLineForOffset(hlEnd)
-                                            val sX = l.getHorizontalPosition(hlStart, usePrimaryDirection = true)
-                                            val eX = l.getHorizontalPosition(hlEnd, usePrimaryDirection = true)
-
-                                            for (line in sLine..eLine) {
-                                                val lineLeft = if (line == sLine) sX else l.getLineLeft(line)
-                                                val lineRight = if (line == eLine) eX else l.getLineRight(line)
-                                                val rawTop = l.getLineTop(line)
-                                                val rawBottom = l.getLineBottom(line)
-                                                val lineH = rawBottom - rawTop
-                                                val tightTop = rawTop + lineH * 0.06f
-                                                val tightBottom = rawBottom - lineH * 0.14f
-                                                if (lineRight > lineLeft) {
-                                                    drawRoundRect(
-                                                        color = pastelBg,
-                                                        topLeft = Offset(lineLeft, tightTop),
-                                                        size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
-                                                        cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // 2. Draw page text (color from SpanStyle preserved!)
-                                    if (availHeightPx > 0f && l.size.height > availHeightPx) {
-                                        val lastCompleteLine = (0 until l.lineCount)
-                                            .lastOrNull { l.getLineBottom(it) <= availHeightPx + 2f }
-                                            ?: (l.lineCount - 1)
-                                        val safeClipBottom = l.getLineBottom(lastCompleteLine)
-                                        clipRect(0f, 0f, size.width, safeClipBottom) {
-                                            this@drawWithContent.drawContent()
-                                            if (prefs.fontWeight == 500) {
-                                                drawText(
-                                                    textLayoutResult = l,
-                                                    drawStyle = Stroke(width = 0.45f * density.density)
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        drawContent()
-                                        if (prefs.fontWeight == 500) {
-                                            drawText(
-                                                textLayoutResult = l,
-                                                drawStyle = Stroke(width = 0.45f * density.density)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // 3. Draw active selection highlight and handles
-                                if (hasActiveSelection && l != null && fullPageText.isNotEmpty()) {
-                                    val safeStart = selStart.coerceIn(0, fullPageText.lastIndex)
-                                    val safeEnd = (selEnd - 1).coerceIn(safeStart, fullPageText.lastIndex)
-                                    val startLine = l.getLineForOffset(safeStart)
-                                    val endLine = l.getLineForOffset(safeEnd)
-                                    val startX = l.getHorizontalPosition(safeStart, usePrimaryDirection = true)
-                                    val endX = l.getHorizontalPosition(safeEnd + 1, usePrimaryDirection = true)
-
-                                    for (line in startLine..endLine) {
-                                        val lineLeft = if (line == startLine) startX else l.getLineLeft(line)
-                                        val lineRight = if (line == endLine) endX else l.getLineRight(line)
-                                        val rawTop = l.getLineTop(line)
-                                        val rawBottom = l.getLineBottom(line)
-                                        val lineH = rawBottom - rawTop
-                                        val tightTop = rawTop + lineH * 0.06f
-                                        val tightBottom = rawBottom - lineH * 0.14f
-                                        if (lineRight > lineLeft) {
-                                            drawRoundRect(
-                                                color = Color(0xFF38BDF8).copy(alpha = 0.28f),
-                                                topLeft = Offset(lineLeft, tightTop),
-                                                size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
-                                                cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                                            )
-                                        }
-                                    }
-
-                                    val barColor = Color(0xFF0284C7)
-                                    val barStroke = 2.dp.toPx()
-                                    val handleRadius = 7.dp.toPx()
-
-                                    val startRawTop = l.getLineTop(startLine)
-                                    val startRawBottom = l.getLineBottom(startLine)
-                                    val startLineH = startRawBottom - startRawTop
-                                    val startTightTop = startRawTop + startLineH * 0.06f
-                                    val startTightBottom = startRawBottom - startLineH * 0.14f
-
-                                    drawLine(
-                                        color = barColor,
-                                        start = Offset(startX, startTightTop),
-                                        end = Offset(startX, startTightBottom),
-                                        strokeWidth = barStroke
-                                    )
-                                    drawCircle(
-                                        color = barColor,
-                                        radius = handleRadius,
-                                        center = Offset(startX, startTightBottom + handleRadius)
-                                    )
-
-                                    val endRawTop = l.getLineTop(endLine)
-                                    val endRawBottom = l.getLineBottom(endLine)
-                                    val endLineH = endRawBottom - endRawTop
-                                    val endTightTop = endRawTop + endLineH * 0.06f
-                                    val endTightBottom = endRawBottom - endLineH * 0.14f
-
-                                    drawLine(
-                                        color = barColor,
-                                        start = Offset(endX, endTightTop),
-                                        end = Offset(endX, endTightBottom),
-                                        strokeWidth = barStroke
-                                    )
-                                    drawCircle(
-                                        color = barColor,
-                                        radius = handleRadius,
-                                        center = Offset(endX, endTightBottom + handleRadius)
-                                    )
-                                }
-                            }
-                            .pointerInput(bookId, displayPageIndex) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                    val l = currentTextLayout ?: return@awaitEachGesture
-                                    val txt = currentFullText
-                                    if (txt.isEmpty()) return@awaitEachGesture
-
-                                    val hitRadius = 36.dp.toPx()
-                                    val curStart = selStart
-                                    val curEnd = selEnd
-                                    val hasSelection = curStart >= 0 && curEnd > curStart && curEnd <= txt.length
-
-                                    // Handle hit check
-                                    if (hasSelection) {
-                                        val safeStart = curStart.coerceIn(0, txt.lastIndex)
-                                        val safeEnd = (curEnd - 1).coerceIn(safeStart, txt.lastIndex)
-                                        val startLine = l.getLineForOffset(safeStart)
-                                        val endLine = l.getLineForOffset(safeEnd)
-                                        val startX = l.getHorizontalPosition(safeStart, usePrimaryDirection = true)
-                                        val endX = l.getHorizontalPosition(safeEnd + 1, usePrimaryDirection = true)
-                                        val handleRadius = 7.dp.toPx()
-                                        val startTightBottom = l.getLineBottom(startLine) - (l.getLineBottom(startLine) - l.getLineTop(startLine)) * 0.14f
-                                        val endTightBottom = l.getLineBottom(endLine) - (l.getLineBottom(endLine) - l.getLineTop(endLine)) * 0.14f
-
-                                        val startHandleCenter = Offset(startX, startTightBottom + handleRadius)
-                                        val endHandleCenter = Offset(endX, endTightBottom + handleRadius)
-
-                                        val distStart = (down.position - startHandleCenter).getDistance()
-                                        val distEnd = (down.position - endHandleCenter).getDistance()
-
-                                        if (distStart <= hitRadius || distEnd <= hitRadius) {
-                                            down.consume()
-                                            val draggingStart = distStart <= distEnd
-                                            activeDraggingHandle = if (draggingStart) 0 else 1
-
-                                            while (true) {
-                                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                                if (!change.pressed) {
-                                                    change.consume()
-                                                    break
-                                                }
-                                                change.consume()
-                                                val targetOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
-                                                if (draggingStart) {
-                                                    selStart = targetOffset.coerceIn(0, (selEnd - 1).coerceAtLeast(0))
-                                                } else {
-                                                    selEnd = targetOffset.coerceIn(selStart + 1, txt.length)
-                                                }
-                                            }
-                                            activeDraggingHandle = null
-                                            return@awaitEachGesture
-                                        }
-                                    }
-
-                                    // Normal text touch: monitor for 340ms long press
-                                    val startTime = System.currentTimeMillis()
-                                    var movedBeyondJitter = false
-                                    var abortedToPageTurn = false
-                                    var isLongPressTriggered = false
-                                    var initialWordStart = -1
-                                    var initialWordEnd = -1
-
-                                    while (true) {
-                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-
-                                        // Abort on 2+ finger touch to allow parent pinch-to-zoom
-                                        if (event.changes.count { it.pressed } >= 2) {
-                                            abortedToPageTurn = true
-                                            break
-                                        }
-
-                                        if (!change.pressed) {
-                                            if (isLongPressTriggered) {
-                                                change.consume()
-                                            } else if (!abortedToPageTurn) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed < 340L && !movedBeyondJitter) {
-                                                    change.consume()
-                                                    if (hasSelection) {
-                                                        selStart = -1
-                                                        selEnd = -1
-                                                        selectedHighlightId = null
-                                                    } else {
-                                                        val tapOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
-                                                        val matchedHl = currentPageHighlights.find { hl ->
-                                                            val hlS = if (hl.startCharIndex in 0 until txt.length && hl.endCharIndex in (hl.startCharIndex + 1)..txt.length) {
-                                                                hl.startCharIndex
-                                                            } else {
-                                                                val q = hl.quoteText.trim()
-                                                                if (q.isNotBlank()) txt.indexOf(q, ignoreCase = true) else -1
-                                                            }
-                                                            val hlE = if (hl.startCharIndex in 0 until txt.length && hl.endCharIndex in (hl.startCharIndex + 1)..txt.length) {
-                                                                hl.endCharIndex
-                                                            } else if (hlS >= 0) {
-                                                                hlS + hl.quoteText.trim().length
-                                                            } else -1
-
-                                                            hlS >= 0 && hlE > hlS && tapOffset in hlS until hlE
-                                                        }
-                                                        if (matchedHl != null) {
-                                                            val hlS = if (matchedHl.startCharIndex in 0 until txt.length && matchedHl.endCharIndex in (matchedHl.startCharIndex + 1)..txt.length) {
-                                                                matchedHl.startCharIndex
-                                                            } else {
-                                                                val q = matchedHl.quoteText.trim()
-                                                                if (q.isNotBlank()) txt.indexOf(q, ignoreCase = true) else -1
-                                                            }
-                                                            val hlE = if (matchedHl.startCharIndex in 0 until txt.length && matchedHl.endCharIndex in (matchedHl.startCharIndex + 1)..txt.length) {
-                                                                matchedHl.endCharIndex
-                                                            } else if (hlS >= 0) {
-                                                                hlS + matchedHl.quoteText.trim().length
-                                                            } else -1
-
-                                                            if (hlS >= 0 && hlE > hlS) {
-                                                                selStart = hlS
-                                                                selEnd = hlE
-                                                                selectedHighlightId = matchedHl.id
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            break
-                                        }
-
-                                        val dx = change.position.x - down.position.x
-                                        val dy = change.position.y - down.position.y
-                                        val dist = kotlin.math.sqrt(dx * dx + dy * dy)
-
-                                        if (!isLongPressTriggered) {
-                                            if (dist > 18.dp.toPx()) {
-                                                movedBeyondJitter = true
-                                            }
-                                            if (kotlin.math.abs(dx) > 22.dp.toPx() && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
-                                                abortedToPageTurn = true
-                                                break
-                                            }
-
-                                            val elapsed = System.currentTimeMillis() - startTime
-                                            if (elapsed >= 340L && !abortedToPageTurn) {
-                                                isLongPressTriggered = true
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                change.consume()
-
-                                                val rawOffset = l.getOffsetForPosition(down.position).coerceIn(0, txt.length)
-                                                var wStart = rawOffset
-                                                while (wStart > 0 && !txt[wStart - 1].isWhitespace() && txt[wStart - 1] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
-                                                    wStart--
-                                                }
-                                                var wEnd = rawOffset
-                                                while (wEnd < txt.length && !txt[wEnd].isWhitespace() && txt[wEnd] !in setOf('.', ',', ';', ':', '!', '?', '"', '\'', '—', '–', '(', ')')) {
-                                                    wEnd++
-                                                }
-                                                if (wEnd <= wStart) {
-                                                    wEnd = (wStart + 1).coerceAtMost(txt.length)
-                                                }
-                                                initialWordStart = wStart
-                                                initialWordEnd = wEnd
-                                                selStart = wStart
-                                                selEnd = wEnd
-                                                selectedHighlightId = null
-                                            }
-                                        } else {
-                                            change.consume()
-                                            val currentOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
-                                            if (currentOffset >= initialWordStart) {
-                                                selStart = initialWordStart
-                                                selEnd = currentOffset.coerceIn(initialWordEnd, txt.length)
-                                            } else {
-                                                selStart = currentOffset.coerceIn(0, initialWordStart)
-                                                selEnd = initialWordEnd
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                    )
-                }
-                }
-            }
-        }
-
-        // 5. Floating Highlight & Note Popover (#highlightPopover)
-        val popoverVisible = hasActiveSelection && activeDraggingHandle == null && layout != null
-        val popoverAlpha by animateFloatAsState(
-            targetValue = if (popoverVisible) 1f else 0f,
-            animationSpec = tween(160, easing = FastOutSlowInEasing),
-            label = "popoverAlpha"
-        )
-        val popoverScale by animateFloatAsState(
-            targetValue = if (popoverVisible) 1f else 0.88f,
-            animationSpec = tween(160, easing = FastOutSlowInEasing),
-            label = "popoverScale"
-        )
-
-        if (popoverAlpha > 0.01f && layout != null && selStart >= 0 && selEnd > selStart) {
-            val selectedText = fullPageText.substring(
-                selStart.coerceIn(0, fullPageText.length),
-                selEnd.coerceIn(0, fullPageText.length)
-            ).trim()
-            val sStart = selStart.coerceIn(0, fullPageText.lastIndex)
-            val sEnd = (selEnd - 1).coerceIn(sStart, fullPageText.lastIndex)
-            val sLine = layout.getLineForOffset(sStart)
-            val eLine = layout.getLineForOffset(sEnd)
-            val sTop = layout.getLineTop(sLine)
-            val eBottom = layout.getLineBottom(eLine)
-            val popoverY = if (sTop < with(density) { 80.dp.toPx() }) {
-                (eBottom + with(density) { 12.dp.toPx() }).roundToInt()
-            } else {
-                with(density) { (sTop - 64.dp.toPx()).roundToInt().coerceAtLeast(0) }
-            }
-
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = palette.bgSurface,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset { IntOffset(0, popoverY) }
-                    .zIndex(100f)
-                    .graphicsLayer {
-                        alpha = popoverAlpha
-                        scaleX = popoverScale
-                        scaleY = popoverScale
-                    }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 4 Pastel color swatches (Amber #FEF3C7, Sky #DBEAFE, Rose #FCE7F3, Mint #DCFCE7)
-                    val pastelSwatches = listOf(
-                        HighlightColorKey.GOLD to Color(0xFFFEF3C7),
-                        HighlightColorKey.SKY to Color(0xFFDBEAFE),
-                        HighlightColorKey.PEACH to Color(0xFFFCE7F3),
-                        HighlightColorKey.MINT to Color(0xFFDCFCE7)
-                    )
-                    pastelSwatches.forEach { (key, col) ->
-                        Box(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .background(col)
-                                .border(1.dp, palette.borderSoft, CircleShape)
-                                .clickable {
-                                    onSaveHighlightNote(selectedText, "", key, selectedHighlightId, selStart, selEnd)
-                                    selStart = -1
-                                    selEnd = -1
-                                    selectedHighlightId = null
-                                }
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(16.dp)
-                            .background(palette.borderSoft)
-                    )
-
-                    // + Note button
-                    Surface(
-                        onClick = {
-                            onParagraphClicked(selectedText, sTop <= 200f)
-                            selStart = -1
-                            selEnd = -1
-                            selectedHighlightId = null
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = if (prefs.lang == "en") "+ Note" else "+ Catatan",
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    // Copy button
-                    Surface(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(selectedText))
-                            selStart = -1
-                            selEnd = -1
-                            selectedHighlightId = null
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = if (prefs.lang == "en") "Copy" else "Salin",
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    // Delete button (when an existing highlight is tapped/selected)
-                    if (selectedHighlightId != null) {
-                        Surface(
-                            onClick = {
-                                onDeleteHighlightNote(selectedHighlightId!!)
-                                selStart = -1
-                                selEnd = -1
-                                selectedHighlightId = null
-                            },
-                            shape = CircleShape,
-                            color = Color.Transparent
-                        ) {
-                            Text(
-                                text = if (prefs.lang == "en") "Delete" else "Hapus",
-                                color = Color(0xFFEF4444),
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PdfPageItemContent(
-    bookId: String,
-    filePath: String,
-    pageIndex: Int,
-    viewModel: LlunevieViewModel,
-    modifier: Modifier = Modifier,
-    colorFilter: ColorFilter? = null,
-    surfaceColor: Color = Color.White,
-    overrideBitmap: Bitmap? = null,
-    uiState: LlunevieUiState = viewModel.uiState.collectAsState().value
-) {
-    val palette = LocalLluneviePalette.current
-    val isTrans = uiState.isTranslationActive && !uiState.translationMode.equals("original", ignoreCase = true)
-    val targetLang = uiState.translationTargetLang
-    val transMode = uiState.translationMode
-
-    var pageBitmap by remember(bookId, pageIndex, isTrans, targetLang, transMode, uiState.translationRevision, overrideBitmap) {
-        mutableStateOf(
-            if (overrideBitmap != null) {
-                overrideBitmap
-            } else if (isTrans) {
-                viewModel.getCachedTranslatedPdfBitmap(bookId, pageIndex, targetLang, transMode)
-            } else {
-                viewModel.getCachedPdfBitmap(bookId, pageIndex, filePath)
-            }
-        )
-    }
-
-    LaunchedEffect(bookId, filePath, pageIndex, isTrans, targetLang, transMode, uiState.translationRevision, overrideBitmap) {
-        if (overrideBitmap != null) {
-            pageBitmap = overrideBitmap
-            return@LaunchedEffect
-        }
-        if (isTrans) {
-            val cached = viewModel.getCachedTranslatedPdfBitmap(bookId, pageIndex, targetLang, transMode)
-            if (cached != null) {
-                pageBitmap = cached
-            } else {
-                // Show original page while translating in background, then immediately swap to translated bitmap when ready
-                if (pageBitmap == null) {
-                    pageBitmap = viewModel.getCachedPdfBitmap(bookId, pageIndex, filePath)
-                        ?: viewModel.loadPdfPageBitmap(bookId, filePath, pageIndex)
-                }
-                val translated = viewModel.loadOrTranslatePdfPageBitmap(
-                    bookId = bookId,
-                    filePath = filePath,
-                    pageIndex = pageIndex,
-                    targetLang = targetLang,
-                    mode = transMode
-                )
-                if (translated != null) {
-                    pageBitmap = translated
-                }
-            }
-        } else {
-            if (pageBitmap == null) {
-                pageBitmap = viewModel.loadPdfPageBitmap(bookId, filePath, pageIndex)
-            }
-            viewModel.prefetchPdfNeighbors(bookId, filePath, pageIndex)
-        }
-    }
-    Box(
-        modifier = modifier.fillMaxSize().background(palette.bgApp),
-        contentAlignment = Alignment.Center
-    ) {
-        val bmp = overrideBitmap ?: pageBitmap
-        val imageBitmap = remember(bmp) { bmp?.asImageBitmap() }
-        if (imageBitmap != null) {
-            val ratio = if (bmp != null && bmp.height > 0) (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f) else 0.707f
-            Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = surfaceColor,
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(ratio, matchHeightConstraintsFirst = false)
-                    .padding(vertical = 4.dp)
-            ) {
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = "Page ${pageIndex + 1}",
-                    contentScale = ContentScale.Fit,
-                    colorFilter = colorFilter,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-        }
-    }
-}
-
-private fun computeOnePageFitScale(
-    textMeasurer: TextMeasurer,
-    widthPx: Int,
-    heightPx: Int,
-    density: Density,
-    chapterTitle: String,
-    pageText: String,
-    baseTextStyle: TextStyle,
-    padX: Float,
-    padTop: Float,
-    padBottom: Float,
-    showChapterHeader: Boolean,
-    isCover: Boolean,
-    highlights: List<HighlightNoteEntity>,
-    chapterIndex: Int,
-    pageIndex: Int,
-    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette,
-    prefs: UserPreferencesState
-): Float {
-    val rawParagraphs = pageText.split("\n\n").map { it.trim() }.filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
-    val isCoverActual = isCover || 
-        ((chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) && rawParagraphs.any { it.startsWith("[ILLUST:") }) ||
-        (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
-    
-    // Covers and illustration-only pages don't need scaling
-    if (isCoverActual) return 1f
-    
-    val availableH = (heightPx - padTop - padBottom - with(density) { 8.dp.toPx() }).coerceAtLeast(140f)
-    val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
-    var scale = 1f
-    
-    // Measure chapter header height
-    var headerH = 0f
-    if (showChapterHeader && chapterTitle.isNotBlank()) {
-        val titleLayout = textMeasurer.measure(
-            text = AnnotatedString(chapterTitle),
-            style = TextStyle(
-                color = palette.textMain,
-                fontSize = ((prefs.fontSizeSp) + 6).sp,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center
-            ),
-            constraints = Constraints(maxWidth = contentW)
-        )
-        headerH = titleLayout.size.height + with(density) { 16.dp.toPx() }
-    }
-    
-    val textParagraphs = rawParagraphs.filter { !it.startsWith("[ILLUST:") }
-    val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
-        "justify" -> TextAlign.Justify
-        "center" -> TextAlign.Center
-        else -> TextAlign.Start
-    }
-    
-    // Measure body text and scale down if needed
-    var attempts = 0
-    while (scale > 0.52f && attempts < 15) {
-        val annotatedString = buildEpubPageAnnotatedString(
-            textParagraphs = textParagraphs,
-            prefs = prefs,
-            fontScale = scale,
-            resolvedTextAlign = resolvedTextAlign,
-            bookHighlights = highlights,
-            currentChapterIndex = chapterIndex,
-            currentPageInChapter = pageIndex,
-            displayPageIndex = -1,
-            palette = palette
-        )
-        
-        val scaledStyle = baseTextStyle.copy(
-            fontSize = (prefs.fontSizeSp * scale).sp,
-            lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier * scale).sp
-        )
-        
-        val layout = textMeasurer.measure(
-            text = annotatedString,
-            style = scaledStyle,
-            constraints = Constraints(maxWidth = contentW)
-        )
-        
-        val totalH = headerH + layout.size.height
-        if (totalH <= availableH) break
-        scale *= 0.94f
-        attempts++
-    }
-    
-    return scale.coerceAtLeast(0.52f)
-}
-
-private fun renderEpubPageSnapshot(
-    textMeasurer: TextMeasurer,
-    widthPx: Int,
-    heightPx: Int,
-    density: Density,
-    chapterTitle: String,
-    pageText: String,
-    bgColor: Color,
-    pageTextStyle: TextStyle,
-    padX: Float,
-    padTop: Float,
-    padBottom: Float = 0f,
-    showChapterHeader: Boolean = false,
-    isCover: Boolean,
-    highlights: List<HighlightNoteEntity>,
-    chapterIndex: Int,
-    pageIndex: Int,
-    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette,
-    prefs: UserPreferencesState? = null
-): ImageBitmap {
-    val bitmap = ImageBitmap(widthPx.coerceAtLeast(100), heightPx.coerceAtLeast(100))
-    val canvas = androidx.compose.ui.graphics.Canvas(bitmap)
-    val drawScope = CanvasDrawScope()
-
-    drawScope.draw(
-        density = density,
-        layoutDirection = LayoutDirection.Ltr,
-        canvas = canvas,
-        size = Size(widthPx.toFloat(), heightPx.toFloat())
-    ) {
-        drawRect(color = bgColor)
-
-        val rawParagraphs = pageText.split("\n\n")
-            .map { it.trim() }
-            .filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
-
-        val isCoverActual = isCover || (
-            (chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) &&
-            rawParagraphs.any { it.startsWith("[ILLUST:") }
-        ) || (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
-
-        if (isCoverActual) {
-            val illustPara = rawParagraphs.firstOrNull { it.startsWith("[ILLUST:") }
-            val imgPath = illustPara?.removePrefix("[ILLUST:")?.substringBefore("|")?.substringBefore("]")
-            if (imgPath != null && File(imgPath).exists()) {
-                val coverBmp = EpubNativeParser.decodeFullResImage(imgPath, maxDimPx = 1440)
-                if (coverBmp != null) {
-                    val scale = minOf(size.width / coverBmp.width.toFloat(), size.height / coverBmp.height.toFloat())
-                    val dstW = (coverBmp.width * scale).coerceAtLeast(1f)
-                    val dstH = (coverBmp.height * scale).coerceAtLeast(1f)
-                    val dstX = (size.width - dstW) / 2f
-                    val dstY = (size.height - dstH) / 2f
-                    drawImage(
-                        image = coverBmp.asImageBitmap(),
-                        dstOffset = IntOffset(dstX.roundToInt(), dstY.roundToInt()),
-                        dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-                    )
-                    return@draw
-                }
-            }
-        }
-
-        val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
-        var currentY = padTop
-
-        if (showChapterHeader && chapterTitle.isNotBlank()) {
-            val titleLayout = textMeasurer.measure(
-                text = AnnotatedString(chapterTitle),
-                style = TextStyle(
-                    color = palette.textMain,
-                    fontSize = ((prefs?.fontSizeSp ?: 16) + 6).sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
-                ),
-                constraints = Constraints(maxWidth = contentW)
-            )
-            drawText(titleLayout, topLeft = Offset(padX, currentY))
-            currentY += titleLayout.size.height + with(density) { 16.dp.toPx() }
-        }
-
-        val textParagraphs = rawParagraphs.filter { !it.startsWith("[ILLUST:") }
-        val effectivePrefs = prefs ?: UserPreferencesState()
-        val resolvedTextAlign = when (effectivePrefs.textAlign.lowercase()) {
-            "justify" -> TextAlign.Justify
-            "center" -> TextAlign.Center
-            else -> TextAlign.Start
-        }
-
-        // Compute fit scale to prevent text cropping
-        val fitScale = computeOnePageFitScale(
-            textMeasurer = textMeasurer,
-            widthPx = widthPx,
-            heightPx = heightPx,
-            density = density,
-            chapterTitle = chapterTitle,
-            pageText = pageText,
-            baseTextStyle = pageTextStyle,
-            padX = padX,
-            padTop = padTop,
-            padBottom = padBottom,
-            showChapterHeader = showChapterHeader,
-            isCover = isCover,
-            highlights = highlights,
-            chapterIndex = chapterIndex,
-            pageIndex = pageIndex,
-            palette = palette,
-            prefs = effectivePrefs
-        )
-
-        val annotatedString = buildEpubPageAnnotatedString(
-            textParagraphs = textParagraphs,
-            prefs = effectivePrefs,
-            fontScale = fitScale,
-            resolvedTextAlign = resolvedTextAlign,
-            bookHighlights = highlights,
-            currentChapterIndex = chapterIndex,
-            currentPageInChapter = pageIndex,
-            displayPageIndex = -1,
-            palette = palette
-        )
-
-        val scaledStyle = pageTextStyle.copy(
-            fontSize = (effectivePrefs.fontSizeSp * fitScale).sp,
-            lineHeight = (effectivePrefs.fontSizeSp * effectivePrefs.lineHeightMultiplier * fitScale).sp
-        )
-
-        val layout = textMeasurer.measure(
-            text = annotatedString,
-            style = scaledStyle,
-            constraints = Constraints(maxWidth = contentW)
-        )
-
-        val snapshotFullText = annotatedString.text
-        val pageHls = highlights.filter { hl ->
-            (hl.chapterIndex == chapterIndex && hl.pageIndex == pageIndex) ||
-            (hl.quoteText.isNotBlank() && snapshotFullText.contains(hl.quoteText.trim(), ignoreCase = true))
-        }
-        pageHls.forEach { hl ->
-            val colorKey = HighlightColorKey.fromKey(hl.colorKey)
-            val pastelBg = palette.highlightBg(colorKey)
-            val hlStart = if (hl.startCharIndex in 0 until snapshotFullText.length &&
-                hl.endCharIndex in (hl.startCharIndex + 1)..snapshotFullText.length) {
-                hl.startCharIndex
-            } else {
-                val q = hl.quoteText.trim()
-                if (q.isNotBlank()) snapshotFullText.indexOf(q, ignoreCase = true) else -1
-            }
-            val hlEnd = if (hl.startCharIndex in 0 until snapshotFullText.length &&
-                hl.endCharIndex in (hl.startCharIndex + 1)..snapshotFullText.length) {
-                hl.endCharIndex
-            } else if (hlStart >= 0) {
-                hlStart + hl.quoteText.trim().length
-            } else -1
-
-            if (hlStart in 0 until snapshotFullText.length && hlEnd in (hlStart + 1)..snapshotFullText.length) {
-                val sLine = layout.getLineForOffset(hlStart)
-                val eLine = layout.getLineForOffset(hlEnd)
-                val sX = layout.getHorizontalPosition(hlStart, usePrimaryDirection = true)
-                val eX = layout.getHorizontalPosition(hlEnd, usePrimaryDirection = true)
-
-                for (line in sLine..eLine) {
-                    val lineLeft = if (line == sLine) sX else layout.getLineLeft(line)
-                    val lineRight = if (line == eLine) eX else layout.getLineRight(line)
-                    val rawTop = layout.getLineTop(line)
-                    val rawBottom = layout.getLineBottom(line)
-                    val lineH = rawBottom - rawTop
-                    val tightTop = rawTop + lineH * 0.06f
-                    val tightBottom = rawBottom - lineH * 0.14f
-                    if (lineRight > lineLeft) {
-                        drawRoundRect(
-                            color = pastelBg,
-                            topLeft = Offset(padX + lineLeft, currentY + tightTop),
-                            size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
-                            cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                        )
-                    }
-                }
-            }
-        }
-
-        drawText(layout, topLeft = Offset(padX, currentY))
-        if (pageTextStyle.fontWeight == FontWeight.Medium) {
-            drawText(
-                textLayoutResult = layout,
-                topLeft = Offset(padX, currentY),
-                color = pageTextStyle.color,
-                drawStyle = Stroke(width = 0.45f * density.density)
-            )
-        }
-    }
-    return bitmap
-}
-
-private fun renderTwoPageSpreadSnapshot(
-    textMeasurer: TextMeasurer,
-    widthPx: Int,
-    heightPx: Int,
-    density: Density,
-    leftPageIndex: Int,
-    rightPageIndex: Int,
-    leftHeader: String,
-    rightHeader: String,
-    leftText: String,
-    rightText: String,
-    leftPdfBitmap: Bitmap?,
-    rightPdfBitmap: Bitmap?,
-    bgColor: Color,
-    pageTextStyle: TextStyle,
-    palette: com.llunaticsys.llunevie.ui.theme.LluneviePalette,
-    prefs: UserPreferencesState? = null,
-    leftColorFilter: android.graphics.ColorMatrixColorFilter? = null,
-    rightColorFilter: android.graphics.ColorMatrixColorFilter? = null
-): ImageBitmap {
-    val bitmap = ImageBitmap(widthPx.coerceAtLeast(100), heightPx.coerceAtLeast(100))
-    val canvas = androidx.compose.ui.graphics.Canvas(bitmap)
-    val drawScope = CanvasDrawScope()
-
-    drawScope.draw(
-        density = density,
-        layoutDirection = LayoutDirection.Ltr,
-        canvas = canvas,
-        size = Size(widthPx.toFloat(), heightPx.toFloat())
-    ) {
-        drawRect(color = bgColor)
-
-        val halfW = size.width / 2f
-        val spineX = halfW
-
-        // 1. Center spine divider line
-        drawLine(
-            color = palette.borderSoft.copy(alpha = 0.6f),
-            start = Offset(spineX, 0f),
-            end = Offset(spineX, size.height),
-            strokeWidth = with(density) { 1.dp.toPx() }
-        )
-
-        val (hMarginDp, vMarginDp) = when (prefs?.pageMargin) {
-            0 -> 10.dp to 10.dp
-            2 -> 28.dp to 20.dp
-            else -> 18.dp to 14.dp
-        }
-        val colPadHoriz = with(density) { hMarginDp.toPx() }
-        val colPadVert = with(density) { vMarginDp.toPx() }
-        val headerH = with(density) { 22.dp.toPx() }
-        val footerH = with(density) { 20.dp.toPx() }
-        val colInnerW = (halfW - colPadHoriz * 2).roundToInt().coerceAtLeast(100)
-        val colInnerH = (size.height - headerH - footerH - colPadVert * 2).coerceAtLeast(100f)
-        val textTop = headerH + colPadVert
-        val clipBottom = size.height - footerH - colPadVert
-
-        val headerStyle = TextStyle(
-            color = palette.textMuted,
-            fontSize = with(density) { 8.5.sp },
-            fontFamily = FontFamily.Monospace,
-            platformStyle = PlatformTextStyle(includeFontPadding = false)
-        )
-
-        // Left Header & Footer
-        if (leftHeader.isNotBlank()) {
-            val hLayout = textMeasurer.measure(
-                text = AnnotatedString(leftHeader.take(32).uppercase()),
-                style = headerStyle,
-                constraints = Constraints(maxWidth = colInnerW)
-            )
-            drawText(hLayout, topLeft = Offset(colPadHoriz, 6f + colPadVert * 0.5f))
-        }
-        val leftPageNum = textMeasurer.measure(
-            text = AnnotatedString("${leftPageIndex + 1}"),
-            style = headerStyle,
-            constraints = Constraints(maxWidth = colInnerW)
-        )
-        drawText(leftPageNum, topLeft = Offset(colPadHoriz, size.height - footerH))
-
-        // Right Header & Footer
-        if (rightHeader.isNotBlank()) {
-            val rhLayout = textMeasurer.measure(
-                text = AnnotatedString(rightHeader.take(32).uppercase()),
-                style = headerStyle,
-                constraints = Constraints(maxWidth = colInnerW)
-            )
-            drawText(rhLayout, topLeft = Offset(halfW + colPadHoriz, 6f + colPadVert * 0.5f))
-        }
-        val rightPageNum = textMeasurer.measure(
-            text = AnnotatedString("${rightPageIndex + 1}"),
-            style = headerStyle,
-            constraints = Constraints(maxWidth = colInnerW)
-        )
-        drawText(rightPageNum, topLeft = Offset(size.width - colPadHoriz - rightPageNum.size.width, size.height - footerH))
-
-        fun buildSpreadColumnAnnotated(
-            text: String,
-            effectiveFontSizeSp: Float
-        ): AnnotatedString {
-            val clean = text
-                .replace(Regex("\\[ILLUST:[^]]+]"), "")
-                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                .trim()
-            val rawParas = clean.split("\n\n").map { it.trim() }.filter { it.isNotEmpty() }
-            val paraIndent = prefs?.paraIndent ?: false
-            val paraSpacingEm = prefs?.paraSpacingEm ?: 1.1f
-            val wordSpacingPx = prefs?.wordSpacingPx ?: 0
-            val textAlign = pageTextStyle.textAlign ?: TextAlign.Start
-
-            val indentSpec = if (paraIndent) TextIndent(firstLine = (effectiveFontSizeSp * 1.5f).sp) else TextIndent.None
-            val paraGapSp = (effectiveFontSizeSp * paraSpacingEm.coerceIn(0.2f, 2.5f) * 0.85f).sp
-            val wordExtraSp = (wordSpacingPx * 0.28f).sp
-
-            return buildAnnotatedString {
-                rawParas.forEachIndexed { idx, pText ->
-                    val pStart = length
-                    withStyle(
-                        ParagraphStyle(
-                            textAlign = textAlign,
-                            textIndent = indentSpec
-                        )
-                    ) {
-                        append(pText)
-                    }
-                    val pEnd = length
-                    if (wordSpacingPx > 0) {
-                        for (i in pStart until pEnd) {
-                            if (this.toAnnotatedString().text[i] == ' ') {
-                                addStyle(SpanStyle(letterSpacing = wordExtraSp), i, i + 1)
-                            }
-                        }
-                    }
-                    if (idx < rawParas.lastIndex) {
-                        withStyle(ParagraphStyle(lineHeight = paraGapSp)) {
-                            withStyle(SpanStyle(fontSize = paraGapSp)) {
-                                append("\n")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Left Page Content
-        if (leftPdfBitmap != null) {
-            val scale = minOf(halfW / leftPdfBitmap.width.toFloat(), size.height / leftPdfBitmap.height.toFloat())
-            val dstW = leftPdfBitmap.width * scale
-            val dstH = leftPdfBitmap.height * scale
-            if (leftColorFilter != null) {
-                // Use Android Canvas for filter support
-                val androidCanvas = drawContext.canvas.nativeCanvas
-                val paint = android.graphics.Paint().apply {
-                    colorFilter = leftColorFilter
-                }
-                val srcRect = android.graphics.Rect(0, 0, leftPdfBitmap.width, leftPdfBitmap.height)
-                val dstRect = android.graphics.RectF(
-                    ((halfW - dstW) / 2),
-                    ((size.height - dstH) / 2),
-                    ((halfW - dstW) / 2) + dstW,
-                    ((size.height - dstH) / 2) + dstH
-                )
-                androidCanvas.drawBitmap(leftPdfBitmap, srcRect, dstRect, paint)
-            } else {
-                drawImage(
-                    image = leftPdfBitmap.asImageBitmap(),
-                    dstOffset = IntOffset(((halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
-                    dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-                )
-            }
-        } else if (leftText.isNotBlank()) {
-            val baseFontSize = pageTextStyle.fontSize.value
-            val baseLineHeight = pageTextStyle.lineHeight.value
-            var fontScale = 1.0f
-            var effectiveLeftStyle = pageTextStyle
-            var leftAnnotated = buildSpreadColumnAnnotated(leftText, baseFontSize * fontScale)
-            var leftLayout = textMeasurer.measure(
-                text = leftAnnotated,
-                style = effectiveLeftStyle,
-                constraints = Constraints(maxWidth = colInnerW)
-            )
-            while (leftLayout.size.height > colInnerH && fontScale > 0.48f) {
-                fontScale *= 0.94f
-                effectiveLeftStyle = pageTextStyle.copy(
-                    fontSize = (baseFontSize * fontScale).sp,
-                    lineHeight = (baseLineHeight * fontScale).sp
-                )
-                leftAnnotated = buildSpreadColumnAnnotated(leftText, baseFontSize * fontScale)
-                leftLayout = textMeasurer.measure(
-                    text = leftAnnotated,
-                    style = effectiveLeftStyle,
-                    constraints = Constraints(maxWidth = colInnerW)
-                )
-            }
-            clipRect(colPadHoriz, textTop, colPadHoriz + colInnerW, clipBottom) {
-                drawText(leftLayout, topLeft = Offset(colPadHoriz, textTop))
-                if (prefs?.fontWeight == 500) {
-                    drawText(
-                        textLayoutResult = leftLayout,
-                        topLeft = Offset(colPadHoriz, textTop),
-                        color = pageTextStyle.color,
-                        drawStyle = Stroke(width = 0.45f * density.density)
-                    )
-                }
-            }
-        }
-
-        // Right Page Content
-        if (rightPdfBitmap != null) {
-            val scale = minOf(halfW / rightPdfBitmap.width.toFloat(), size.height / rightPdfBitmap.height.toFloat())
-            val dstW = rightPdfBitmap.width * scale
-            val dstH = rightPdfBitmap.height * scale
-            if (rightColorFilter != null) {
-                // Use Android Canvas for filter support
-                val androidCanvas = drawContext.canvas.nativeCanvas
-                val paint = android.graphics.Paint().apply {
-                    colorFilter = rightColorFilter
-                }
-                val srcRect = android.graphics.Rect(0, 0, rightPdfBitmap.width, rightPdfBitmap.height)
-                val dstRect = android.graphics.RectF(
-                    (halfW + (halfW - dstW) / 2),
-                    ((size.height - dstH) / 2),
-                    (halfW + (halfW - dstW) / 2) + dstW,
-                    ((size.height - dstH) / 2) + dstH
-                )
-                androidCanvas.drawBitmap(rightPdfBitmap, srcRect, dstRect, paint)
-            } else {
-                drawImage(
-                    image = rightPdfBitmap.asImageBitmap(),
-                    dstOffset = IntOffset((halfW + (halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
-                    dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-                )
-            }
-        } else if (rightText.isNotBlank()) {
-            val baseFontSize = pageTextStyle.fontSize.value
-            val baseLineHeight = pageTextStyle.lineHeight.value
-            var fontScale = 1.0f
-            var effectiveRightStyle = pageTextStyle
-            var rightAnnotated = buildSpreadColumnAnnotated(rightText, baseFontSize * fontScale)
-            var rightLayout = textMeasurer.measure(
-                text = rightAnnotated,
-                style = effectiveRightStyle,
-                constraints = Constraints(maxWidth = colInnerW)
-            )
-            while (rightLayout.size.height > colInnerH && fontScale > 0.48f) {
-                fontScale *= 0.94f
-                effectiveRightStyle = pageTextStyle.copy(
-                    fontSize = (baseFontSize * fontScale).sp,
-                    lineHeight = (baseLineHeight * fontScale).sp
-                )
-                rightAnnotated = buildSpreadColumnAnnotated(rightText, baseFontSize * fontScale)
-                rightLayout = textMeasurer.measure(
-                    text = rightAnnotated,
-                    style = effectiveRightStyle,
-                    constraints = Constraints(maxWidth = colInnerW)
-                )
-            }
-            clipRect(halfW + colPadHoriz, textTop, halfW + colPadHoriz + colInnerW, clipBottom) {
-                drawText(rightLayout, topLeft = Offset(halfW + colPadHoriz, textTop))
-                if (prefs?.fontWeight == 500) {
-                    drawText(
-                        textLayoutResult = rightLayout,
-                        topLeft = Offset(halfW + colPadHoriz, textTop),
-                        color = pageTextStyle.color,
-                        drawStyle = Stroke(width = 0.45f * density.density)
-                    )
-                }
-            }
-        }
-    }
-    return bitmap
 }

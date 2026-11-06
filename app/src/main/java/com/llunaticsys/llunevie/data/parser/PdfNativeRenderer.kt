@@ -57,6 +57,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -118,6 +119,54 @@ object PdfNativeRenderer {
     )
 
     private val renderMutex = Mutex()
+    private val rendererSessionLock = Any()
+    private var activeRendererPath: String? = null
+    private var activePfd: ParcelFileDescriptor? = null
+    private var activePdfRenderer: PdfRenderer? = null
+
+    const val CANONICAL_PDF_WIDTH_BUCKET = 1080
+
+    private fun buildPageCacheKey(pdfFilePath: String, pageIndex: Int): String =
+        "$pdfFilePath:$pageIndex:$CANONICAL_PDF_WIDTH_BUCKET"
+
+    private fun getOrOpenPdfRendererLocked(pdfFilePath: String): PdfRenderer? {
+        if (pdfFilePath.isBlank()) return null
+        if (activeRendererPath == pdfFilePath && activePdfRenderer != null) {
+            return activePdfRenderer
+        }
+        closePooledPdfRendererLocked()
+        val file = File(pdfFilePath)
+        if (!file.exists()) return null
+        return runCatching {
+            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            try {
+                val renderer = PdfRenderer(pfd)
+                activePfd = pfd
+                activePdfRenderer = renderer
+                activeRendererPath = pdfFilePath
+                renderer
+            } catch (t: Throwable) {
+                runCatching { pfd.close() }
+                throw t
+            }
+        }.getOrNull()
+    }
+
+    private fun closePooledPdfRendererLocked() {
+        runCatching { activePdfRenderer?.close() }
+        runCatching { activePfd?.close() }
+        activePdfRenderer = null
+        activePfd = null
+        activeRendererPath = null
+    }
+
+    fun getPageCount(pdfFilePath: String, fallback: Int = 1): Int {
+        if (pdfFilePath.isBlank()) return fallback
+        return synchronized(rendererSessionLock) {
+            val renderer = getOrOpenPdfRendererLocked(pdfFilePath) ?: return@synchronized fallback
+            runCatching { renderer.pageCount.coerceAtLeast(1) }.getOrDefault(fallback)
+        }
+    }
 
     // Byte-bounded in-memory Bitmap LRU Cache for raw PDF pages (48 MB max, size in KB)
     private val pageBitmapCache = object : LruCache<String, Bitmap>(48 * 1024) {
@@ -163,7 +212,7 @@ object PdfNativeRenderer {
         translatedPdfBitmapCache.put(key, bitmap)
     }
 
-    private val aspectRatioCache = mutableMapOf<String, Float>()
+    private val aspectRatioCache = ConcurrentHashMap<String, Float>()
 
     // Byte-bounded high-resolution in-memory Bitmap LRU Cache for the full-screen illustration viewer (24 MB max, size in KB)
     private val highResIllustCache = object : LruCache<String, Bitmap>(24 * 1024) {
@@ -193,49 +242,44 @@ object PdfNativeRenderer {
             highResIllustCache.get(cacheKey)?.let { cached ->
                 if (!cached.isRecycled) return@withLock cached
             }
-            runCatching {
-                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                    PdfRenderer(pfd).use { renderer ->
-                        if (pageIndex !in 0 until renderer.pageCount) return@use null
-                        renderer.openPage(pageIndex).use { page ->
-                            val rawW = page.width.coerceAtLeast(1)
-                            val rawH = page.height.coerceAtLeast(1)
-                            val targetW = targetWidthPx.coerceIn(1600, 2048)
-                            val scale = (targetW.toFloat() / rawW.toFloat()).coerceAtLeast(1.0f)
-                            var bmpW = (rawW * scale).toInt().coerceAtLeast(1)
-                            var bmpH = (rawH * scale).toInt().coerceAtLeast(1)
-                            val maxDim = 3840
-                            if (maxOf(bmpW, bmpH) > maxDim) {
-                                val downscale = maxDim.toFloat() / maxOf(bmpW, bmpH).toFloat()
-                                bmpW = (bmpW * downscale).toInt().coerceAtLeast(1)
-                                bmpH = (bmpH * downscale).toInt().coerceAtLeast(1)
-                            }
-                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
-                            val canvas = Canvas(bitmap)
-                            canvas.drawColor(Color.WHITE)
-                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            highResIllustCache.put(cacheKey, bitmap)
-                            bitmap
+            synchronized(rendererSessionLock) {
+                val renderer = getOrOpenPdfRendererLocked(pdfFilePath) ?: return@synchronized null
+                runCatching {
+                    if (pageIndex !in 0 until renderer.pageCount) return@runCatching null
+                    renderer.openPage(pageIndex).use { page ->
+                        val rawW = page.width.coerceAtLeast(1)
+                        val rawH = page.height.coerceAtLeast(1)
+                        val targetW = targetWidthPx.coerceIn(1600, 2048)
+                        val scale = (targetW.toFloat() / rawW.toFloat()).coerceAtLeast(1.0f)
+                        var bmpW = (rawW * scale).toInt().coerceAtLeast(1)
+                        var bmpH = (rawH * scale).toInt().coerceAtLeast(1)
+                        val maxDim = 3840
+                        if (maxOf(bmpW, bmpH) > maxDim) {
+                            val downscale = maxDim.toFloat() / maxOf(bmpW, bmpH).toFloat()
+                            bmpW = (bmpW * downscale).toInt().coerceAtLeast(1)
+                            bmpH = (bmpH * downscale).toInt().coerceAtLeast(1)
                         }
+                        val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bitmap)
+                        canvas.drawColor(Color.WHITE)
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        highResIllustCache.put(cacheKey, bitmap)
+                        bitmap
                     }
-                }
-            }.getOrNull()
+                }.getOrNull()
+            }
         }
     }
 
-    fun getCachedBitmap(pdfFilePath: String, pageIndex: Int, widthBucket: Int): Bitmap? {
-        val bmp = pageBitmapCache.get("$pdfFilePath:$pageIndex:$widthBucket")
+    fun getCachedBitmap(pdfFilePath: String, pageIndex: Int, widthBucket: Int = CANONICAL_PDF_WIDTH_BUCKET): Bitmap? {
+        if (pdfFilePath.isBlank() || pageIndex < 0) return null
+        val bmp = pageBitmapCache.get(buildPageCacheKey(pdfFilePath, pageIndex))
         if (bmp != null && !bmp.isRecycled) return bmp
         return null
     }
 
     fun getAnyCachedPageBitmap(pdfFilePath: String, pageIndex: Int): Bitmap? {
-        if (pdfFilePath.isBlank() || pageIndex < 0) return null
-        return getCachedBitmap(pdfFilePath, pageIndex, 1080)
-            ?: getCachedBitmap(pdfFilePath, pageIndex, 960)
-            ?: getCachedBitmap(pdfFilePath, pageIndex, 720)
-            ?: getCachedBitmap(pdfFilePath, pageIndex, 480)
-            ?: getCachedBitmap(pdfFilePath, pageIndex, 360)
+        return getCachedBitmap(pdfFilePath, pageIndex)
     }
 
     fun getCachedPageAspectRatio(pdfFilePath: String): Float {
@@ -415,7 +459,7 @@ object PdfNativeRenderer {
                             }
                             coverFilePath = coverFile.absolutePath
                             firstPageBitmap = bmp
-                            pageBitmapCache.put("${pdfFile.absolutePath}:0:720", bmp)
+                            pageBitmapCache.put(buildPageCacheKey(pdfFile.absolutePath, 0), bmp)
                         }
                     }
                 }
@@ -424,7 +468,7 @@ object PdfNativeRenderer {
         onProgressUpdate(bookId, 80)
 
         val (spineHex, spineTextHex) = SpineColorExtractor.extractSpineColors(firstPageBitmap)
-        if (firstPageBitmap != null && pageBitmapCache.get("${pdfFile.absolutePath}:0:720") == null) {
+        if (firstPageBitmap != null && pageBitmapCache.get(buildPageCacheKey(pdfFile.absolutePath, 0)) == null) {
             firstPageBitmap?.recycle()
         }
 
@@ -475,10 +519,8 @@ object PdfNativeRenderer {
         pageIndex: Int,
         targetWidthPx: Int = 960
     ): Bitmap? {
-        if (pageIndex < 0) return null
-        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
-        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
-        val cacheKey = "$pdfFilePath:$pageIndex:$widthBucket"
+        if (pageIndex < 0 || pdfFilePath.isBlank()) return null
+        val cacheKey = buildPageCacheKey(pdfFilePath, pageIndex)
         pageBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return cached
         }
@@ -486,28 +528,30 @@ object PdfNativeRenderer {
         val file = File(pdfFilePath)
         if (!file.exists()) return null
 
-        return runCatching {
-            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    if (pageIndex !in 0 until renderer.pageCount) return@use null
-                    renderer.openPage(pageIndex).use { page ->
-                        val rawW = page.width.coerceAtLeast(1)
-                        val rawH = page.height.coerceAtLeast(1)
-                        aspectRatioCache[pdfFilePath] = (rawW.toFloat() / rawH.toFloat()).coerceIn(0.45f, 1.6f)
-                        val scale = minOf(1.8f, 1080f / rawW.toFloat()).coerceAtLeast(0.5f)
-                        val bmpW = (rawW * scale).toInt().coerceIn(240, 1080)
-                        val bmpH = (rawH * scale).toInt().coerceIn(320, 1920)
-                        val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
-                        val canvas = Canvas(bitmap)
-                        // Always fill PDF page background with pure white paper (#FFFFFF)
-                        canvas.drawColor(Color.WHITE)
-                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        pageBitmapCache.put(cacheKey, bitmap)
-                        bitmap
-                    }
-                }
+        return synchronized(rendererSessionLock) {
+            pageBitmapCache.get(cacheKey)?.let { cached ->
+                if (!cached.isRecycled) return@synchronized cached
             }
-        }.getOrNull()
+            val renderer = getOrOpenPdfRendererLocked(pdfFilePath) ?: return@synchronized null
+            runCatching {
+                if (pageIndex !in 0 until renderer.pageCount) return@runCatching null
+                renderer.openPage(pageIndex).use { page ->
+                    val rawW = page.width.coerceAtLeast(1)
+                    val rawH = page.height.coerceAtLeast(1)
+                    aspectRatioCache[pdfFilePath] = (rawW.toFloat() / rawH.toFloat()).coerceIn(0.45f, 1.6f)
+                    val scale = minOf(1.8f, 1080f / rawW.toFloat()).coerceAtLeast(0.5f)
+                    val bmpW = (rawW * scale).toInt().coerceIn(240, 1080)
+                    val bmpH = (rawH * scale).toInt().coerceIn(320, 1920)
+                    val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    // Always fill PDF page background with pure white paper (#FFFFFF)
+                    canvas.drawColor(Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    pageBitmapCache.put(cacheKey, bitmap)
+                    bitmap
+                }
+            }.getOrNull()
+        }
     }
 
     suspend fun renderPageBitmap(
@@ -515,10 +559,8 @@ object PdfNativeRenderer {
         pageIndex: Int,
         targetWidthPx: Int = 960
     ): Bitmap? = withContext(Dispatchers.IO) {
-        if (pageIndex < 0) return@withContext null
-        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
-        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
-        val cacheKey = "$pdfFilePath:$pageIndex:$widthBucket"
+        if (pageIndex < 0 || pdfFilePath.isBlank()) return@withContext null
+        val cacheKey = buildPageCacheKey(pdfFilePath, pageIndex)
         pageBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return@withContext cached
         }
@@ -551,9 +593,7 @@ object PdfNativeRenderer {
             if (!cached.isRecycled) return cached
         }
 
-        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
-        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
-        val origBmp = getCachedBitmap(pdfFilePath, pageIndex, widthBucket)
+        val origBmp = getCachedBitmap(pdfFilePath, pageIndex)
             ?: renderPage(pdfFilePath, pageIndex, targetWidthPx)
             ?: return null
 
@@ -1144,6 +1184,9 @@ object PdfNativeRenderer {
     }
 
     fun closeCachedDoc() {
+        synchronized(rendererSessionLock) {
+            closePooledPdfRendererLocked()
+        }
         synchronized(docCacheLock) {
             runCatching { cachedDoc?.close() }
             cachedDoc = null

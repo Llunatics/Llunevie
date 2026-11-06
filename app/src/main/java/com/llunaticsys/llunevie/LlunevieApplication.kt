@@ -8,6 +8,7 @@ import com.llunaticsys.llunevie.data.local.UserPreferencesRepository
 import com.llunaticsys.llunevie.data.parser.EpubNativeParser
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
 import com.llunaticsys.llunevie.data.remote.MultiBookApiRepository
+import com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,6 +40,7 @@ class LlunevieApplication : Application() {
                 level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
             PdfNativeRenderer.clearMemoryCaches(evictPageBitmaps = evictAll)
             EpubNativeParser.clearMemoryCaches()
+            clearEpubSnapshotCache(evictAll = evictAll)
             if (evictAll) {
                 PdfNativeRenderer.closeCachedDoc()
             }
@@ -49,6 +51,7 @@ class LlunevieApplication : Application() {
         super.onLowMemory()
         PdfNativeRenderer.clearMemoryCaches(evictPageBitmaps = true)
         EpubNativeParser.clearMemoryCaches()
+        clearEpubSnapshotCache(evictAll = true)
         PdfNativeRenderer.closeCachedDoc()
     }
 }

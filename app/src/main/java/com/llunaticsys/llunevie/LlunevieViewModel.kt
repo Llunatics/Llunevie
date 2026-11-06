@@ -1445,11 +1445,7 @@ class LlunevieViewModel(
                 if (isPdf && book.localFilePath != null) {
                     val pdfFile = File(book.localFilePath)
                     if (pdfFile.exists()) {
-                        actualPageCount = runCatching {
-                            android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                                android.graphics.pdf.PdfRenderer(pfd).use { it.pageCount }
-                            }
-                        }.getOrDefault(book.pagesCount)
+                        actualPageCount = PdfNativeRenderer.getPageCount(pdfFile.absolutePath, book.pagesCount)
 
                         if (parsedChapters.isEmpty()) {
                             val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
