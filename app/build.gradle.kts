@@ -13,8 +13,8 @@ android {
         applicationId = "com.llunaticsys.llunevie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 61
-        versionName = "0.4.1-beta.3"
+        versionCode = 62
+        versionName = "0.4.2-beta.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -50,7 +50,8 @@ android {
         }
         release {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -97,7 +98,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.ui:ui-text-google-fonts")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
@@ -116,9 +116,6 @@ dependencies {
 
     // Coil Compose for Async Book Covers & Local Extracted Images
     implementation("io.coil-kt:coil-compose:2.7.0")
-
-    // Palette for Extracting Dominant Spine Colors from Book Covers
-    implementation("androidx.palette:palette-ktx:1.0.0")
 
     // CameraX & Google ML Kit Barcode Scanning & On-Device Text Recognition
     val cameraVersion = "1.3.4"

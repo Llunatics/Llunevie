@@ -53,6 +53,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -471,7 +472,7 @@ private fun LlunevieMainContainer(
                     },
                     onSelectAutoImportFolder = { path, uri -> viewModel.setAutoImportFolder(path, uri) },
                     onRescanFolder = { viewModel.scanAutoImportFolder(force = true) },
-                    onExportBackup = { onShareBackupJson(viewModel.buildBackupJsonString()) },
+                    onExportBackup = { viewModel.exportBackupJson(onShareBackupJson) },
                     onRestoreBackup = onPickLocalFile,
                     onUpdateTranslatorPrefs = { engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt ->
                         viewModel.updateTranslatorPrefs(engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt)
@@ -679,7 +680,9 @@ private fun LlunevieMainContainer(
                                 shape = CircleShape,
                                 color = palette.bgSurface,
                                 border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .size(28.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text("✕", color = palette.textMain, fontSize = 11.sp)

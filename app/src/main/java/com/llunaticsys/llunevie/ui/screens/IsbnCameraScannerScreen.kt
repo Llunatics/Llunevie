@@ -70,6 +70,7 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -83,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -177,6 +179,7 @@ fun IsbnCameraScannerScreen(
     }
 
     var cameraRef by remember { mutableStateOf<Camera?>(null) }
+    var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var manualIsbnText by remember { mutableStateOf("") }
     var lastScannedCode by remember { mutableStateOf("") }
     var pendingBookForShelfPicker by remember { mutableStateOf<CatalogBookCandidate?>(null) }
@@ -223,6 +226,9 @@ fun IsbnCameraScannerScreen(
 
             DisposableEffect(Unit) {
                 onDispose {
+                    runCatching { cameraProviderRef?.unbindAll() }
+                    cameraProviderRef = null
+                    cameraRef = null
                     runCatching { barcodeScanner.close() }
                     runCatching { analysisExecutor.shutdown() }
                 }
@@ -236,6 +242,7 @@ fun IsbnCameraScannerScreen(
                     cameraProviderFuture.addListener({
                         runCatching {
                             val cameraProvider = cameraProviderFuture.get()
+                            cameraProviderRef = cameraProvider
                             val preview = Preview.Builder().build().also {
                                 it.setSurfaceProvider(previewView.surfaceProvider)
                             }
@@ -300,84 +307,96 @@ fun IsbnCameraScannerScreen(
         }
 
         // 2. Single Unified Viewfinder Canvas: Cutout Hole, 4 Corner Brackets & Cyan Scan Laser from exact same scanRect
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val boxW = 248.dp.toPx()
-            val boxH = 180.dp.toPx()
-            val centerX = size.width / 2f
-            val centerY = size.height * 0.42f
-            val scanRect = Rect(
-                left = centerX - boxW / 2f,
-                top = centerY - boxH / 2f,
-                right = centerX + boxW / 2f,
-                bottom = centerY + boxH / 2f
-            )
-            val cornerRad = 20.dp.toPx()
+        Spacer(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val boxW = 248.dp.toPx()
+                    val boxH = 180.dp.toPx()
+                    val centerX = size.width / 2f
+                    val centerY = size.height * 0.42f
+                    val scanRect = Rect(
+                        left = centerX - boxW / 2f,
+                        top = centerY - boxH / 2f,
+                        right = centerX + boxW / 2f,
+                        bottom = centerY + boxH / 2f
+                    )
+                    val cornerRad = 20.dp.toPx()
 
-            // 1. Dark vignette overlay with clear cutout at scanRect
-            val outerPath = Path().apply { addRect(Rect(0f, 0f, size.width, size.height)) }
-            val holePath = Path().apply {
-                addRoundRect(RoundRect(scanRect, CornerRadius(cornerRad, cornerRad)))
-            }
-            val vignettePath = Path().apply {
-                op(outerPath, holePath, PathOperation.Difference)
-            }
-            drawPath(path = vignettePath, color = Color.Black.copy(alpha = 0.62f))
+                    // 1. Dark vignette overlay with clear cutout at scanRect
+                    val outerPath = Path().apply { addRect(Rect(0f, 0f, size.width, size.height)) }
+                    val holePath = Path().apply {
+                        addRoundRect(RoundRect(scanRect, CornerRadius(cornerRad, cornerRad)))
+                    }
+                    val vignettePath = Path().apply {
+                        op(outerPath, holePath, PathOperation.Difference)
+                    }
+                    val vignetteColor = Color.Black.copy(alpha = 0.62f)
 
-            // 2. Four white rounded corner brackets at the EXACT corners of scanRect
-            val bracketLen = 28.dp.toPx()
-            val strokeW = 2.5.dp.toPx()
-            val bracketPath = Path().apply {
-                // Top-Left corner: starts (left, top + arm) -> (left, top + rad) -> curve around (left, top) to (left + rad, top) -> (left + arm, top)
-                moveTo(scanRect.left, scanRect.top + bracketLen)
-                lineTo(scanRect.left, scanRect.top + cornerRad)
-                quadraticTo(scanRect.left, scanRect.top, scanRect.left + cornerRad, scanRect.top)
-                lineTo(scanRect.left + bracketLen, scanRect.top)
+                    // 2. Four white rounded corner brackets at the EXACT corners of scanRect
+                    val bracketLen = 28.dp.toPx()
+                    val strokeW = 2.5.dp.toPx()
+                    val bracketStroke = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    val bracketPath = Path().apply {
+                        // Top-Left corner: starts (left, top + arm) -> (left, top + rad) -> curve around (left, top) to (left + rad, top) -> (left + arm, top)
+                        moveTo(scanRect.left, scanRect.top + bracketLen)
+                        lineTo(scanRect.left, scanRect.top + cornerRad)
+                        quadraticTo(scanRect.left, scanRect.top, scanRect.left + cornerRad, scanRect.top)
+                        lineTo(scanRect.left + bracketLen, scanRect.top)
 
-                // Top-Right corner: starts (right - arm, top) -> (right - rad, top) -> curve around (right, top) to (right, top + rad) -> (right, top + arm)
-                moveTo(scanRect.right - bracketLen, scanRect.top)
-                lineTo(scanRect.right - cornerRad, scanRect.top)
-                quadraticTo(scanRect.right, scanRect.top, scanRect.right, scanRect.top + cornerRad)
-                lineTo(scanRect.right, scanRect.top + bracketLen)
+                        // Top-Right corner: starts (right - arm, top) -> (right - rad, top) -> curve around (right, top) to (right, top + rad) -> (right, top + arm)
+                        moveTo(scanRect.right - bracketLen, scanRect.top)
+                        lineTo(scanRect.right - cornerRad, scanRect.top)
+                        quadraticTo(scanRect.right, scanRect.top, scanRect.right, scanRect.top + cornerRad)
+                        lineTo(scanRect.right, scanRect.top + bracketLen)
 
-                // Bottom-Right corner: starts (right, bottom - arm) -> (right, bottom - rad) -> curve around (right, bottom) to (right - rad, bottom) -> (right - arm, bottom)
-                moveTo(scanRect.right, scanRect.bottom - bracketLen)
-                lineTo(scanRect.right, scanRect.bottom - cornerRad)
-                quadraticTo(scanRect.right, scanRect.bottom, scanRect.right - cornerRad, scanRect.bottom)
-                lineTo(scanRect.right - bracketLen, scanRect.bottom)
+                        // Bottom-Right corner: starts (right, bottom - arm) -> (right, bottom - rad) -> curve around (right, bottom) to (right - rad, bottom) -> (right - arm, bottom)
+                        moveTo(scanRect.right, scanRect.bottom - bracketLen)
+                        lineTo(scanRect.right, scanRect.bottom - cornerRad)
+                        quadraticTo(scanRect.right, scanRect.bottom, scanRect.right - cornerRad, scanRect.bottom)
+                        lineTo(scanRect.right - bracketLen, scanRect.bottom)
 
-                // Bottom-Left corner: starts (left + arm, bottom) -> (left + rad, bottom) -> curve around (left, bottom) to (left, bottom - rad) -> (left, bottom - arm)
-                moveTo(scanRect.left + bracketLen, scanRect.bottom)
-                lineTo(scanRect.left + cornerRad, scanRect.bottom)
-                quadraticTo(scanRect.left, scanRect.bottom, scanRect.left, scanRect.bottom - cornerRad)
-                lineTo(scanRect.left, scanRect.bottom - bracketLen)
-            }
-            drawPath(
-                path = bracketPath,
-                color = Color.White,
-                style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
+                        // Bottom-Left corner: starts (left + arm, bottom) -> (left + rad, bottom) -> curve around (left, bottom) to (left, bottom - rad) -> (left, bottom - arm)
+                        moveTo(scanRect.left + bracketLen, scanRect.bottom)
+                        lineTo(scanRect.left + cornerRad, scanRect.bottom)
+                        quadraticTo(scanRect.left, scanRect.bottom, scanRect.left, scanRect.bottom - cornerRad)
+                        lineTo(scanRect.left, scanRect.bottom - bracketLen)
+                    }
 
-            // 3. Single, crisp, clean horizontal scan line (height = 2.dp, StrokeCap.Round) strictly inside viewfinder bounds
-            val laserY = scanRect.top + cornerRad + (scanRect.height - 2f * cornerRad) * laserProgress
-            val laserLeft = scanRect.left + 10.dp.toPx()
-            val laserRight = scanRect.right - 10.dp.toPx()
-            drawLine(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.White.copy(alpha = 0.95f),
-                        Color.White.copy(alpha = 0.95f),
-                        Color.Transparent
-                    ),
-                    startX = laserLeft,
-                    endX = laserRight
-                ),
-                start = Offset(laserLeft, laserY),
-                end = Offset(laserRight, laserY),
-                strokeWidth = 2.dp.toPx(),
-                cap = StrokeCap.Round
-            )
-        }
+                    val laserLeft = scanRect.left + 10.dp.toPx()
+                    val laserRight = scanRect.right - 10.dp.toPx()
+                    val laserStrokeW = 2.dp.toPx()
+                    val laserBrush = Brush.horizontalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = 0.95f),
+                            Color.White.copy(alpha = 0.95f),
+                            Color.Transparent
+                        ),
+                        startX = laserLeft,
+                        endX = laserRight
+                    )
+
+                    onDrawBehind {
+                        drawPath(path = vignettePath, color = vignetteColor)
+                        drawPath(
+                            path = bracketPath,
+                            color = Color.White,
+                            style = bracketStroke
+                        )
+
+                        // 3. Single, crisp, clean horizontal scan line (height = 2.dp, StrokeCap.Round) strictly inside viewfinder bounds
+                        val laserY = scanRect.top + cornerRad + (scanRect.height - 2f * cornerRad) * laserProgress
+                        drawLine(
+                            brush = laserBrush,
+                            start = Offset(laserLeft, laserY),
+                            end = Offset(laserRight, laserY),
+                            strokeWidth = laserStrokeW,
+                            cap = StrokeCap.Round
+                        )
+                    }
+                }
+        )
 
         val boxWDp = 248.dp
         val boxHDp = 180.dp
@@ -443,15 +462,17 @@ fun IsbnCameraScannerScreen(
                 color = Color.Black.copy(alpha = 0.35f),
                 border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.22f)),
                 modifier = Modifier
-                    .size(40.dp)
                     .align(Alignment.CenterStart)
+                    .minimumInteractiveComponentSize()
+                    .size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.CLOSE_X,
                         tint = Color.White,
                         modifier = Modifier.size(16.dp),
-                        strokeWidthDp = 1.8f
+                        strokeWidthDp = 1.8f,
+                        contentDescription = if (strings.isId) "Tutup pemindai" else "Close scanner"
                     )
                 }
             }
@@ -562,15 +583,17 @@ fun IsbnCameraScannerScreen(
                     if (uiState.cameraTorchEnabled) Color(0xFFFCD34D).copy(alpha = 0.60f) else Color.White.copy(alpha = 0.22f)
                 ),
                 modifier = Modifier
-                    .size(40.dp)
                     .align(Alignment.CenterEnd)
+                    .minimumInteractiveComponentSize()
+                    .size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
                         type = PrototypeIconType.TORCH_BOLT,
                         tint = Color.White,
                         modifier = Modifier.size(17.dp),
-                        strokeWidthDp = 1.8f
+                        strokeWidthDp = 1.8f,
+                        contentDescription = if (strings.isId) "Nyalakan atau matikan senter" else "Toggle flashlight"
                     )
                 }
             }

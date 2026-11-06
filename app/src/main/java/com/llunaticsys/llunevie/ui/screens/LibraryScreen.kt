@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
@@ -56,7 +57,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -306,6 +312,10 @@ fun LibraryScreen(
                                             modifier = Modifier
                                                 .size(32.dp)
                                                 .clip(CircleShape)
+                                                .semantics {
+                                                    contentDescription = mode.name
+                                                    role = Role.Tab
+                                                }
                                                 .clickable { onSetViewMode(mode) }
                                         ) {
                                             Box(contentAlignment = Alignment.Center) {
@@ -313,7 +323,8 @@ fun LibraryScreen(
                                                     type = iconType,
                                                     tint = if (active) palette.textMain else palette.textMuted,
                                                     modifier = Modifier.size(16.dp),
-                                                    strokeWidthDp = 1.8f
+                                                    strokeWidthDp = 1.8f,
+                                                    contentDescription = mode.name
                                                 )
                                             }
                                         }
@@ -355,14 +366,23 @@ fun LibraryScreen(
                                             .fillMaxHeight()
                                     )
                                     if (uiState.libSearchQuery.isNotEmpty()) {
-                                        Text(
-                                            text = "✕",
-                                            color = palette.textMuted,
-                                            fontSize = 12.sp,
+                                        Box(
                                             modifier = Modifier
+                                                .sizeIn(minWidth = 28.dp, minHeight = 20.dp)
+                                                .semantics {
+                                                    contentDescription = if (strings.isId) "Hapus pencarian" else "Clear search"
+                                                    role = Role.Button
+                                                }
                                                 .clickable { onSearchQueryChange("") }
-                                                .padding(horizontal = 4.dp)
-                                        )
+                                                .padding(horizontal = 4.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "✕",
+                                                color = palette.textMuted,
+                                                fontSize = 12.sp
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -413,6 +433,10 @@ fun LibraryScreen(
                                         modifier = Modifier
                                             .size(32.dp)
                                             .clip(CircleShape)
+                                            .semantics {
+                                                contentDescription = if (strings.isId) "Filter pustaka" else "Filter library"
+                                                role = Role.Button
+                                            }
                                             .clickable { onToggleFilterSheet(true) },
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -420,7 +444,8 @@ fun LibraryScreen(
                                             type = PrototypeIconType.FILTER_FUNNEL,
                                             tint = palette.textMain,
                                             modifier = Modifier.size(16.dp),
-                                            strokeWidthDp = 1.8f
+                                            strokeWidthDp = 1.8f,
+                                            contentDescription = if (strings.isId) "Filter pustaka" else "Filter library"
                                         )
                                         if (hasActiveFilterDot) {
                                             Box(
@@ -1107,13 +1132,16 @@ fun LibraryScreen(
                             shape = CircleShape,
                             color = palette.bgSurface,
                             border = BorderStroke(1.dp, palette.borderSoft),
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(30.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 PrototypeSvgIcon(
                                     type = PrototypeIconType.TRASH_CAN,
                                     tint = Color(0xFFEF4444),
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(15.dp),
+                                    contentDescription = if (strings.isId) "Hapus buku terpilih" else "Delete selected books"
                                 )
                             }
                         }

@@ -99,6 +99,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material3.minimumInteractiveComponentSize
 import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
@@ -195,9 +196,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.text.googlefonts.GoogleFont
-import androidx.compose.ui.text.googlefonts.Font
-import com.llunaticsys.llunevie.R
 import com.llunaticsys.llunevie.ui.components.ClassicGlassSegmentedControl
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -257,12 +255,6 @@ val CURATED_READER_FONTS = listOf(
 )
 
 private val SANS_FONTS = setOf("Plus Jakarta Sans", "Inter", "DM Sans", "Nunito")
-
-private val googleFontProvider = GoogleFont.Provider(
-    providerAuthority = "com.google.android.gms.fonts",
-    providerPackage = "com.google.android.gms",
-    certificates = R.array.com_google_android_gms_fonts_certs
-)
 
 private val fontFamiliesCache = mutableMapOf<String, FontFamily>()
 
@@ -2386,14 +2378,16 @@ fun ReaderScreen(
                     color = palette.bgSurface,
                     border = BorderStroke(1.dp, palette.borderSoft),
                     modifier = Modifier
-                        .size(34.dp)
                         .align(Alignment.CenterStart)
+                        .minimumInteractiveComponentSize()
+                        .size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         PrototypeSvgIcon(
                             type = PrototypeIconType.ARROW_LEFT,
                             tint = palette.textMain,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(15.dp),
+                            contentDescription = if (strings.isId) "Kembali" else "Back"
                         )
                     }
                 }
@@ -2659,7 +2653,8 @@ fun ReaderScreen(
                                         PrototypeSvgIcon(
                                             type = PrototypeIconType.TRANSLATE,
                                             tint = palette.textMain,
-                                            modifier = Modifier.size(14.dp)
+                                            modifier = Modifier.size(14.dp),
+                                            contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
                                         )
                                     }
                                 } else {
@@ -2707,7 +2702,8 @@ fun ReaderScreen(
                                             PrototypeSvgIcon(
                                                 type = PrototypeIconType.TRANSLATE,
                                                 tint = palette.textMain,
-                                                modifier = Modifier.size(13.5.dp)
+                                                modifier = Modifier.size(13.5.dp),
+                                                contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
                                             )
                                         }
                                     }
@@ -2896,13 +2892,16 @@ fun ReaderScreen(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(40.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.TOC_LIST,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
+                                contentDescription = if (strings.isId) "Daftar Isi" else "Table of contents"
                             )
                         }
                     }
@@ -6310,14 +6309,17 @@ fun ReaderScreen(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(36.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.CLOSE_X,
                                 tint = palette.textPrimary,
                                 modifier = Modifier.size(12.dp),
-                                strokeWidthDp = 1.5f
+                                strokeWidthDp = 1.5f,
+                                contentDescription = if (strings.isId) "Tutup penampil ilustrasi" else "Close illustration viewer"
                             )
                         }
                     }

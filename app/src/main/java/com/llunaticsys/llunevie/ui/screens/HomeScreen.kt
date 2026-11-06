@@ -33,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -469,7 +470,8 @@ fun HomeScreen(
                                 PrototypeSvgIcon(
                                     type = PrototypeIconType.GRID_2X2,
                                     tint = if (isGrid) palette.textMain else palette.textMuted,
-                                    modifier = Modifier.size(13.5.dp)
+                                    modifier = Modifier.size(13.5.dp),
+                                    contentDescription = if (strings.isId) "Tampilan Kisi" else "Grid view"
                                 )
                             }
                         }
@@ -487,7 +489,8 @@ fun HomeScreen(
                                 PrototypeSvgIcon(
                                     type = PrototypeIconType.LIST_BULLETS,
                                     tint = if (!isGrid) palette.textMain else palette.textMuted,
-                                    modifier = Modifier.size(13.5.dp)
+                                    modifier = Modifier.size(13.5.dp),
+                                    contentDescription = if (strings.isId) "Tampilan Daftar" else "List view"
                                 )
                             }
                         }
@@ -501,6 +504,7 @@ fun HomeScreen(
                         border = BorderStroke(1.dp, if (isGrid) palette.accentDark else palette.borderSoft),
                         shadowElevation = if (isGrid) 1.5.dp else 0.dp,
                         modifier = Modifier
+                            .minimumInteractiveComponentSize()
                             .size(30.dp)
                             .clip(CircleShape)
                             .clickable { onSetHomeRecentMode("grid") }
@@ -509,7 +513,8 @@ fun HomeScreen(
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.GRID_2X2,
                                 tint = if (isGrid) palette.bgApp else palette.textMuted,
-                                modifier = Modifier.size(13.5.dp)
+                                modifier = Modifier.size(13.5.dp),
+                                contentDescription = if (strings.isId) "Tampilan Kisi" else "Grid view"
                             )
                         }
                     }
@@ -519,6 +524,7 @@ fun HomeScreen(
                         border = BorderStroke(1.dp, if (!isGrid) palette.accentDark else palette.borderSoft),
                         shadowElevation = if (!isGrid) 1.5.dp else 0.dp,
                         modifier = Modifier
+                            .minimumInteractiveComponentSize()
                             .size(30.dp)
                             .clip(CircleShape)
                             .clickable { onSetHomeRecentMode("list") }
@@ -527,7 +533,8 @@ fun HomeScreen(
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.LIST_BULLETS,
                                 tint = if (!isGrid) palette.bgApp else palette.textMuted,
-                                modifier = Modifier.size(13.5.dp)
+                                modifier = Modifier.size(13.5.dp),
+                                contentDescription = if (strings.isId) "Tampilan Daftar" else "List view"
                             )
                         }
                     }

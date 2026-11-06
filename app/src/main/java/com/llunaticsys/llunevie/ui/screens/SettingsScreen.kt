@@ -46,7 +46,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -168,6 +172,7 @@ fun SettingsScreen(
     var cropScale by remember { mutableFloatStateOf(1f) }
     var cropOffset by remember { mutableStateOf(Offset.Zero) }
     var cropRotationDegrees by remember { mutableFloatStateOf(0f) }
+    val coroutineScope = rememberCoroutineScope()
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -188,10 +193,25 @@ fun SettingsScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            runCatching {
-                val stream = context.contentResolver.openInputStream(uri)
-                val decoded = BitmapFactory.decodeStream(stream)
-                stream?.close()
+            coroutineScope.launch {
+                val decoded = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BitmapFactory.decodeStream(stream, null, boundsOpts)
+                        }
+                        val rawW = boundsOpts.outWidth.coerceAtLeast(1)
+                        val rawH = boundsOpts.outHeight.coerceAtLeast(1)
+                        var sampleSize = 1
+                        while (maxOf(rawW / sampleSize, rawH / sampleSize) > 1024) {
+                            sampleSize *= 2
+                        }
+                        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BitmapFactory.decodeStream(stream, null, decodeOpts)
+                        }
+                    }.getOrNull()
+                }
                 if (decoded != null) {
                     pendingCropBitmap = decoded
                     cropScale = 1f
@@ -2254,22 +2274,34 @@ fun SettingsScreen(
 
                             Surface(
                                 onClick = {
-                                    val out = renderCroppedBitmapWithExactMatrix(
-                                        src = cropBmp,
-                                        outputSizePx = 512,
-                                        stageSizePx = stageSizePx,
-                                        zoom = cropScale,
-                                        clampedPanStagePx = cropOffset,
-                                        rotationDeg = cropRotationDegrees,
-                                        circularMask = true
-                                    )
-                                    val dir = File(context.filesDir, "profile").apply { mkdirs() }
-                                    val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
-                                    FileOutputStream(outFile).use { fos ->
-                                        out.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                                    val capturedScale = cropScale
+                                    val capturedOffset = cropOffset
+                                    val capturedRotation = cropRotationDegrees
+                                    coroutineScope.launch {
+                                        val savedPath = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                val out = renderCroppedBitmapWithExactMatrix(
+                                                    src = cropBmp,
+                                                    outputSizePx = 512,
+                                                    stageSizePx = stageSizePx,
+                                                    zoom = capturedScale,
+                                                    clampedPanStagePx = capturedOffset,
+                                                    rotationDeg = capturedRotation,
+                                                    circularMask = true
+                                                )
+                                                val dir = File(context.filesDir, "profile").apply { mkdirs() }
+                                                val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
+                                                FileOutputStream(outFile).use { fos ->
+                                                    out.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                                                }
+                                                outFile.absolutePath
+                                            }.getOrNull()
+                                        }
+                                        if (savedPath != null) {
+                                            onSavePhotoPath(savedPath)
+                                        }
+                                        pendingCropBitmap = null
                                     }
-                                    onSavePhotoPath(outFile.absolutePath)
-                                    pendingCropBitmap = null
                                 },
                                 shape = CircleShape,
                                 color = palette.textPrimary,
