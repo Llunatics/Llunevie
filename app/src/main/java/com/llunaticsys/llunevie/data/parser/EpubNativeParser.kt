@@ -31,6 +31,9 @@ data class ParsedBookBundle(
 
 object EpubNativeParser {
 
+    private const val MAX_SINGLE_ENTRY_BYTES = 16L * 1024L * 1024L // 16 MB per entry cap
+    private const val MAX_CUMULATIVE_EPUB_BYTES = 64L * 1024L * 1024L // 64 MB cumulative budget
+
     // Byte-bounded in-memory LRU Cache for EPUB illustration images (24 MB max, size in KB)
     private val fullResImageCache = object : LruCache<String, Bitmap>(24 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int =
@@ -87,6 +90,54 @@ object EpubNativeParser {
             }
         }
         return stack.joinToString("/")
+    }
+
+    private fun streamZipEntryToFileBounded(
+        zip: ZipFile,
+        entry: java.util.zip.ZipEntry,
+        destFile: File,
+        maxBytes: Long
+    ): Long {
+        if (maxBytes <= 0L) return -1L
+        var totalWritten = 0L
+        val buffer = ByteArray(8192)
+        zip.getInputStream(entry).use { input ->
+            FileOutputStream(destFile).use { output ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    totalWritten += read
+                    if (totalWritten > maxBytes) {
+                        return -1L
+                    }
+                    output.write(buffer, 0, read)
+                }
+            }
+        }
+        return totalWritten
+    }
+
+    private fun readZipEntryTextBounded(
+        zip: ZipFile,
+        entry: java.util.zip.ZipEntry,
+        maxBytes: Long
+    ): Pair<String, Long>? {
+        if (maxBytes <= 0L) return null
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        var totalRead = 0L
+        zip.getInputStream(entry).use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                totalRead += read
+                if (totalRead > maxBytes) {
+                    return null
+                }
+                out.write(buffer, 0, read)
+            }
+        }
+        return out.toString(Charsets.UTF_8.name()) to totalRead
     }
 
     suspend fun importAndParseEpubWithProgress(
@@ -165,23 +216,34 @@ object EpubNativeParser {
 
         try {
             zipFile.use { zip ->
-            // 1. Extract images to internal storage so covers & chapter illustrations persist
+            var cumulativeExtractedBytes = 0L
+            // 1. Stream images directly to internal storage with a 64 MB cumulative budget (no full ByteArray buffering in RAM)
             val entries = zip.entries()
             var imgCounter = 0
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
                 if (!entry.isDirectory && entry.name.matches(Regex(""".*\.(jpe?g|png|webp|gif)$""", RegexOption.IGNORE_CASE))) {
+                    val remainingBudget = (MAX_CUMULATIVE_EPUB_BYTES - cumulativeExtractedBytes).coerceAtMost(MAX_SINGLE_ENTRY_BYTES)
+                    if (remainingBudget <= 0L) break
+
                     val normPath = entry.name.trimStart('/')
                     val baseName = normPath.substringAfterLast('/')
                     val ext = normPath.substringAfterLast('.', "jpg").lowercase()
 
                     runCatching {
-                        val rawBytes = zip.getInputStream(entry).use { it.readBytes() }
+                        val streamedFile = File(coversDir, "raw_${imgCounter}.$ext")
+                        val writtenBytes = streamZipEntryToFileBounded(zip, entry, streamedFile, remainingBudget)
+                        if (writtenBytes <= 0L) {
+                            streamedFile.delete()
+                            return@runCatching
+                        }
+                        cumulativeExtractedBytes += writtenBytes
+
                         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOpts)
+                        BitmapFactory.decodeFile(streamedFile.absolutePath, boundsOpts)
                         val w = boundsOpts.outWidth
                         val h = boundsOpts.outHeight
-                        val compressedSize = entry.compressedSize.takeIf { it > 0 } ?: rawBytes.size.toLong()
+                        val compressedSize = entry.compressedSize.takeIf { it > 0 } ?: writtenBytes
                         val shouldCompress = (w > 1600 || h > 1600 || compressedSize > 350 * 1024)
 
                         val outImgFile: File
@@ -193,7 +255,7 @@ object EpubNativeParser {
                             val decodeOpts = BitmapFactory.Options().apply {
                                 inSampleSize = sampleSize
                             }
-                            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOpts)
+                            val decoded = BitmapFactory.decodeFile(streamedFile.absolutePath, decodeOpts)
                             if (decoded != null) {
                                 val maxDim = maxOf(decoded.width, decoded.height)
                                 val finalBmp = if (maxDim > 1600) {
@@ -211,13 +273,20 @@ object EpubNativeParser {
                                     finalBmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
                                 }
                                 finalBmp.recycle()
+                                streamedFile.delete()
                             } else {
                                 outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
-                                FileOutputStream(outImgFile).use { it.write(rawBytes) }
+                                if (!streamedFile.renameTo(outImgFile)) {
+                                    streamedFile.copyTo(outImgFile, overwrite = true)
+                                    streamedFile.delete()
+                                }
                             }
                         } else {
                             outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
-                            FileOutputStream(outImgFile).use { it.write(rawBytes) }
+                            if (!streamedFile.renameTo(outImgFile)) {
+                                streamedFile.copyTo(outImgFile, overwrite = true)
+                                streamedFile.delete()
+                            }
                         }
 
                         extractedImagesByZipPath[normPath] = outImgFile.absolutePath
@@ -228,15 +297,24 @@ object EpubNativeParser {
                 }
             }
 
+            var cumulativeTextBytes = 0L
+
             // 2. Locate OPF package via META-INF/container.xml
             var opfPath: String? = null
             val containerEntry = zip.getEntry("META-INF/container.xml")
             if (containerEntry != null) {
-                val xml = zip.getInputStream(containerEntry).bufferedReader().use { it.readText() }
-                val doc = Jsoup.parse(xml, "", Parser.xmlParser())
-                val rootFile = doc.selectFirst("rootfile[full-path]")
-                if (rootFile != null) {
-                    opfPath = rootFile.attr("full-path").trimStart('/')
+                val pair = readZipEntryTextBounded(
+                    zip,
+                    containerEntry,
+                    (MAX_CUMULATIVE_EPUB_BYTES - cumulativeTextBytes).coerceAtMost(MAX_SINGLE_ENTRY_BYTES)
+                )
+                if (pair != null) {
+                    cumulativeTextBytes += pair.second
+                    val doc = Jsoup.parse(pair.first, "", Parser.xmlParser())
+                    val rootFile = doc.selectFirst("rootfile[full-path]")
+                    if (rootFile != null) {
+                        opfPath = rootFile.attr("full-path").trimStart('/')
+                    }
                 }
             }
             if (opfPath == null) {
@@ -400,7 +478,11 @@ object EpubNativeParser {
             // 3. Parse every chapter in Spine using Jsoup across <p>, headings, blockquote, li, and general div/text structures
             for ((idx, href) in spineHrefs.withIndex()) {
                 val entry = zip.getEntry(href) ?: continue
-                val rawHtml = zip.getInputStream(entry).bufferedReader().use { it.readText() }
+                val remainingTextBudget = (MAX_CUMULATIVE_EPUB_BYTES - cumulativeTextBytes).coerceAtMost(MAX_SINGLE_ENTRY_BYTES)
+                if (remainingTextBudget <= 0L) break
+                val htmlPair = readZipEntryTextBounded(zip, entry, remainingTextBudget) ?: continue
+                cumulativeTextBytes += htmlPair.second
+                val rawHtml = htmlPair.first
                 val doc = Jsoup.parse(rawHtml)
                 val chDir = if (href.contains("/")) href.substringBeforeLast("/") else ""
                 val baseName = href.substringAfterLast('/').lowercase()

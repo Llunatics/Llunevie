@@ -1195,13 +1195,41 @@ class LlunevieViewModel(
         _uiState.update { it.copy(showDeleteConfirmDialog = show) }
     }
 
+    private fun sanitizeBookId(rawId: String): String {
+        val cleaned = rawId.trim().replace(Regex("[^a-zA-Z0-9_-]"), "_")
+        return if (cleaned.isBlank() || cleaned.all { it == '_' }) {
+            "book_${System.currentTimeMillis()}"
+        } else {
+            cleaned
+        }
+    }
+
+    private fun isCanonicalPathInsideDir(path: String, parentDir: File): Boolean {
+        return runCatching {
+            val targetCanon = File(path).canonicalPath
+            val parentCanon = parentDir.canonicalPath
+            targetCanon.startsWith("$parentCanon${File.separator}")
+        }.getOrDefault(false)
+    }
+
     private fun deleteInternalBookFiles(bookId: String, localFilePath: String?) {
         runCatching {
-            File(appContext.filesDir, "covers/$bookId").deleteRecursively()
-            File(appContext.filesDir, "books/$bookId.epub").delete()
-            File(appContext.filesDir, "books/$bookId.pdf").delete()
-            File(appContext.filesDir, "books/$bookId.txt").delete()
-            if (localFilePath != null && localFilePath.startsWith(appContext.filesDir.absolutePath)) {
+            val safeId = sanitizeBookId(bookId)
+            val coversRoot = File(appContext.filesDir, "covers")
+            val booksRoot = File(appContext.filesDir, "books")
+            val coverDir = File(coversRoot, safeId)
+            if (isCanonicalPathInsideDir(coverDir.path, coversRoot)) {
+                coverDir.deleteRecursively()
+            }
+            listOf("epub", "pdf", "txt").forEach { ext ->
+                val bookFile = File(booksRoot, "$safeId.$ext")
+                if (isCanonicalPathInsideDir(bookFile.path, booksRoot)) {
+                    bookFile.delete()
+                }
+            }
+            if (!localFilePath.isNullOrBlank() &&
+                (isCanonicalPathInsideDir(localFilePath, booksRoot) || isCanonicalPathInsideDir(localFilePath, coversRoot))
+            ) {
                 File(localFilePath).delete()
             }
         }
@@ -3394,11 +3422,14 @@ class LlunevieViewModel(
                 }
             }
 
+            val booksRoot = File(appContext.filesDir, "books")
+            val coversRoot = File(appContext.filesDir, "covers")
             val arr = obj.optJSONArray("books")
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val b = arr.optJSONObject(i) ?: continue
-                    val bookId = b.optString("id", "restored-$i-${System.currentTimeMillis()}")
+                    val rawBookId = b.optString("id", "restored-$i-${System.currentTimeMillis()}")
+                    val bookId = sanitizeBookId(rawBookId)
                     val existingBook = dao.getBookById(bookId)
                     val existingChapters = dao.getChaptersForBook(bookId)
 
@@ -3406,15 +3437,31 @@ class LlunevieViewModel(
                     val restoredMins = b.optInt("timeMinutes", existingBook?.timeMinutes ?: 0)
                     val restoredSecs = b.optInt("readingSeconds", maxOf(existingBook?.readingSeconds ?: 0, restoredMins * 60))
 
-                    val backupLocalPath = b.optString("localFilePath").takeIf { it.isNotBlank() && File(it).exists() }
-                    val existingLocalPath = existingBook?.localFilePath?.takeIf { it.isNotBlank() && File(it).exists() }
+                    val backupLocalPath = b.optString("localFilePath").takeIf {
+                        it.isNotBlank() &&
+                            (isCanonicalPathInsideDir(it, booksRoot) || isCanonicalPathInsideDir(it, coversRoot)) &&
+                            File(it).exists()
+                    }
+                    val existingLocalPath = existingBook?.localFilePath?.takeIf {
+                        it.isNotBlank() &&
+                            (isCanonicalPathInsideDir(it, booksRoot) || isCanonicalPathInsideDir(it, coversRoot)) &&
+                            File(it).exists()
+                    }
                     val effectiveLocalPath = existingLocalPath ?: backupLocalPath
 
                     val backupCoverPath = b.optString("coverImagePath").ifBlank { b.optString("coverUrl") }.takeIf {
-                        it.isNotBlank() && (it.startsWith("http", ignoreCase = true) || File(it).exists())
+                        it.isNotBlank() && (
+                            it.startsWith("http://", ignoreCase = true) ||
+                                it.startsWith("https://", ignoreCase = true) ||
+                                ((isCanonicalPathInsideDir(it, coversRoot) || isCanonicalPathInsideDir(it, booksRoot)) && File(it).exists())
+                            )
                     }
                     val existingCoverPath = existingBook?.coverImagePath?.takeIf {
-                        it.isNotBlank() && (it.startsWith("http", ignoreCase = true) || File(it).exists())
+                        it.isNotBlank() && (
+                            it.startsWith("http://", ignoreCase = true) ||
+                                it.startsWith("https://", ignoreCase = true) ||
+                                ((isCanonicalPathInsideDir(it, coversRoot) || isCanonicalPathInsideDir(it, booksRoot)) && File(it).exists())
+                            )
                     }
                     val effectiveCoverPath = existingCoverPath ?: backupCoverPath
 
@@ -3514,7 +3561,7 @@ class LlunevieViewModel(
             if (highlightsArr != null) {
                 for (i in 0 until highlightsArr.length()) {
                     val hl = highlightsArr.optJSONObject(i) ?: continue
-                    val bId = hl.optString("bookId").trim()
+                    val bId = sanitizeBookId(hl.optString("bookId"))
                     val hlId = hl.optString("id").trim()
                     if (hlId.isNotBlank() && bId in existingBookIds) {
                         dao.upsertHighlight(
@@ -3540,7 +3587,7 @@ class LlunevieViewModel(
             if (bookmarksArr != null) {
                 for (i in 0 until bookmarksArr.length()) {
                     val bm = bookmarksArr.optJSONObject(i) ?: continue
-                    val bId = bm.optString("bookId").trim()
+                    val bId = sanitizeBookId(bm.optString("bookId"))
                     val bmId = bm.optString("id").trim()
                     if (bmId.isNotBlank() && bId in existingBookIds) {
                         dao.upsertBookmark(

@@ -217,8 +217,8 @@ fun ReaderScreen(
     var displayPageIndex by remember(book.id) { mutableIntStateOf(curZeroFromMetrics) }
     var readerZoom by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableFloatStateOf(1f) }
     var readerPan by remember(book.id, displayPageIndex, prefs.readingFlowMode) { mutableStateOf(Offset.Zero) }
-    var nonFlipZoomScale by remember { mutableFloatStateOf(1f) }
-    var nonFlipZoomOffset by remember { mutableStateOf(Offset.Zero) }
+    var nonFlipZoomScale by remember(book.id, prefs.readingFlowMode) { mutableFloatStateOf(1f) }
+    var nonFlipZoomOffset by remember(book.id, prefs.readingFlowMode) { mutableStateOf(Offset.Zero) }
     var isFlippingInProgress by remember { mutableStateOf(false) }
 
     LaunchedEffect(curZeroFromMetrics) {
@@ -333,7 +333,13 @@ fun ReaderScreen(
         selectedQuoteForPopover != null ||
         hasSelectionActive
 
-    BackHandler(enabled = hasActiveInReaderOverlay) {
+    BackHandler(
+        enabled = hasActiveInReaderOverlay &&
+            !uiState.showIllustViewer &&
+            !uiState.showReaderNotesDrawer &&
+            !uiState.showReaderTocDrawer &&
+            !uiState.showReaderTypeSheet
+    ) {
         when {
             inBookSearchQuery != null -> inBookSearchQuery = null
             showLangDropdown -> showLangDropdown = false
@@ -559,7 +565,7 @@ fun ReaderScreen(
                 ReadingFlowMode.PAGINATED, ReadingFlowMode.SPREAD -> {
                     val curZero = displayPageIndex
 
-                    LaunchedEffect(curZero, prefs.pageAnimStyle, prefs.readingFlowMode) {
+                    LaunchedEffect(book.id, curZero, prefs.pageAnimStyle, prefs.readingFlowMode) {
                         nonFlipZoomScale = 1f
                         nonFlipZoomOffset = Offset.Zero
                     }
@@ -903,7 +909,7 @@ fun ReaderScreen(
                                         ))
                                     value = withContext(Dispatchers.Default) {
                                         renderCachedTwoPageSpreadSnapshot(
-                                            cacheKey = cacheKey,
+                                            cacheKey = if (isPdfBook) null else cacheKey,
                                             textMeasurer = textMeasurer,
                                             widthPx = spreadW,
                                             heightPx = stageH,
@@ -1018,12 +1024,12 @@ fun ReaderScreen(
                                             ))
                                         val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             rightZero < metrics.totalBookPages &&
-                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                rightZero, indexedIllustrationPages
-                                            ))
+                                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                    rightZero, indexedIllustrationPages
+                                                ))
                                         value = withContext(Dispatchers.Default) {
                                             renderCachedTwoPageSpreadSnapshot(
-                                                cacheKey = cacheKey,
+                                                cacheKey = if (isPdfBook) null else cacheKey,
                                                 textMeasurer = textMeasurer,
                                                 widthPx = spreadW,
                                                 heightPx = stageH,
@@ -1141,12 +1147,12 @@ fun ReaderScreen(
                                             ))
                                         val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                             rightZero < metrics.totalBookPages &&
-                                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
-                                                rightZero, indexedIllustrationPages
-                                            ))
+                                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                                    rightZero, indexedIllustrationPages
+                                                ))
                                         value = withContext(Dispatchers.Default) {
                                             renderCachedTwoPageSpreadSnapshot(
-                                                cacheKey = cacheKey,
+                                                cacheKey = if (isPdfBook) null else cacheKey,
                                                 textMeasurer = textMeasurer,
                                                 widthPx = spreadW,
                                                 heightPx = stageH,
@@ -1700,18 +1706,28 @@ fun ReaderScreen(
                             val effLeftBmp = getEffectivePdfPageBitmap(leftZero, leftPdfBmp)
                             val effRightBmp = getEffectivePdfPageBitmap(rightZero, rightPdfBmp)
                             val spreadCacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                            val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                    leftZero, indexedIllustrationPages
+                                ))
+                            val shouldTintRight = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                                rightZero < metrics.totalBookPages &&
+                                !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
+                                    rightZero, indexedIllustrationPages
+                                ))
                             val spreadBmp by produceState<ImageBitmap?>(
                                 initialValue = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null,
                                 spreadCacheKey, leftZero, rightZero, stageW, stageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                                 prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
-                                palette, isPdfBook, effLeftBmp, effRightBmp
+                                palette, isPdfBook, effLeftBmp, effRightBmp,
+                                prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations, effectiveTheme, prefs.amoledBlack
                             ) {
                                 val cached = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null
                                 value = cached ?: withContext(Dispatchers.Default) {
                                     renderCachedTwoPageSpreadSnapshot(
-                                        cacheKey = spreadCacheKey,
+                                        cacheKey = if (isPdfBook) null else spreadCacheKey,
                                         textMeasurer = textMeasurer,
                                         widthPx = spreadW,
                                         heightPx = stageH,
@@ -1724,10 +1740,12 @@ fun ReaderScreen(
                                         rightText = rightText,
                                         leftPdfBitmap = effLeftBmp,
                                         rightPdfBitmap = effRightBmp,
-                                        bgColor = if (isPdfBook) Color.White else palette.bgCard,
+                                        bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
                                         palette = palette,
-                                        prefs = prefs
+                                        prefs = prefs,
+                                        leftColorFilter = if (shouldTintLeft) androidPdfThemeColorFilter else null,
+                                        rightColorFilter = if (shouldTintRight) androidPdfThemeColorFilter else null
                                     )
                                 }
                             }
@@ -2169,7 +2187,7 @@ fun ReaderScreen(
                                 )
                                 ch.pages.forEachIndexed { pIdx, _ ->
                                     val lazyIdx = metas.size
-                                    idxMap[runningGlobalZero] = lazyIdx
+                                    idxMap[runningGlobalZero] = if (pIdx == 0) (lazyIdx - 1).coerceAtLeast(0) else lazyIdx
                                     metas.add(
                                         ScrollLazyItemMeta(
                                             globalPageZero = runningGlobalZero,
@@ -2205,10 +2223,18 @@ fun ReaderScreen(
 
                     // Observe scroll position and persist reading progress
                     LaunchedEffect(scrollListState, scrollItemMetas) {
-                        snapshotFlow { scrollListState.firstVisibleItemIndex to scrollListState.isScrollInProgress }
+                        snapshotFlow {
+                            val effectiveLazyIdx = if (!scrollListState.canScrollForward) {
+                                scrollListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                                    ?: scrollListState.firstVisibleItemIndex
+                            } else {
+                                scrollListState.firstVisibleItemIndex
+                            }
+                            effectiveLazyIdx to scrollListState.isScrollInProgress
+                        }
                             .distinctUntilChanged()
-                            .collect { (firstVisibleIdx, isScrolling) ->
-                                val meta = scrollItemMetas.getOrNull(firstVisibleIdx) ?: return@collect
+                            .collect { (effectiveIdx, isScrolling) ->
+                                val meta = scrollItemMetas.getOrNull(effectiveIdx) ?: return@collect
                                 val targetGlobalZero = meta.globalPageZero.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0))
                                 if (targetGlobalZero != displayPageIndex) {
                                     displayPageIndex = targetGlobalZero
@@ -2221,9 +2247,16 @@ fun ReaderScreen(
                     }
 
                     // Respond to external jumps (e.g. ToC, bookmarks, search results, page scrubber)
-                    LaunchedEffect(metrics.currentGlobalPage, isPdfBook, isWebtoon) {
+                    LaunchedEffect(metrics.currentGlobalPage, isPdfBook, isWebtoon, scrollItemMetas) {
                         val targetGlobalZero = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
-                        if (!scrollListState.isScrollInProgress && targetGlobalZero != displayPageIndex) {
+                        val currentEffectiveLazyIdx = if (!scrollListState.canScrollForward) {
+                            scrollListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                                ?: scrollListState.firstVisibleItemIndex
+                        } else {
+                            scrollListState.firstVisibleItemIndex
+                        }
+                        val currentVisiblePageZero = scrollItemMetas.getOrNull(currentEffectiveLazyIdx)?.globalPageZero
+                        if (!scrollListState.isScrollInProgress && targetGlobalZero != currentVisiblePageZero) {
                             displayPageIndex = targetGlobalZero
                             val targetLazyIdx = if (isPdfBook) {
                                 targetGlobalZero.coerceIn(0, (metrics.totalBookPages - 1).coerceAtLeast(0))
