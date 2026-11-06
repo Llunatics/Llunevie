@@ -204,15 +204,17 @@ fun LibraryScreen(
     }
 
     val spineColorCache = remember { mutableStateMapOf<String, Color>() }
-    val shelvesRows = remember(filteredBooks) {
+    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val maxRowWidthDp = (screenWidthDp - 64).coerceAtLeast(240)
+    val shelvesRows = remember(filteredBooks, maxRowWidthDp) {
         val rows = mutableListOf<List<Pair<Int, BookEntity>>>()
         var currentRow = mutableListOf<Pair<Int, BookEntity>>()
         var currentWidthDp = 0
         filteredBooks.forEachIndexed { globalIdx, b ->
             val pages = b.pagesCount.coerceIn(80, 950)
-            val wDp = 30 + ((pages - 80) * 34) / (950 - 80)
+            val wDp = (38 + ((pages - 80) * 16) / (950 - 80)).coerceIn(38, 54)
             val footprint = wDp + if (currentRow.isNotEmpty()) 4 else 0
-            if (currentRow.isNotEmpty() && currentWidthDp + footprint > 328) {
+            if (currentRow.isNotEmpty() && currentWidthDp + footprint > maxRowWidthDp) {
                 rows.add(currentRow)
                 currentRow = mutableListOf()
                 currentWidthDp = 0

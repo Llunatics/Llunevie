@@ -170,6 +170,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val createBackupDocumentLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.CreateDocument("application/json")
+            ) { uri ->
+                if (uri != null) {
+                    viewModel.exportBackupToUri(uri)
+                }
+            }
+
             val isSpreadReader = uiState.activeTab == MainNavTab.READER && prefs.readingFlowMode == ReadingFlowMode.SPREAD
             LaunchedEffect(isSpreadReader, uiState.activeTab) {
                 runCatching {
@@ -265,13 +273,9 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 onPickPhoto = { pickPhotoLauncher.launch("image/*") },
-                                onShareBackupJson = { jsonPayload ->
-                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "application/json"
-                                        putExtra(Intent.EXTRA_TITLE, "llunevie-backup.json")
-                                        putExtra(Intent.EXTRA_TEXT, jsonPayload)
-                                    }
-                                    startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
+                                onExportBackup = {
+                                    val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+                                    createBackupDocumentLauncher.launch("llunevie-backup-$dateStr.json")
                                 },
                                 onRequestAllFilesAccess = {
                                     pendingAutoImportEnable = true
@@ -287,6 +291,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        viewModel.onAppForegroundChanged(true)
         
         pendingOnboardingData?.let { (enabled, path, uri) ->
             if (viewModel.hasAllFilesAccess()) {
@@ -305,6 +310,11 @@ class MainActivity : ComponentActivity() {
         if (prefs.autoImportFolderEnabled && viewModel.hasAllFilesAccess()) {
             viewModel.scanAutoImportFolder()
         }
+    }
+
+    override fun onStop() {
+        viewModel.onAppForegroundChanged(false)
+        super.onStop()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -336,7 +346,7 @@ private fun LlunevieMainContainer(
     strings: com.llunaticsys.llunevie.ui.theme.LlunevieStrings,
     onPickLocalFile: () -> Unit,
     onPickPhoto: () -> Unit,
-    onShareBackupJson: (String) -> Unit,
+    onExportBackup: () -> Unit,
     onRequestAllFilesAccess: () -> Unit
 ) {
     val palette = LocalLluneviePalette.current
@@ -472,7 +482,7 @@ private fun LlunevieMainContainer(
                     },
                     onSelectAutoImportFolder = { path, uri -> viewModel.setAutoImportFolder(path, uri) },
                     onRescanFolder = { viewModel.scanAutoImportFolder(force = true) },
-                    onExportBackup = { viewModel.exportBackupJson(onShareBackupJson) },
+                    onExportBackup = onExportBackup,
                     onRestoreBackup = onPickLocalFile,
                     onUpdateTranslatorPrefs = { engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt ->
                         viewModel.updateTranslatorPrefs(engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt)

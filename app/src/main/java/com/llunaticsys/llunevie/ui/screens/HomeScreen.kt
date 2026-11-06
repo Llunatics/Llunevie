@@ -96,9 +96,34 @@ fun HomeScreen(
                 .thenByDescending { it.createdAtMillis }
         )
     }
-    val allTimeMins = books.sumOf { it.timeMinutes }.coerceAtLeast(dailyLogs.sumOf { it.minutesRead })
-    val weekMins = dailyLogs.takeLast(7).sumOf { it.minutesRead }.coerceAtLeast(if (dailyLogs.isEmpty()) allTimeMins else 0)
-    val activeDaysStreak = dailyLogs.count { it.minutesRead > 0 || it.pagesTurned > 0 }
+    val (allTimeMins, weekMins, activeDaysStreak) = remember(books, dailyLogs) {
+        val total = books.sumOf { it.timeMinutes }.coerceAtLeast(dailyLogs.sumOf { it.minutesRead })
+        val today = java.time.LocalDate.now()
+        val weekStart = today.minusDays(6)
+        val wkMins = dailyLogs.sumOf { log ->
+            val d = runCatching { java.time.LocalDate.parse(log.dateKey) }.getOrNull()
+            if (d != null && !d.isBefore(weekStart) && !d.isAfter(today)) log.minutesRead else 0
+        }
+        val activeDateSet = dailyLogs
+            .asSequence()
+            .filter { it.minutesRead > 0 || it.pagesTurned > 0 }
+            .mapNotNull { runCatching { java.time.LocalDate.parse(it.dateKey) }.getOrNull() }
+            .toHashSet()
+        var cursor: java.time.LocalDate? = when {
+            today in activeDateSet -> today
+            today.minusDays(1) in activeDateSet -> today.minusDays(1)
+            else -> null
+        }
+        var streak = 0
+        while (cursor != null && cursor in activeDateSet) {
+            streak++
+            cursor = cursor.minusDays(1)
+        }
+        Triple(total, wkMins, streak)
+    }
+    val hasUserPhoto = remember(prefs.userPhotoPath) {
+        !prefs.userPhotoPath.isNullOrBlank() && File(prefs.userPhotoPath).exists()
+    }
 
     Column(
         modifier = modifier
@@ -141,7 +166,7 @@ fun HomeScreen(
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    if (!prefs.userPhotoPath.isNullOrBlank() && File(prefs.userPhotoPath).exists()) {
+                    if (hasUserPhoto && !prefs.userPhotoPath.isNullOrBlank()) {
                         AsyncImage(
                             model = File(prefs.userPhotoPath),
                             contentDescription = "Profile",

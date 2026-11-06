@@ -56,6 +56,9 @@ interface LlunevieDao {
     @Query("SELECT * FROM highlight_notes ORDER BY createdAtMillis DESC")
     fun observeAllHighlights(): Flow<List<HighlightNoteEntity>>
 
+    @Query("SELECT * FROM highlight_notes ORDER BY createdAtMillis DESC")
+    suspend fun getAllHighlightsOnce(): List<HighlightNoteEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertHighlight(highlight: HighlightNoteEntity)
 
@@ -64,6 +67,9 @@ interface LlunevieDao {
 
     @Query("SELECT * FROM daily_reading_logs ORDER BY dateKey ASC")
     fun observeDailyLogs(): Flow<List<DailyReadingLogEntity>>
+
+    @Query("SELECT * FROM daily_reading_logs ORDER BY dateKey ASC")
+    suspend fun getAllDailyLogsOnce(): List<DailyReadingLogEntity>
 
     @Query("SELECT * FROM daily_reading_logs WHERE dateKey = :dateKey LIMIT 1")
     suspend fun getDailyLog(dateKey: String): DailyReadingLogEntity?
@@ -88,6 +94,9 @@ interface LlunevieDao {
 
     @Query("SELECT * FROM page_bookmarks ORDER BY createdAtMillis DESC")
     fun observeAllBookmarks(): Flow<List<PageBookmarkEntity>>
+
+    @Query("SELECT * FROM page_bookmarks ORDER BY createdAtMillis DESC")
+    suspend fun getAllBookmarksOnce(): List<PageBookmarkEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBookmark(bookmark: PageBookmarkEntity)

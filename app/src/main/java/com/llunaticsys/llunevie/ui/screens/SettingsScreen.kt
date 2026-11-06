@@ -2294,6 +2294,11 @@ fun SettingsScreen(
                                                 FileOutputStream(outFile).use { fos ->
                                                     out.compress(Bitmap.CompressFormat.JPEG, 92, fos)
                                                 }
+                                                dir.listFiles()?.forEach { existing ->
+                                                    if (existing != outFile && existing.name.startsWith("avatar_")) {
+                                                        runCatching { existing.delete() }
+                                                    }
+                                                }
                                                 outFile.absolutePath
                                             }.getOrNull()
                                         }

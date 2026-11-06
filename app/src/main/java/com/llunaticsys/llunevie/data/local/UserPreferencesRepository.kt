@@ -105,13 +105,17 @@ class UserPreferencesRepository(private val context: Context) {
         val followDevice = bootCache.getBoolean("follow_device_theme", false)
         val amoled = bootCache.getBoolean("amoled_black", false)
         val lang = bootCache.getString("lang", "id") ?: "id"
+        val translatorTargetLang = bootCache.getString("translator_target_lang", "id") ?: "id"
+        val translatorDisplayMode = bootCache.getString("translator_display_mode", "bilingual") ?: "bilingual"
         return UserPreferencesState(
             isLoaded = true,
             hasCompletedOnboarding = hasCompleted,
             appTheme = theme,
             followDeviceTheme = followDevice,
             amoledBlack = if (theme == AppThemeMode.BLACK) amoled else false,
-            lang = lang
+            lang = lang,
+            translatorTargetLang = translatorTargetLang,
+            translatorDisplayMode = translatorDisplayMode
         )
     }
 
@@ -171,6 +175,8 @@ class UserPreferencesRepository(private val context: Context) {
         val followDevice = prefs[Keys.FOLLOW_DEVICE_THEME] ?: false
         val effectiveAmoled = if (theme == AppThemeMode.BLACK) rawAmoled else false
         val lang = prefs[Keys.LANG] ?: "id"
+        val translatorTargetLang = prefs[Keys.TRANSLATOR_TARGET_LANG] ?: "id"
+        val translatorDisplayMode = prefs[Keys.TRANSLATOR_DISPLAY_MODE] ?: "bilingual"
 
         bootCache.edit()
             .putBoolean("has_completed_onboarding", completed)
@@ -178,6 +184,8 @@ class UserPreferencesRepository(private val context: Context) {
             .putBoolean("follow_device_theme", followDevice)
             .putBoolean("amoled_black", effectiveAmoled)
             .putString("lang", lang)
+            .putString("translator_target_lang", translatorTargetLang)
+            .putString("translator_display_mode", translatorDisplayMode)
             .apply()
 
         UserPreferencesState(
@@ -426,6 +434,12 @@ class UserPreferencesRepository(private val context: Context) {
         customBaseUrl: String? = null,
         systemPrompt: String? = null
     ) {
+        if (targetLang != null || displayMode != null) {
+            bootCache.edit().apply {
+                targetLang?.let { putString("translator_target_lang", it) }
+                displayMode?.let { putString("translator_display_mode", it) }
+            }.apply()
+        }
         context.llunevieDataStore.edit { prefs ->
             engine?.let { prefs[Keys.TRANSLATOR_ENGINE] = it }
             targetLang?.let { prefs[Keys.TRANSLATOR_TARGET_LANG] = it }

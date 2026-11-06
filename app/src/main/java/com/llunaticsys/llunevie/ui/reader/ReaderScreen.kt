@@ -532,7 +532,6 @@ fun ReaderScreen(
         uiState.translationTargetLang,
         uiState.translationMode,
         uiState.isTranslationActive,
-        uiState.translationRevision,
         prefs.translatorEngine,
         prefs.aiModelName,
         prefs.aiSystemPrompt
@@ -545,7 +544,6 @@ fun ReaderScreen(
         uiState.isTranslationActive,
         uiState.translationTargetLang,
         uiState.translationMode,
-        uiState.translationRevision,
         displayPageIndex,
         prefs.translatorEngine,
         prefs.aiModelName,
@@ -614,17 +612,22 @@ fun ReaderScreen(
                     val pTriple = getPageAtGlobalZero(pZero)
                     val pRaw = pTriple?.third.orEmpty().ifBlank { if (pZero == displayPageIndex) currentPageRaw else "" }
                     if (pRaw.isNotBlank()) {
-                        isTranslatingPage = true
-                        val res = viewModel?.loadOrTranslatePageParagraphs(
-                            bookId = book.id,
-                            pageIndex = pZero,
-                            pageRaw = pRaw,
-                            targetLang = curTargetLang
-                        ) ?: translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
-                        if (res != null) {
-                            pageTranslationMap = pageTranslationMap + (pZero to res)
+                        val cached = viewModel?.getCachedTranslatedParagraphs(book.id, pZero, curTargetLang, pRaw.hashCode())
+                        if (cached != null) {
+                            pageTranslationMap = pageTranslationMap + (pZero to cached)
+                        } else {
+                            isTranslatingPage = true
+                            val res = viewModel?.loadOrTranslatePageParagraphs(
+                                bookId = book.id,
+                                pageIndex = pZero,
+                                pageRaw = pRaw,
+                                targetLang = curTargetLang
+                            ) ?: translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
+                            if (res != null) {
+                                pageTranslationMap = pageTranslationMap + (pZero to res)
+                            }
+                            isTranslatingPage = false
                         }
-                        isTranslatingPage = false
                     }
                 }
             }
@@ -641,7 +644,8 @@ fun ReaderScreen(
                     val nextTriple = getPageAtGlobalZero(nextP)
                     val nextRaw = nextTriple?.third.orEmpty()
                     if (nextRaw.isNotBlank()) {
-                        val res = viewModel?.loadOrTranslatePageParagraphs(
+                        val cached = viewModel?.getCachedTranslatedParagraphs(book.id, nextP, curTargetLang, nextRaw.hashCode())
+                        val res = cached ?: viewModel?.loadOrTranslatePageParagraphs(
                             bookId = book.id,
                             pageIndex = nextP,
                             pageRaw = nextRaw,
@@ -1003,7 +1007,7 @@ fun ReaderScreen(
                                 val curPInCh = curTriple?.second ?: uiState.activePageIndex
 
                                 val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                    (uiState.translationMode == "replace" || prefs.translatorDisplayMode == "replace")
+                                    uiState.translationMode.equals("replace", ignoreCase = true)
                                 val cachedCurTrans = viewModel?.getCachedTranslatedParagraphs(book.id, curZero, uiState.translationTargetLang, curRaw.hashCode())
                                     ?: pageTranslationMap[curZero]
                                 val curText = if (!isPdfBook && isReplaceMode && !cachedCurTrans.isNullOrEmpty()) {
@@ -1116,7 +1120,7 @@ fun ReaderScreen(
                             ) {
                                 if (activeDraggingSliderKey != null) return@produceState
                                 val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                    (uiState.translationMode == "replace" || prefs.translatorDisplayMode == "replace")
+                                    uiState.translationMode.equals("replace", ignoreCase = true)
                                 value = if (isSpread) {
                                     if (nextSpreadStart >= metrics.totalBookPages) null
                                     else {
@@ -1185,8 +1189,10 @@ fun ReaderScreen(
                                     val nextChIdx = nextTriple.first
                                     val nextPInCh = nextTriple.second
                                     val nextPZero = curZero + 1
-                                    val nextText = if (isPageTranslationActive && prefs.translatorDisplayMode == "replace" && pageTranslationMap.containsKey(nextPZero)) {
-                                        buildTranslatedPageRaw(nextRaw, pageTranslationMap[nextPZero], "replace")
+                                    val cachedNextTrans = viewModel?.getCachedTranslatedParagraphs(book.id, nextPZero, uiState.translationTargetLang, nextRaw.hashCode())
+                                        ?: pageTranslationMap[nextPZero]
+                                    val nextText = if (!isPdfBook && isReplaceMode && !cachedNextTrans.isNullOrEmpty()) {
+                                        buildTranslatedPageRaw(nextRaw, cachedNextTrans, "replace")
                                     } else {
                                         nextRaw
                                     }
@@ -1235,7 +1241,7 @@ fun ReaderScreen(
                             ) {
                                 if (activeDraggingSliderKey != null) return@produceState
                                 val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                    (uiState.translationMode == "replace" || prefs.translatorDisplayMode == "replace")
+                                    uiState.translationMode.equals("replace", ignoreCase = true)
                                 value = if (isSpread) {
                                     if (prevSpreadStart < 0) null
                                     else {
@@ -1304,8 +1310,10 @@ fun ReaderScreen(
                                     val prevChIdx = prevTriple.first
                                     val prevPInCh = prevTriple.second
                                     val prevPZero = curZero - 1
-                                    val prevText = if (isPageTranslationActive && prefs.translatorDisplayMode == "replace" && pageTranslationMap.containsKey(prevPZero)) {
-                                        buildTranslatedPageRaw(prevRaw, pageTranslationMap[prevPZero], "replace")
+                                    val cachedPrevTrans = viewModel?.getCachedTranslatedParagraphs(book.id, prevPZero, uiState.translationTargetLang, prevRaw.hashCode())
+                                        ?: pageTranslationMap[prevPZero]
+                                    val prevText = if (!isPdfBook && isReplaceMode && !cachedPrevTrans.isNullOrEmpty()) {
+                                        buildTranslatedPageRaw(prevRaw, cachedPrevTrans, "replace")
                                     } else {
                                         prevRaw
                                     }
@@ -1723,8 +1731,12 @@ fun ReaderScreen(
                                     val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
                                     val curPInCh = curTriple?.second ?: uiState.activePageIndex
 
-                                    val hasActivePageTranslation = isPageTranslationActive && !pageTranslationMap[curZero].isNullOrEmpty()
-                                    val isBilingualActive = hasActivePageTranslation && prefs.translatorDisplayMode == "bilingual"
+                                    val curCachedTrans = viewModel?.getCachedTranslatedParagraphs(book.id, curZero, uiState.translationTargetLang, curText.hashCode())
+                                        ?: pageTranslationMap[curZero]
+                                    val hasActivePageTranslation = (isPageTranslationActive || uiState.isTranslationActive) &&
+                                        !uiState.translationMode.equals("original", ignoreCase = true) &&
+                                        !curCachedTrans.isNullOrEmpty()
+                                    val isBilingualActive = hasActivePageTranslation && uiState.translationMode.equals("bilingual", ignoreCase = true)
                                     val contentModifier = if (hasActivePageTranslation) {
                                         Modifier.fillMaxSize().background(if (isSpread) palette.bgCard else palette.bgApp)
                                     } else {
@@ -1766,7 +1778,7 @@ fun ReaderScreen(
                                                 selEndHandleAnchor = end
                                             },
                                             isPageTranslationActive = isPageTranslationActive,
-                                            translatedParagraphs = pageTranslationMap[curZero],
+                                            translatedParagraphs = curCachedTrans,
                                             viewModel = viewModel,
                                             uiState = uiState
                                         )
@@ -6700,7 +6712,7 @@ private fun InteractiveTextPageContent(
                 return
             }
             val coverBitmap = remember(imgPath) {
-                runCatching { BitmapFactory.decodeFile(imgPath) }.getOrNull()
+                EpubNativeParser.decodeFullResImage(imgPath, maxDimPx = 1440)
             }
             if (coverBitmap != null) {
                 Box(
@@ -7718,7 +7730,7 @@ private fun renderEpubPageSnapshot(
             val illustPara = rawParagraphs.firstOrNull { it.startsWith("[ILLUST:") }
             val imgPath = illustPara?.removePrefix("[ILLUST:")?.substringBefore("|")?.substringBefore("]")
             if (imgPath != null && File(imgPath).exists()) {
-                val coverBmp = runCatching { BitmapFactory.decodeFile(imgPath) }.getOrNull()
+                val coverBmp = EpubNativeParser.decodeFullResImage(imgPath, maxDimPx = 1440)
                 if (coverBmp != null) {
                     val scale = minOf(size.width / coverBmp.width.toFloat(), size.height / coverBmp.height.toFloat())
                     val dstW = (coverBmp.width * scale).coerceAtLeast(1f)

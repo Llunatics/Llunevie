@@ -1367,31 +1367,60 @@ fun BottomFloatingNavDock(
     }
 }
 
+private val BROKEN_APOSTROPHE_REGEX =
+    Regex("([A-Za-z])[\\uFFFD\\u0080-\\u009F\\u00D5\\uF000-\\uFFFF]+([sStTdDmMrRvVeE]\\b)")
+private val CONTROL_CHARS_REGEX = Regex("[\\u0000-\\u001F\\u007F-\\u009F]")
+private val MULTI_WHITESPACE_REGEX = Regex("\\s+")
+private val NUMERIC_HTML_ENTITY_REGEX = Regex("&#(x?[0-9a-fA-F]+);")
+
 fun sanitizeBookOrChapterText(raw: String): String {
     if (raw.isBlank()) return raw
-    val pre = raw
-        .replace("&apos;", "'", ignoreCase = true)
-        .replace("&quot;", "\"", ignoreCase = true)
-        .replace("&nbsp;", " ", ignoreCase = true)
-        .replace("&amp;", "&", ignoreCase = true)
-        .replace("&#39;", "'")
-        .replace("&rsquo;", "'")
-        .replace("&lsquo;", "'")
-        .replace("&ldquo;", "\"")
-        .replace("&rdquo;", "\"")
-        .replace("&ndash;", "–")
-        .replace("&mdash;", "—")
+    val hasAmp = raw.contains('&')
+    val pre = if (hasAmp) {
+        val named = raw
+            .replace("&apos;", "'", ignoreCase = true)
+            .replace("&quot;", "\"", ignoreCase = true)
+            .replace("&nbsp;", " ", ignoreCase = true)
+            .replace("&lt;", "<", ignoreCase = true)
+            .replace("&gt;", ">", ignoreCase = true)
+            .replace("&hellip;", "…", ignoreCase = true)
+            .replace("&#39;", "'")
+            .replace("&#039;", "'")
+            .replace("&#34;", "\"")
+            .replace("&#160;", " ")
+            .replace("&rsquo;", "'")
+            .replace("&lsquo;", "'")
+            .replace("&ldquo;", "\"")
+            .replace("&rdquo;", "\"")
+            .replace("&ndash;", "–")
+            .replace("&mdash;", "—")
+        val numDecoded = if (named.contains("&#")) {
+            NUMERIC_HTML_ENTITY_REGEX.replace(named) { match ->
+                val token = match.groupValues[1]
+                val codePoint = runCatching {
+                    if (token.startsWith("x", ignoreCase = true)) {
+                        token.substring(1).toInt(16)
+                    } else {
+                        token.toInt(10)
+                    }
+                }.getOrNull()
+                if (codePoint != null && codePoint in 0x20..0x10FFFF) {
+                    String(Character.toChars(codePoint))
+                } else {
+                    match.value
+                }
+            }
+        } else {
+            named
+        }
+        numDecoded.replace("&amp;", "&", ignoreCase = true)
+    } else {
+        raw
+    }
 
-    val htmlDecoded = runCatching {
-        android.text.Html.fromHtml(pre, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
-    }.getOrDefault(pre)
-
-    return htmlDecoded
-        .replace("&apos;", "'", ignoreCase = true)
-        .replace("&quot;", "\"", ignoreCase = true)
-        .replace("&nbsp;", " ", ignoreCase = true)
+    return pre
         // Windows-1252 / MacRoman / Private Use / Replacement char apostrophes between letters (e.g., Storm▯s End -> Storm's End)
-        .replace(Regex("([A-Za-z])[\\uFFFD\\u0080-\\u009F\\u00D5\\uF000-\\uFFFF]+([sStTdDmMrRvVeE]\\b)"), "$1'$2")
+        .replace(BROKEN_APOSTROPHE_REGEX, "$1'$2")
         .replace('\u0091', '\'')
         .replace('\u0092', '\'')
         .replace('\u2018', '\'')
@@ -1401,8 +1430,8 @@ fun sanitizeBookOrChapterText(raw: String): String {
         .replace('\u0096', '–')
         .replace('\u0097', '—')
         .replace('\uFFFD', '\'')
-        .replace(Regex("[\\u0000-\\u001F\\u007F-\\u009F]"), "")
-        .replace(Regex("\\s+"), " ")
+        .replace(CONTROL_CHARS_REGEX, "")
+        .replace(MULTI_WHITESPACE_REGEX, " ")
         .replace(" Amp ", " & ")
         .trim()
 }

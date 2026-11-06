@@ -119,14 +119,22 @@ object PdfNativeRenderer {
 
     private val renderMutex = Mutex()
 
-    // High-speed in-memory Bitmap LRU Cache capped to at most 32 page bitmaps (capacity >= 16)
-    private val pageBitmapCache = object : LruCache<String, Bitmap>(32) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    // Byte-bounded in-memory Bitmap LRU Cache for raw PDF pages (48 MB max, size in KB)
+    private val pageBitmapCache = object : LruCache<String, Bitmap>(48 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
     }
 
-    // Dedicated in-memory Bitmap LRU Cache for translated PDF page bitmaps
-    val translatedPdfBitmapCache = object : LruCache<String, Bitmap>(16) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    // Byte-bounded in-memory Bitmap LRU Cache for translated PDF page bitmaps (32 MB max, size in KB)
+    val translatedPdfBitmapCache = object : LruCache<String, Bitmap>(32 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
+    }
+
+    fun buildTranslatedCacheKey(pdfFilePath: String, pageIndex: Int, targetLang: String, displayMode: String): String {
+        val normLang = normalizeTranslationLangCode(targetLang)
+        val normMode = displayMode.trim().lowercase()
+        return "$pdfFilePath|$pageIndex|$normLang|$normMode"
     }
 
     fun getCachedTranslatedBitmap(key: String): Bitmap? {
@@ -134,11 +142,33 @@ object PdfNativeRenderer {
         return if (cached != null && !cached.isRecycled) cached else null
     }
 
+    fun getCachedTranslatedPageBitmap(
+        pdfFilePath: String,
+        pageIndex: Int,
+        targetLang: String,
+        displayMode: String
+    ): Bitmap? {
+        val key = buildTranslatedCacheKey(pdfFilePath, pageIndex, targetLang, displayMode)
+        return getCachedTranslatedBitmap(key)
+    }
+
+    fun putCachedTranslatedPageBitmap(
+        pdfFilePath: String,
+        pageIndex: Int,
+        targetLang: String,
+        displayMode: String,
+        bitmap: Bitmap
+    ) {
+        val key = buildTranslatedCacheKey(pdfFilePath, pageIndex, targetLang, displayMode)
+        translatedPdfBitmapCache.put(key, bitmap)
+    }
+
     private val aspectRatioCache = mutableMapOf<String, Float>()
 
-    // Dedicated high-resolution in-memory Bitmap LRU Cache for the full-screen illustration viewer (1600-2048px display resolution)
-    private val highResIllustCache = object : LruCache<String, Bitmap>(6) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    // Byte-bounded high-resolution in-memory Bitmap LRU Cache for the full-screen illustration viewer (24 MB max, size in KB)
+    private val highResIllustCache = object : LruCache<String, Bitmap>(24 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
     }
 
     fun getCachedHighResIllustration(pdfFilePath: String, pageIndex: Int): Bitmap? {
@@ -197,6 +227,15 @@ object PdfNativeRenderer {
         val bmp = pageBitmapCache.get("$pdfFilePath:$pageIndex:$widthBucket")
         if (bmp != null && !bmp.isRecycled) return bmp
         return null
+    }
+
+    fun getAnyCachedPageBitmap(pdfFilePath: String, pageIndex: Int): Bitmap? {
+        if (pdfFilePath.isBlank() || pageIndex < 0) return null
+        return getCachedBitmap(pdfFilePath, pageIndex, 1080)
+            ?: getCachedBitmap(pdfFilePath, pageIndex, 960)
+            ?: getCachedBitmap(pdfFilePath, pageIndex, 720)
+            ?: getCachedBitmap(pdfFilePath, pageIndex, 480)
+            ?: getCachedBitmap(pdfFilePath, pageIndex, 360)
     }
 
     fun getCachedPageAspectRatio(pdfFilePath: String): Float {
@@ -507,9 +546,7 @@ object PdfNativeRenderer {
         engine: String = ""
     ): Bitmap? {
         if (pageIndex < 0 || blocks.isEmpty() || translatedTexts.isEmpty()) return null
-        val normLang = normalizeTranslationLangCode(targetLang)
-        val normMode = displayMode.trim().lowercase()
-        val cacheKey = "$pdfFilePath|$pageIndex|$normLang|$engine|$normMode|$targetWidthPx"
+        val cacheKey = buildTranslatedCacheKey(pdfFilePath, pageIndex, targetLang, displayMode)
         translatedPdfBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return cached
         }
@@ -1096,7 +1133,8 @@ object PdfNativeRenderer {
             val file = File(pdfFilePath)
             if (!file.exists()) return null
             PDFBoxResourceLoader.init(context.applicationContext)
-            val doc = runCatching { PDDocument.load(file) }.getOrNull()
+            val memSetting = com.tom_roush.pdfbox.io.MemoryUsageSetting.setupMixed(16L * 1024L * 1024L)
+            val doc = runCatching { PDDocument.load(file, memSetting) }.getOrNull()
             if (doc != null) {
                 cachedDoc = doc
                 cachedDocPath = pdfFilePath
@@ -1112,6 +1150,17 @@ object PdfNativeRenderer {
             cachedDocPath = null
             pageParagraphBlocksCache.evictAll()
             translatedPdfBitmapCache.evictAll()
+        }
+    }
+
+    fun clearMemoryCaches(evictPageBitmaps: Boolean = true) {
+        highResIllustCache.evictAll()
+        translatedPdfBitmapCache.evictAll()
+        pageParagraphBlocksCache.evictAll()
+        if (evictPageBitmaps) {
+            pageBitmapCache.evictAll()
+        } else {
+            pageBitmapCache.trimToSize(pageBitmapCache.maxSize() / 2)
         }
     }
 
@@ -1166,8 +1215,12 @@ object PdfNativeRenderer {
                 if (txt.isEmpty()) return@filter false
                 val lower = txt.lowercase()
 
-                if (lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
-                    lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")) {
+                val isHeaderOrFooterMargin = vl.yTop < pageH * 0.088f || vl.yTop > pageH * 0.885f
+                if (isHeaderOrFooterMargin && (
+                        lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
+                        lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")
+                    )
+                ) {
                     return@filter false
                 }
 

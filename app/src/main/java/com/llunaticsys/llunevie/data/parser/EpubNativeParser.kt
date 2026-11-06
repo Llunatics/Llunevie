@@ -31,9 +31,14 @@ data class ParsedBookBundle(
 
 object EpubNativeParser {
 
-    // In-memory LRU Cache for uncompressed full-resolution EPUB illustration images
-    private val fullResImageCache = object : LruCache<String, Bitmap>(8) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    // Byte-bounded in-memory LRU Cache for EPUB illustration images (24 MB max, size in KB)
+    private val fullResImageCache = object : LruCache<String, Bitmap>(24 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
+    }
+
+    fun clearMemoryCaches() {
+        fullResImageCache.evictAll()
     }
 
     fun getCachedFullResImage(imagePath: String): Bitmap? {
@@ -41,7 +46,7 @@ object EpubNativeParser {
         return if (cached != null && !cached.isRecycled) cached else null
     }
 
-    fun decodeFullResImage(imagePath: String): Bitmap? {
+    fun decodeFullResImage(imagePath: String, maxDimPx: Int = 2048): Bitmap? {
         if (imagePath.isBlank()) return null
         fullResImageCache.get(imagePath)?.let {
             if (!it.isRecycled) return it
@@ -50,8 +55,16 @@ object EpubNativeParser {
         val file = File(cleanPath)
         if (!file.exists()) return null
         return runCatching {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(cleanPath, boundsOpts)
+            val rawW = boundsOpts.outWidth.coerceAtLeast(1)
+            val rawH = boundsOpts.outHeight.coerceAtLeast(1)
+            var sampleSize = 1
+            while ((rawW / sampleSize) > maxDimPx || (rawH / sampleSize) > maxDimPx) {
+                sampleSize *= 2
+            }
             val options = BitmapFactory.Options().apply {
-                inSampleSize = 1
+                inSampleSize = sampleSize
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
             val bmp = BitmapFactory.decodeFile(cleanPath, options)
@@ -412,40 +425,43 @@ object EpubNativeParser {
                 val chapterParagraphs = mutableListOf<String>()
                 val chapterIllustrations = JSONArray()
                 val seenImages = mutableSetOf<String>()
-                // Collect images inside this chapter
-                for (imgEl in body.select("img, image")) {
-                    val rawSrc = imgEl.attr("src").ifBlank { imgEl.attr("xlink:href") }.ifBlank { imgEl.attr("href") }
-                    if (rawSrc.isNotBlank()) {
-                        val dec = runCatching { URLDecoder.decode(rawSrc.substringBefore("#"), "UTF-8") }.getOrDefault(rawSrc)
-                        val resolved = resolveRelativeZipPath(chDir, dec)
-                        val localImgPath = extractedImagesByZipPath[resolved]
-                            ?: extractedImagesByZipPath[resolved.lowercase()]
-                            ?: extractedImagesByFileName[dec.substringAfterLast('/')]
-                            ?: extractedImagesByFileName[dec.substringAfterLast('/').lowercase()]
 
-                        if (localImgPath != null && seenImages.add(localImgPath)) {
-                            if (coverFilePath == null) coverFilePath = localImgPath
-                            val alt = imgEl.attr("alt").trim()
-                            val caption = if (alt.length > 2) "$chTitle — $alt" else "$chTitle · Ilustrasi #${chapterIllustrations.length() + 1}"
-                            chapterIllustrations.put(JSONObject().apply {
-                                put("uriOrPath", localImgPath)
-                                put("caption", caption)
-                            })
-                            chapterParagraphs.add("[ILLUST:$localImgPath|$caption]")
+                // Traverse paragraphs, headings, blockquotes, list items, and images in document order
+                val orderedElements: List<Element> = body.select("p, h1, h2, h3, h4, blockquote, li, img, image")
+                var hasStructuredTextBlocks = false
+                for (el in orderedElements) {
+                    val tag = el.tagName()
+                    if (tag.equals("img", ignoreCase = true) || tag.equals("image", ignoreCase = true)) {
+                        val rawSrc = el.attr("src").ifBlank { el.attr("xlink:href") }.ifBlank { el.attr("href") }
+                        if (rawSrc.isNotBlank()) {
+                            val dec = runCatching { URLDecoder.decode(rawSrc.substringBefore("#"), "UTF-8") }.getOrDefault(rawSrc)
+                            val resolved = resolveRelativeZipPath(chDir, dec)
+                            val localImgPath = extractedImagesByZipPath[resolved]
+                                ?: extractedImagesByZipPath[resolved.lowercase()]
+                                ?: extractedImagesByFileName[dec.substringAfterLast('/')]
+                                ?: extractedImagesByFileName[dec.substringAfterLast('/').lowercase()]
+
+                            if (localImgPath != null && seenImages.add(localImgPath)) {
+                                if (coverFilePath == null) coverFilePath = localImgPath
+                                val alt = el.attr("alt").trim()
+                                val caption = if (alt.length > 2) "$chTitle — $alt" else "$chTitle · Ilustrasi #${chapterIllustrations.length() + 1}"
+                                chapterIllustrations.put(JSONObject().apply {
+                                    put("uriOrPath", localImgPath)
+                                    put("caption", caption)
+                                })
+                                chapterParagraphs.add("[ILLUST:$localImgPath|$caption]")
+                            }
                         }
-                    }
-                }
-
-                // Extract structured paragraphs from <p>, <h1>..<h6>, <blockquote>, <li>, or fallback leaf blocks
-                val blockElements: List<Element> = body.select("p, h1, h2, h3, h4, blockquote, li")
-                if (blockElements.isNotEmpty()) {
-                    for (el in blockElements) {
+                    } else {
+                        hasStructuredTextBlocks = true
                         val txt = sanitizeBookOrChapterText(el.text()).replace(Regex("""\s+"""), " ").trim()
                         if (txt.isNotBlank() && !txt.equals(chTitle, ignoreCase = true)) {
                             chapterParagraphs.add(txt)
                         }
                     }
-                } else {
+                }
+
+                if (!hasStructuredTextBlocks) {
                     // Fallback for EPUBs that use <div> or <br>-separated text directly inside <body>
                     val cleanedBody = body.wholeText().lines().map { sanitizeBookOrChapterText(it).replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
                     for (line in cleanedBody) {
