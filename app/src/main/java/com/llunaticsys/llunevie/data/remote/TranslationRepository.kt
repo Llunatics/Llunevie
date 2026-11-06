@@ -148,7 +148,21 @@ class TranslationRepository private constructor() {
         result
     }
 
-    private fun translateFree(text: String, targetLang: String): Result<String> {
+    private suspend inline fun <T> withCancellableConn(conn: HttpURLConnection, block: (HttpURLConnection) -> T): T {
+        val handle = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { cause ->
+            if (cause is kotlinx.coroutines.CancellationException) {
+                runCatching { conn.disconnect() }
+            }
+        }
+        return try {
+            block(conn)
+        } finally {
+            handle?.dispose()
+            runCatching { conn.disconnect() }
+        }
+    }
+
+    private suspend fun translateFree(text: String, targetLang: String): Result<String> {
         // Primary: Google GTX
         val gtxResult = runCatching {
             val encodedText = URLEncoder.encode(text, "UTF-8")
@@ -161,24 +175,26 @@ class TranslationRepository private constructor() {
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
                 setRequestProperty("Accept", "*/*")
             }
-            if (conn.responseCode in 200..299) {
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val rootArr = JSONArray(body)
-                val segments = rootArr.optJSONArray(0)
-                if (segments != null && segments.length() > 0) {
-                    val sb = StringBuilder()
-                    for (i in 0 until segments.length()) {
-                        val seg = segments.optJSONArray(i)
-                        if (seg != null) {
-                            val part = seg.optString(0, "")
-                            if (part.isNotEmpty()) sb.append(part)
+            withCancellableConn(conn) {
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val rootArr = JSONArray(body)
+                    val segments = rootArr.optJSONArray(0)
+                    if (segments != null && segments.length() > 0) {
+                        val sb = StringBuilder()
+                        for (i in 0 until segments.length()) {
+                            val seg = segments.optJSONArray(i)
+                            if (seg != null) {
+                                val part = seg.optString(0, "")
+                                if (part.isNotEmpty()) sb.append(part)
+                            }
                         }
+                        val full = sb.toString().trim()
+                        if (full.isNotEmpty()) return@withCancellableConn full
                     }
-                    val full = sb.toString().trim()
-                    if (full.isNotEmpty()) return@runCatching full
                 }
+                error("GTX translation empty or returned code ${conn.responseCode}")
             }
-            error("GTX translation empty or returned code ${conn.responseCode}")
         }
 
         if (gtxResult.isSuccess) {
@@ -197,19 +213,21 @@ class TranslationRepository private constructor() {
                 readTimeout = 8000
                 setRequestProperty("User-Agent", "Mozilla/5.0")
             }
-            if (conn.responseCode in 200..299) {
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val json = JSONObject(body)
-                val trans = json.optJSONObject("responseData")?.optString("translatedText")?.trim()
-                if (!trans.isNullOrEmpty()) {
-                    return@runCatching trans
+            withCancellableConn(conn) {
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val json = JSONObject(body)
+                    val trans = json.optJSONObject("responseData")?.optString("translatedText")?.trim()
+                    if (!trans.isNullOrEmpty()) {
+                        return@withCancellableConn trans
+                    }
                 }
+                error(gtxResult.exceptionOrNull()?.message ?: "Translation failed")
             }
-            error(gtxResult.exceptionOrNull()?.message ?: "Translation failed")
         }
     }
 
-    private fun translateGemini(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
+    private suspend fun translateGemini(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
         val apiKey = prefs.aiApiKey.trim()
         if (apiKey.isBlank()) {
             val msg = if (prefs.lang == "en") {
@@ -221,7 +239,7 @@ class TranslationRepository private constructor() {
         }
 
         val model = prefs.aiModelName.ifBlank { "gemini-2.5-flash" }.trim()
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
 
         return runCatching {
             val isEn = prefs.lang == "en"
@@ -246,32 +264,35 @@ class TranslationRepository private constructor() {
                 connectTimeout = 25000
                 readTimeout = 25000
                 setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("x-goog-api-key", apiKey)
                 doOutput = true
             }
 
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(payload.toString()) }
+            withCancellableConn(conn) {
+                conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(payload.toString()) }
 
-            if (conn.responseCode in 200..299) {
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val json = JSONObject(body)
-                val candidates = json.optJSONArray("candidates")
-                val parts = candidates?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                val resultText = parts?.optJSONObject(0)?.optString("text")?.trim()
-                if (!resultText.isNullOrEmpty()) {
-                    return@runCatching resultText
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val json = JSONObject(body)
+                    val candidates = json.optJSONArray("candidates")
+                    val parts = candidates?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                    val resultText = parts?.optJSONObject(0)?.optString("text")?.trim()
+                    if (!resultText.isNullOrEmpty()) {
+                        return@withCancellableConn resultText
+                    }
+                    error("Gemini returned empty response")
+                } else {
+                    val errBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                    val cleanError = runCatching {
+                        JSONObject(errBody).optJSONObject("error")?.optString("message")
+                    }.getOrNull()?.ifBlank { null } ?: "HTTP ${conn.responseCode}: $errBody"
+                    error(cleanError)
                 }
-                error("Gemini returned empty response")
-            } else {
-                val errBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-                val cleanError = runCatching {
-                    JSONObject(errBody).optJSONObject("error")?.optString("message")
-                }.getOrNull()?.ifBlank { null } ?: "HTTP ${conn.responseCode}: $errBody"
-                error(cleanError)
             }
         }
     }
 
-    private fun translateOpenRouter(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
+    private suspend fun translateOpenRouter(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
         val apiKey = prefs.aiApiKey.trim()
         if (apiKey.isBlank()) {
             val msg = if (prefs.lang == "en") {
@@ -287,14 +308,14 @@ class TranslationRepository private constructor() {
         return executeOpenAiChatCompletion(endpoint, model, text, prefs, targetLang)
     }
 
-    private fun translateCustom(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
+    private suspend fun translateCustom(text: String, prefs: UserPreferencesState, targetLang: String): Result<String> {
         val baseUrl = prefs.aiCustomBaseUrl.ifBlank { "https://openrouter.ai/api/v1" }.trimEnd('/')
         val endpoint = "$baseUrl/chat/completions"
         val model = prefs.aiModelName.ifBlank { "gpt-4o-mini" }.trim()
         return executeOpenAiChatCompletion(endpoint, model, text, prefs, targetLang)
     }
 
-    private fun executeOpenAiChatCompletion(
+    private suspend fun executeOpenAiChatCompletion(
         endpoint: String,
         model: String,
         text: String,
@@ -334,24 +355,26 @@ class TranslationRepository private constructor() {
                 doOutput = true
             }
 
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(payload.toString()) }
+            withCancellableConn(conn) {
+                conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(payload.toString()) }
 
-            if (conn.responseCode in 200..299) {
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val json = JSONObject(body)
-                val choices = json.optJSONArray("choices")
-                val content = choices?.optJSONObject(0)?.optJSONObject("message")?.optString("content")?.trim()
-                if (!content.isNullOrEmpty()) {
-                    return@runCatching content
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val json = JSONObject(body)
+                    val choices = json.optJSONArray("choices")
+                    val content = choices?.optJSONObject(0)?.optJSONObject("message")?.optString("content")?.trim()
+                    if (!content.isNullOrEmpty()) {
+                        return@withCancellableConn content
+                    }
+                    error("AI model returned empty response")
+                } else {
+                    val errBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                    val cleanError = runCatching {
+                        val obj = JSONObject(errBody)
+                        obj.optJSONObject("error")?.optString("message") ?: obj.optString("message")
+                    }.getOrNull()?.ifBlank { null } ?: "HTTP ${conn.responseCode}: $errBody"
+                    error(cleanError)
                 }
-                error("AI model returned empty response")
-            } else {
-                val errBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-                val cleanError = runCatching {
-                    val obj = JSONObject(errBody)
-                    obj.optJSONObject("error")?.optString("message") ?: obj.optString("message")
-                }.getOrNull()?.ifBlank { null } ?: "HTTP ${conn.responseCode}: $errBody"
-                error(cleanError)
             }
         }
     }
@@ -477,22 +500,5 @@ class TranslationRepository private constructor() {
         val paras = blocks.map { it.text }
         pdfParagraphsCache.put(cacheKey, paras)
         paras
-    }
-
-    fun extractPdfPageText(pdfFilePath: String, pageIndexZero: Int): String {
-        val cached = pdfParagraphsCache.get("$pdfFilePath:$pageIndexZero")
-        if (cached != null) return cached.joinToString("\n\n")
-        return runCatching {
-            val file = File(pdfFilePath)
-            if (!file.exists()) return ""
-            PDDocument.load(file).use { doc ->
-                if (pageIndexZero < 0 || pageIndexZero >= doc.numberOfPages) return ""
-                val stripper = PDFTextStripper()
-                stripper.sortByPosition = true
-                stripper.startPage = pageIndexZero + 1
-                stripper.endPage = pageIndexZero + 1
-                stripper.getText(doc).trim()
-            }
-        }.getOrDefault("")
     }
 }

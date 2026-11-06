@@ -471,97 +471,45 @@ fun HomeScreen(
                 letterSpacing = 1.4.sp
             )
             val isGrid = prefs.homeRecentMode == "grid"
-            if (palette.isGlass) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Surface(
                     shape = CircleShape,
-                    color = palette.bgCard,
-                    border = BorderStroke(1.dp, palette.borderSoft)
+                    color = if (isGrid) palette.accentDark else palette.bgSurface,
+                    border = BorderStroke(1.dp, if (isGrid) palette.accentDark else palette.borderSoft),
+                    shadowElevation = if (isGrid) 1.5.dp else 0.dp,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .clickable { onSetHomeRecentMode("grid") }
                 ) {
-                    Row(modifier = Modifier.padding(3.dp)) {
-                        val activeBg = if (palette.isDark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.68f)
-                        val activeBorder = if (palette.isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.75f)
-
-                        Surface(
-                            shape = CircleShape,
-                            color = if (isGrid) activeBg else Color.Transparent,
-                            border = if (isGrid) BorderStroke(1.dp, activeBorder) else null,
-                            shadowElevation = if (isGrid) 1.dp else 0.dp,
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .clickable { onSetHomeRecentMode("grid") }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.GRID_2X2,
-                                    tint = if (isGrid) palette.textMain else palette.textMuted,
-                                    modifier = Modifier.size(13.5.dp),
-                                    contentDescription = if (strings.isId) "Tampilan Kisi" else "Grid view"
-                                )
-                            }
-                        }
-                        Surface(
-                            shape = CircleShape,
-                            color = if (!isGrid) activeBg else Color.Transparent,
-                            border = if (!isGrid) BorderStroke(1.dp, activeBorder) else null,
-                            shadowElevation = if (!isGrid) 1.dp else 0.dp,
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .clickable { onSetHomeRecentMode("list") }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                PrototypeSvgIcon(
-                                    type = PrototypeIconType.LIST_BULLETS,
-                                    tint = if (!isGrid) palette.textMain else palette.textMuted,
-                                    modifier = Modifier.size(13.5.dp),
-                                    contentDescription = if (strings.isId) "Tampilan Daftar" else "List view"
-                                )
-                            }
-                        }
+                    Box(contentAlignment = Alignment.Center) {
+                        PrototypeSvgIcon(
+                            type = PrototypeIconType.GRID_2X2,
+                            tint = if (isGrid) palette.bgApp else palette.textMuted,
+                            modifier = Modifier.size(13.5.dp),
+                            contentDescription = if (strings.isId) "Tampilan Kisi" else "Grid view"
+                        )
                     }
                 }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isGrid) palette.accentDark else palette.bgSurface,
-                        border = BorderStroke(1.dp, if (isGrid) palette.accentDark else palette.borderSoft),
-                        shadowElevation = if (isGrid) 1.5.dp else 0.dp,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .clickable { onSetHomeRecentMode("grid") }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.GRID_2X2,
-                                tint = if (isGrid) palette.bgApp else palette.textMuted,
-                                modifier = Modifier.size(13.5.dp),
-                                contentDescription = if (strings.isId) "Tampilan Kisi" else "Grid view"
-                            )
-                        }
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = if (!isGrid) palette.accentDark else palette.bgSurface,
-                        border = BorderStroke(1.dp, if (!isGrid) palette.accentDark else palette.borderSoft),
-                        shadowElevation = if (!isGrid) 1.5.dp else 0.dp,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .clickable { onSetHomeRecentMode("list") }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PrototypeSvgIcon(
-                                type = PrototypeIconType.LIST_BULLETS,
-                                tint = if (!isGrid) palette.bgApp else palette.textMuted,
-                                modifier = Modifier.size(13.5.dp),
-                                contentDescription = if (strings.isId) "Tampilan Daftar" else "List view"
-                            )
-                        }
+                Surface(
+                    shape = CircleShape,
+                    color = if (!isGrid) palette.accentDark else palette.bgSurface,
+                    border = BorderStroke(1.dp, if (!isGrid) palette.accentDark else palette.borderSoft),
+                    shadowElevation = if (!isGrid) 1.5.dp else 0.dp,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .clickable { onSetHomeRecentMode("list") }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        PrototypeSvgIcon(
+                            type = PrototypeIconType.LIST_BULLETS,
+                            tint = if (!isGrid) palette.bgApp else palette.textMuted,
+                            modifier = Modifier.size(13.5.dp),
+                            contentDescription = if (strings.isId) "Tampilan Daftar" else "List view"
+                        )
                     }
                 }
             }

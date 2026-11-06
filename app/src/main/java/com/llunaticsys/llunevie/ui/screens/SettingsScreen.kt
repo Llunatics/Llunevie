@@ -104,6 +104,7 @@ import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.ModernSwitch
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
+import com.llunaticsys.llunevie.ui.components.resolveDisplayFolderPath
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import coil.compose.AsyncImage
@@ -305,9 +306,12 @@ fun SettingsScreen(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                if (!prefs.userPhotoPath.isNullOrBlank() && File(prefs.userPhotoPath).exists()) {
+                                val hasUserPhoto = remember(prefs.userPhotoPath) {
+                                    !prefs.userPhotoPath.isNullOrBlank() && File(prefs.userPhotoPath).exists()
+                                }
+                                if (hasUserPhoto) {
                                     AsyncImage(
-                                        model = File(prefs.userPhotoPath),
+                                        model = File(prefs.userPhotoPath!!),
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
@@ -2397,15 +2401,4 @@ fun renderCroppedBitmapWithExactMatrix(
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
     canvas.drawBitmap(src, matrix, paint)
     return out
-}
-
-private fun resolveDisplayFolderPath(uri: Uri): String {
-    val path = uri.path.orEmpty()
-    val decoded = Uri.decode(path)
-    return when {
-        decoded.startsWith("/tree/primary:") -> "/sdcard/" + decoded.removePrefix("/tree/primary:")
-        decoded.startsWith("primary:") -> "/sdcard/" + decoded.removePrefix("primary:")
-        decoded.contains(":") -> "/sdcard/" + decoded.substringAfterLast(":")
-        else -> "/sdcard/Llunevie/Books"
-    }
 }

@@ -340,7 +340,8 @@ internal fun BoxScope.ReaderTocDrawer(
                                                 PrototypeSvgIcon(
                                                     type = if (inlineEditingChIdx == idx) PrototypeIconType.CHEVRON_UP else PrototypeIconType.EDIT_PEN,
                                                     tint = if (isRowSelected) palette.bgApp else palette.textMuted,
-                                                    modifier = Modifier.size(12.dp)
+                                                    modifier = Modifier.size(12.dp),
+                                                    contentDescription = if (inlineEditingChIdx == idx) (if (strings.isEn) "Collapse chapter edit" else "Tutup edit bab") else (if (strings.isEn) "Edit chapter" else "Edit bab")
                                                 )
                                             }
                                         }
@@ -485,7 +486,8 @@ internal fun BoxScope.ReaderTocDrawer(
                                                                 PrototypeSvgIcon(
                                                                     type = PrototypeIconType.TRASH_CAN,
                                                                     tint = palette.textMain,
-                                                                    modifier = Modifier.size(13.dp)
+                                                                    modifier = Modifier.size(13.dp),
+                                                                    contentDescription = if (strings.isEn) "Delete chapter" else "Hapus bab"
                                                                 )
                                                             }
                                                         }
@@ -551,7 +553,8 @@ internal fun BoxScope.ReaderTocDrawer(
                                             PrototypeSvgIcon(
                                                 type = PrototypeIconType.EDIT_PEN,
                                                 tint = palette.textMain,
-                                                modifier = Modifier.size(13.dp)
+                                                modifier = Modifier.size(13.dp),
+                                                contentDescription = if (strings.isEn) "Edit & Manage Chapters" else "Edit & Kelola Bab Manual"
                                             )
                                             Text(
                                                 text = if (strings.isEn) "Edit & Manage Chapters" else "Edit & Kelola Bab Manual",

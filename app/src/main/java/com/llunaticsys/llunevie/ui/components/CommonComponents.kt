@@ -995,64 +995,68 @@ private fun BoxScope.BookCoverInnerContent(
     imageRequest: coil.request.ImageRequest?,
     contentScale: ContentScale
 ) {
-    if (showTitleInsideFallback) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp)
-                .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-            Text(
-                text = book.title,
-                color = textColor,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-        }
-    } else {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = book.category.uppercase(),
-                color = textColor.copy(alpha = 0.7f),
-                fontSize = 7.5.sp,
-                fontFamily = FontFamily.Monospace,
-                maxLines = 1
-            )
-            Box(
+    var imageLoaded by remember(imageRequest) { mutableStateOf(false) }
+
+    if (imageRequest == null || !imageLoaded) {
+        if (showTitleInsideFallback) {
+            Column(
                 modifier = Modifier
-                    .size(34.dp)
-                    .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
-                contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .padding(10.dp)
+                    .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+                Text(
+                    text = book.title,
+                    color = textColor,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = initials,
-                    color = textColor,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.SemiBold
+                    text = book.category.uppercase(),
+                    color = textColor.copy(alpha = 0.7f),
+                    fontSize = 7.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = initials,
+                        color = textColor,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Text(
+                    text = book.year,
+                    color = textColor.copy(alpha = 0.7f),
+                    fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace
                 )
             }
-            Text(
-                text = book.year,
-                color = textColor.copy(alpha = 0.7f),
-                fontSize = 8.sp,
-                fontFamily = FontFamily.Monospace
-            )
         }
     }
 
@@ -1061,6 +1065,7 @@ private fun BoxScope.BookCoverInnerContent(
             model = imageRequest,
             contentDescription = book.title,
             contentScale = contentScale,
+            onSuccess = { imageLoaded = true },
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -1125,82 +1130,14 @@ fun <T> ClassicGlassSegmentedControl(
     }
 }
 
-fun Modifier.llunevieSurface(
-    palette: LluneviePalette,
-    isGlass: Boolean = palette.isGlass,
-    shape: Shape = RoundedCornerShape(16.dp),
-    shadowElevation: androidx.compose.ui.unit.Dp = if (isGlass) 10.dp else 4.dp
-): Modifier {
-    return if (isGlass) {
-        val glassBg = if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface
-        val glassBorderBrush = if (palette.isDark) {
-            Brush.linearGradient(
-                colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        } else {
-            Brush.linearGradient(
-                colors = listOf(palette.textMain.copy(alpha = 0.12f), palette.textMain.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        }
-        this
-            .shadow(shadowElevation, shape)
-            .clip(shape)
-            .background(glassBg)
-            .border(BorderStroke(1.dp, glassBorderBrush), shape)
-    } else {
-        this
-            .shadow(shadowElevation, shape)
-            .clip(shape)
-            .background(palette.bgCard)
-            .border(BorderStroke(1.dp, palette.borderSoft), shape)
-    }
-}
-
-@Composable
-fun GlassSurface(
-    modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(16.dp),
-    shadowElevation: androidx.compose.ui.unit.Dp = 8.dp,
-    content: @Composable () -> Unit
-) {
-    val palette = LocalLluneviePalette.current
-    val isGlass = palette.isGlass
-    val glassBg = if (isGlass) {
-        if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface
-    } else {
-        palette.bgCard
-    }
-    val borderStroke = if (isGlass) {
-        val brush = if (palette.isDark) {
-            Brush.linearGradient(
-                colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        } else {
-            Brush.linearGradient(
-                colors = listOf(palette.textMain.copy(alpha = 0.12f), palette.textMain.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        }
-        BorderStroke(1.dp, brush)
-    } else {
-        BorderStroke(1.dp, palette.borderSoft)
-    }
-
-    Surface(
-        shape = shape,
-        color = glassBg,
-        border = borderStroke,
-        shadowElevation = if (isGlass) (shadowElevation * 1.4f) else shadowElevation,
-        modifier = modifier
-    ) {
-        content()
+fun resolveDisplayFolderPath(uri: android.net.Uri): String {
+    val path = uri.path.orEmpty()
+    val decoded = android.net.Uri.decode(path)
+    return when {
+        decoded.startsWith("/tree/primary:") -> "/sdcard/" + decoded.removePrefix("/tree/primary:")
+        decoded.startsWith("primary:") -> "/sdcard/" + decoded.removePrefix("primary:")
+        decoded.contains(":") -> "/sdcard/" + decoded.substringAfterLast(":")
+        else -> "/sdcard/Llunevie/Books"
     }
 }
 
@@ -1226,18 +1163,8 @@ fun BottomFloatingNavDock(
         Triple(MainNavTab.SETTINGS, strings.navSettings, PrototypeIconType.NAV_SETTINGS)
     )
 
-    val dockBg = if (palette.isGlass) {
-        if (palette.isDark) Color(0xFF1C1F26).copy(alpha = 0.88f)
-        else palette.dockBg
-    } else {
-        palette.dockBg
-    }
-    val dockBorder = if (palette.isGlass) {
-        if (palette.isDark) Color.White.copy(alpha = 0.14f)
-        else palette.dockBorder
-    } else {
-        palette.dockBorder
-    }
+    val dockBg = palette.dockBg
+    val dockBorder = palette.dockBorder
 
     Row(
         modifier = modifier
@@ -1255,7 +1182,7 @@ fun BottomFloatingNavDock(
             shape = CircleShape,
             color = dockBg,
             border = BorderStroke(1.dp, dockBorder),
-            shadowElevation = if (palette.isGlass) 12.dp else 8.dp
+            shadowElevation = 8.dp
         ) {
             Row(
                 modifier = Modifier
@@ -1266,16 +1193,8 @@ fun BottomFloatingNavDock(
             ) {
                 items.forEach { (tab, label, iconType) ->
                     val isSelected = activeTab == tab
-                    val activePillBg = if (palette.isGlass) {
-                        if (palette.isDark) Color.White.copy(alpha = 0.14f) else palette.pillActiveBg
-                    } else {
-                        palette.pillActiveBg
-                    }
-                    val activePillBorder = if (palette.isGlass) {
-                        if (palette.isDark) Color.White.copy(alpha = 0.18f) else palette.pillActiveBorder
-                    } else {
-                        palette.pillActiveBorder
-                    }
+                    val activePillBg = palette.pillActiveBg
+                    val activePillBorder = palette.pillActiveBorder
 
                     val iconScale by animateFloatAsState(
                         targetValue = if (isSelected) 1.08f else 1f,
@@ -1323,7 +1242,7 @@ fun BottomFloatingNavDock(
                                     .size(20.dp)
                                     .scale(iconScale),
                                 strokeWidthDp = if (isSelected) 1.8f else 1.6f,
-                                badgeFillColor = if (isSelected) (if (palette.isGlass) Color.White.copy(alpha = 0.5f) else palette.pillActiveBg) else palette.dockBg
+                                badgeFillColor = if (isSelected) palette.pillActiveBg else palette.dockBg
                             )
                             AnimatedVisibility(
                                 visible = isSelected,
@@ -1439,12 +1358,7 @@ fun sanitizeBookOrChapterText(raw: String): String {
 fun normalizeBookTitle(fileName: String): String {
     val sanitized = sanitizeBookOrChapterText(fileName)
     var s = sanitized.replace(Regex("""\.(epub|pdf|txt|json|mobi|azw3|cbz|cbr|fb2|djvu)$""", RegexOption.IGNORE_CASE), "")
-    // Decode common HTML entities and URL encoding first
-    s = sanitizeBookOrChapterText(s)
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    // Decode URL encoding and sanitize entities
     s = runCatching { java.net.URLDecoder.decode(s, "UTF-8") }.getOrDefault(s)
     s = sanitizeBookOrChapterText(s)
     // Replace " - " or " _ " or " -- " with ": "

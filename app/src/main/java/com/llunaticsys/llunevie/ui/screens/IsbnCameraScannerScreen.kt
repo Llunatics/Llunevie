@@ -217,6 +217,7 @@ fun IsbnCameraScannerScreen(
         // 1. Live CameraX Preview + ML Kit Barcode Analyzer
         if (hasCameraPermission) {
             val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+            val isScannerDisposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
             val barcodeScanner = remember {
                 val options = BarcodeScannerOptions.Builder()
                     .setBarcodeFormats(Barcode.FORMAT_EAN_13)
@@ -225,7 +226,9 @@ fun IsbnCameraScannerScreen(
             }
 
             DisposableEffect(Unit) {
+                isScannerDisposed.set(false)
                 onDispose {
+                    isScannerDisposed.set(true)
                     runCatching { cameraProviderRef?.unbindAll() }
                     cameraProviderRef = null
                     cameraRef = null
@@ -242,6 +245,10 @@ fun IsbnCameraScannerScreen(
                     cameraProviderFuture.addListener({
                         runCatching {
                             val cameraProvider = cameraProviderFuture.get()
+                            if (isScannerDisposed.get()) {
+                                runCatching { cameraProvider.unbindAll() }
+                                return@addListener
+                            }
                             cameraProviderRef = cameraProvider
                             val preview = Preview.Builder().build().also {
                                 it.setSurfaceProvider(previewView.surfaceProvider)

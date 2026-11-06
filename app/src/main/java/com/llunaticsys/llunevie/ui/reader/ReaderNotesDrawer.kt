@@ -204,7 +204,8 @@ internal fun BoxScope.ReaderNotesDrawer(
                                 type = PrototypeIconType.PLUS,
                                 tint = palette.textMain,
                                 modifier = Modifier.size(14.dp),
-                                strokeWidthDp = 1.8f
+                                strokeWidthDp = 1.8f,
+                                contentDescription = if (strings.isId) "Tambah Catatan Manual" else "Add Manual Note"
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(

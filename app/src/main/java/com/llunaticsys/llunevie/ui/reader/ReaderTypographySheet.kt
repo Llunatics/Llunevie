@@ -823,7 +823,8 @@ internal fun BoxScope.ReaderTypographySheet(
                                                         type = modeIcon,
                                                         tint = if (selected) palette.bgApp else palette.textSecondary,
                                                         modifier = Modifier.size(16.dp),
-                                                        strokeWidthDp = 1.8f
+                                                        strokeWidthDp = 1.8f,
+                                                        contentDescription = mode.localizedLabel(prefs.lang)
                                                     )
                                                     Spacer(modifier = Modifier.width(10.dp))
                                                     Column(modifier = Modifier.weight(1f)) {

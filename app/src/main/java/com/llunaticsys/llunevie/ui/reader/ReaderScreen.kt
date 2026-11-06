@@ -63,6 +63,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -2781,8 +2782,9 @@ fun ReaderScreen(
             shadowElevation = 3.dp,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .width(18.dp)
-                .height(40.dp)
+                .minimumInteractiveComponentSize()
+                .width(20.dp)
+                .height(48.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(

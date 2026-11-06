@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +15,8 @@ android {
         applicationId = "com.llunaticsys.llunevie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 64
-        versionName = "0.5.1-beta.2"
+        versionCode = 65
+        versionName = "0.5.1-beta.3"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -31,12 +33,24 @@ android {
         includeInBundle = false
     }
 
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+    }
+
     signingConfigs {
         create("release") {
-            storeFile = file("keystore/llunevie-release.jks")
-            storePassword = "llunevie123"
-            keyAlias = "llunevie"
-            keyPassword = "llunevie123"
+            val keyPath = keystoreProperties.getProperty("storeFile")
+            storeFile = if (!keyPath.isNullOrBlank()) {
+                val f = file(keyPath)
+                if (f.exists()) f else rootProject.file(keyPath)
+            } else {
+                file("keystore/llunevie-release.jks")
+            }
+            storePassword = keystoreProperties.getProperty("storePassword") ?: "llunevie123"
+            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "llunevie"
+            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "llunevie123"
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true

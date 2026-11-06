@@ -240,14 +240,8 @@ fun LibraryScreen(
         uiState.showDeleteConfirmDialog ||
         showBatchOrganizeDialog
 
-    val targetBlur = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOpenInLibrary) 10.dp else 0.dp
-    val animatedBlur by animateDpAsState(
-        targetValue = targetBlur,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "libraryBackdropBlur"
-    )
-    val backgroundBlurModifier = if (Build.VERSION.SDK_INT >= 31 && animatedBlur > 0.5.dp) {
-        Modifier.blur(animatedBlur)
+    val backgroundBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOpenInLibrary) {
+        Modifier.blur(10.dp)
     } else {
         Modifier
     }
@@ -1442,13 +1436,18 @@ fun LibraryScreen(
                                 }
 
                                 Spacer(modifier = Modifier.height(10.dp))
+                                val shelfBookCounts = remember(books, shelves) {
+                                    shelves.associate { shelfItem ->
+                                        shelfItem.name to books.count { shelfMatchesFilter(it.shelf, shelfItem.name) }
+                                    }
+                                }
                                 Column(
                                     modifier = Modifier.heightIn(max = 200.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     shelves.forEach { shelfItem ->
                                         val displayLabel = strings.localizeShelfName(shelfItem.name)
-                                        val bookCountInShelf = books.count { shelfMatchesFilter(it.shelf, shelfItem.name) }
+                                        val bookCountInShelf = shelfBookCounts[shelfItem.name] ?: 0
                                         val canDelete = shelves.size > 1
                                         val isConfirming = shelfPendingDelete == shelfItem.name
 

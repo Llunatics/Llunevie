@@ -348,6 +348,7 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
 ) {
     if (!isSpread) return
     val palette = LocalLluneviePalette.current
+    val strings = com.llunaticsys.llunevie.ui.theme.getLlunevieStrings(prefs.lang)
     var scrubPage by remember(metrics.currentGlobalPage) {
         mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
     }
@@ -398,7 +399,8 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.TOC_LIST,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(15.dp),
+                                contentDescription = if (strings.isId) "Daftar Isi" else "Table of contents"
                             )
                         }
                     }
@@ -785,7 +787,8 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                                 type = PrototypeIconType.TRASH_CAN,
                                 tint = palette.textMain,
                                 modifier = Modifier.size(15.dp),
-                                strokeWidthDp = 1.8f
+                                strokeWidthDp = 1.8f,
+                                contentDescription = if (strings.isId) "Hapus penanda" else "Delete bookmark"
                             )
                         }
                     }
@@ -1046,7 +1049,7 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                             onShowInlineNoteInputChange(!showInlineNoteInput)
                         },
                         shape = RoundedCornerShape(12.dp),
-                        color = if (showInlineNoteInput) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface,
+                        color = if (showInlineNoteInput) palette.accentDark else palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
                         modifier = Modifier
                             .weight(1f)
@@ -1059,13 +1062,14 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                         ) {
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.EDIT_PEN,
-                                tint = if (showInlineNoteInput && !palette.isGlass) palette.bgApp else palette.textMain,
-                                modifier = Modifier.size(14.dp)
+                                tint = if (showInlineNoteInput) palette.bgApp else palette.textMain,
+                                modifier = Modifier.size(14.dp),
+                                contentDescription = strings.hlNote
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = strings.hlNote,
-                                color = if (showInlineNoteInput && !palette.isGlass) palette.bgApp else palette.textMain,
+                                color = if (showInlineNoteInput) palette.bgApp else palette.textMain,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1
@@ -1094,7 +1098,8 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.BOOKMARK_OUTLINE,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(14.dp),
+                                contentDescription = strings.hlCopy
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -1136,7 +1141,8 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.TOC_LIST,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(14.dp),
+                                contentDescription = strings.hlInBook
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -1171,7 +1177,8 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.SEARCH,
                                 tint = palette.textMain,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(14.dp),
+                                contentDescription = strings.hlFind
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -1204,7 +1211,7 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                             }
                         },
                         shape = RoundedCornerShape(12.dp),
-                        color = if (showInlineTranslation) (if (palette.isGlass) palette.pillActiveBg else palette.accentDark) else palette.bgSurface,
+                        color = if (showInlineTranslation) palette.accentDark else palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
                         modifier = Modifier
                             .weight(1f)
@@ -1217,13 +1224,14 @@ internal fun BoxScope.ReaderHighlightNotePopover(
                         ) {
                             PrototypeSvgIcon(
                                 type = PrototypeIconType.TRANSLATE,
-                                tint = if (showInlineTranslation && !palette.isGlass) palette.bgApp else palette.textMain,
-                                modifier = Modifier.size(14.dp)
+                                tint = if (showInlineTranslation) palette.bgApp else palette.textMain,
+                                modifier = Modifier.size(14.dp),
+                                contentDescription = strings.hlTranslate
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = strings.hlTranslate,
-                                color = if (showInlineTranslation && !palette.isGlass) palette.bgApp else palette.textMain,
+                                color = if (showInlineTranslation) palette.bgApp else palette.textMain,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1

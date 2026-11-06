@@ -148,10 +148,11 @@ class MainActivity : ComponentActivity() {
             val prefs by viewModel.preferences.collectAsState()
             val books by viewModel.books.collectAsState()
             val shelves by viewModel.shelves.collectAsState()
-            val dailyLogs by viewModel.dailyLogs.collectAsState()
-            val allHighlights by viewModel.allHighlights.collectAsState()
-            val allBookmarks by viewModel.allBookmarks.collectAsState()
-            val uiState by viewModel.uiState.collectAsState()
+                    val dailyLogs by viewModel.dailyLogs.collectAsState()
+                    val allHighlights by viewModel.allHighlights.collectAsState()
+                    val activeBookHighlights by viewModel.activeBookHighlights.collectAsState()
+                    val activeBookBookmarks by viewModel.activeBookBookmarks.collectAsState()
+                    val uiState by viewModel.uiState.collectAsState()
             val strings = getLlunevieStrings(prefs.lang)
 
             val openFileLauncher = rememberLauncherForActivityResult(
@@ -258,7 +259,8 @@ class MainActivity : ComponentActivity() {
                                 shelves = shelves,
                                 dailyLogs = dailyLogs,
                                 allHighlights = allHighlights,
-                                allBookmarks = allBookmarks,
+                                activeBookHighlights = activeBookHighlights,
+                                activeBookBookmarks = activeBookBookmarks,
                                 uiState = uiState,
                                 strings = strings,
                                 onPickLocalFile = {
@@ -341,7 +343,8 @@ private fun LlunevieMainContainer(
     shelves: List<com.llunaticsys.llunevie.data.local.ShelfEntity>,
     dailyLogs: List<com.llunaticsys.llunevie.data.local.DailyReadingLogEntity>,
     allHighlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity>,
-    allBookmarks: List<PageBookmarkEntity>,
+    activeBookHighlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity>,
+    activeBookBookmarks: List<PageBookmarkEntity>,
     uiState: LlunevieUiState,
     strings: com.llunaticsys.llunevie.ui.theme.LlunevieStrings,
     onPickLocalFile: () -> Unit,
@@ -355,14 +358,8 @@ private fun LlunevieMainContainer(
         uiState.pendingCandidateForShelf != null ||
         uiState.selectedCatalogBookDetail != null
 
-    val targetBlur = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) 10.dp else 0.dp
-    val animatedBlur by animateDpAsState(
-        targetValue = targetBlur,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "screenBackdropBlur"
-    )
-    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && animatedBlur > 0.5.dp) {
-        Modifier.blur(animatedBlur)
+    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) {
+        Modifier.blur(10.dp)
     } else {
         Modifier
     }
@@ -497,12 +494,8 @@ private fun LlunevieMainContainer(
                         books.find { it.id == uiState.activeBookId } ?: books.firstOrNull()
                     }
                     if (activeBook != null) {
-                        val bookHighlights = remember(allHighlights, activeBook.id) {
-                            allHighlights.filter { it.bookId == activeBook.id }
-                        }
-                        val bookBookmarks = remember(allBookmarks, activeBook.id) {
-                            allBookmarks.filter { it.bookId == activeBook.id }
-                        }
+                        val bookHighlights = activeBookHighlights
+                        val bookBookmarks = activeBookBookmarks
                         val metrics = remember(uiState.activeBookChapters, uiState.activeChapterIndex, uiState.activePageIndex, prefs.readingFlowMode) {
                             viewModel.computeGlobalPageMetrics(
                                 uiState.activeBookChapters,

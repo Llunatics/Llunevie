@@ -581,7 +581,8 @@ internal fun BoxScope.ReaderTopChrome(
                                         PrototypeSvgIcon(
                                             type = PrototypeIconType.CHECK,
                                             tint = palette.textMain,
-                                            modifier = Modifier.size(13.dp)
+                                            modifier = Modifier.size(13.dp),
+                                            contentDescription = if (strings.isId) "Terpilih" else "Selected"
                                         )
                                     }
                                 }

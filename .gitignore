@@ -10,3 +10,5 @@
 .cxx
 *.apk
 .kotlin/
+keystore.properties
+/archive/
