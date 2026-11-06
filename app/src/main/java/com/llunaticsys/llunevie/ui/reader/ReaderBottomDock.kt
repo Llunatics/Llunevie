@@ -579,7 +579,9 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
                                     isVerticalDragging = false
                                     val totPages = currentTotalPages
                                     val targetZero = (verticalDragFraction * (totPages - 1)).roundToInt().coerceIn(0, (totPages - 1).coerceAtLeast(0))
-                                    val leftZero = if (isSpread) (targetZero / 2) * 2 else targetZero
+                                    val isBilingualSpread = isSpread && uiState.isTranslationActive &&
+                                        uiState.translationMode.equals("bilingual", ignoreCase = true)
+                                    val leftZero = if (isSpread && !isBilingualSpread) (targetZero / 2) * 2 else targetZero
                                     if (leftZero != currentDisplayPageIndex) {
                                         onDisplayPageIndexChange(leftZero)
                                         viewModel?.jumpToGlobalPage(leftZero)

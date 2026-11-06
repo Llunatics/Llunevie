@@ -19,6 +19,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -141,6 +142,22 @@ internal fun buildTranslatedPageRaw(
                 val rep = translatedParagraphs.getOrNull(tIdx) ?: para
                 tIdx++
                 rep
+            }
+        }
+    } else if (displayMode == "bilingual") {
+        var tIdx = 0
+        return rawParas.joinToString("\n\n") { para ->
+            val trimmed = para.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("[ILLUST:") || trimmed.startsWith("[PDF_PAGE:")) {
+                para
+            } else {
+                val rep = translatedParagraphs.getOrNull(tIdx)?.trim().orEmpty()
+                tIdx++
+                if (rep.isNotBlank() && rep != trimmed) {
+                    "$trimmed\n\n$rep"
+                } else {
+                    trimmed
+                }
             }
         }
     }
@@ -741,12 +758,22 @@ internal fun renderTwoPageSpreadSnapshot(
             )
             drawText(rhLayout, topLeft = Offset(halfW + colPadHoriz, 6f + colPadVert * 0.5f))
         }
-        val rightPageNum = textMeasurer.measure(
-            text = AnnotatedString("${rightPageIndex + 1}"),
-            style = headerStyle,
-            constraints = Constraints(maxWidth = colInnerW)
-        )
-        drawText(rightPageNum, topLeft = Offset(size.width - colPadHoriz - rightPageNum.size.width, size.height - footerH))
+        if (rightPageIndex == leftPageIndex || rightText.isNotBlank() || rightPdfBitmap != null || rightHeader.isNotBlank()) {
+            val rightPageNum = textMeasurer.measure(
+                text = AnnotatedString("${rightPageIndex + 1}"),
+                style = headerStyle,
+                constraints = Constraints(maxWidth = colInnerW)
+            )
+            drawText(rightPageNum, topLeft = Offset(size.width - colPadHoriz - rightPageNum.size.width, size.height - footerH))
+        }
+
+        fun extractStandaloneIllustPath(text: String): String? {
+            val paras = text.split("\n\n").map { it.trim() }.filter { it.isNotEmpty() }
+            val illustPara = paras.firstOrNull { it.startsWith("[ILLUST:") } ?: return null
+            val nonIllust = paras.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
+            if (nonIllust.isNotEmpty()) return null
+            return illustPara.removePrefix("[ILLUST:").substringBefore("|").substringBefore("]").trim().takeIf { it.isNotBlank() }
+        }
 
         fun buildSpreadColumnAnnotated(
             text: String,
@@ -797,6 +824,52 @@ internal fun renderTwoPageSpreadSnapshot(
             }
         }
 
+        fun measureFittedSpreadColumn(text: String): TextLayoutResult {
+            val baseFontSize = pageTextStyle.fontSize.value
+            val baseLineHeight = pageTextStyle.lineHeight.value
+            val constraints = Constraints(maxWidth = colInnerW)
+
+            fun measureAt(scale: Float): TextLayoutResult {
+                val style = pageTextStyle.copy(
+                    fontSize = (baseFontSize * scale).sp,
+                    lineHeight = (baseLineHeight * scale).sp
+                )
+                val annotated = buildSpreadColumnAnnotated(text, baseFontSize * scale)
+                return textMeasurer.measure(
+                    text = annotated,
+                    style = style,
+                    constraints = constraints
+                )
+            }
+
+            // Fast path at 1.0f (same machinery as computeOnePageFitScale)
+            val layoutAtOne = measureAt(1.0f)
+            if (layoutAtOne.size.height <= colInnerH) {
+                return layoutAtOne
+            }
+
+            val minScale = 0.36f
+            var low = minScale
+            var high = 1.0f
+            var bestLayout: TextLayoutResult? = null
+            repeat(6) {
+                val mid = (low + high) * 0.5f
+                val candidate = measureAt(mid)
+                if (candidate.size.height <= colInnerH) {
+                    bestLayout = candidate
+                    low = mid
+                } else {
+                    high = mid
+                }
+            }
+            return bestLayout ?: measureAt(minScale)
+        }
+
+        val leftIllustPath = if (leftPdfBitmap == null) extractStandaloneIllustPath(leftText) else null
+        val leftIllustBmp = leftIllustPath?.let { path ->
+            if (File(path).exists()) EpubNativeParser.decodeFullResImage(path, maxDimPx = 1080) else null
+        }
+
         // Left Page Content
         if (leftPdfBitmap != null) {
             val scale = minOf(halfW / leftPdfBitmap.width.toFloat(), size.height / leftPdfBitmap.height.toFloat())
@@ -822,30 +895,19 @@ internal fun renderTwoPageSpreadSnapshot(
                     dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
                 )
             }
-        } else if (leftText.isNotBlank()) {
-            val baseFontSize = pageTextStyle.fontSize.value
-            val baseLineHeight = pageTextStyle.lineHeight.value
-            var fontScale = 1.0f
-            var effectiveLeftStyle = pageTextStyle
-            var leftAnnotated = buildSpreadColumnAnnotated(leftText, baseFontSize * fontScale)
-            var leftLayout = textMeasurer.measure(
-                text = leftAnnotated,
-                style = effectiveLeftStyle,
-                constraints = Constraints(maxWidth = colInnerW)
+        } else if (leftIllustBmp != null) {
+            val scale = minOf(colInnerW.toFloat() / leftIllustBmp.width.toFloat(), colInnerH / leftIllustBmp.height.toFloat())
+            val dstW = (leftIllustBmp.width * scale).roundToInt().coerceAtLeast(1)
+            val dstH = (leftIllustBmp.height * scale).roundToInt().coerceAtLeast(1)
+            val dstX = (colPadHoriz + (colInnerW - dstW) / 2f).roundToInt()
+            val dstY = (textTop + (colInnerH - dstH) / 2f).roundToInt()
+            drawImage(
+                image = leftIllustBmp.asImageBitmap(),
+                dstOffset = IntOffset(dstX, dstY),
+                dstSize = IntSize(dstW, dstH)
             )
-            while (leftLayout.size.height > colInnerH && fontScale > 0.48f) {
-                fontScale *= 0.94f
-                effectiveLeftStyle = pageTextStyle.copy(
-                    fontSize = (baseFontSize * fontScale).sp,
-                    lineHeight = (baseLineHeight * fontScale).sp
-                )
-                leftAnnotated = buildSpreadColumnAnnotated(leftText, baseFontSize * fontScale)
-                leftLayout = textMeasurer.measure(
-                    text = leftAnnotated,
-                    style = effectiveLeftStyle,
-                    constraints = Constraints(maxWidth = colInnerW)
-                )
-            }
+        } else if (leftText.isNotBlank()) {
+            val leftLayout = measureFittedSpreadColumn(leftText)
             clipRect(colPadHoriz, textTop, colPadHoriz + colInnerW, clipBottom) {
                 drawText(leftLayout, topLeft = Offset(colPadHoriz, textTop))
                 if (prefs?.fontWeight == 500) {
@@ -857,6 +919,11 @@ internal fun renderTwoPageSpreadSnapshot(
                     )
                 }
             }
+        }
+
+        val rightIllustPath = if (rightPdfBitmap == null) extractStandaloneIllustPath(rightText) else null
+        val rightIllustBmp = rightIllustPath?.let { path ->
+            if (File(path).exists()) EpubNativeParser.decodeFullResImage(path, maxDimPx = 1080) else null
         }
 
         // Right Page Content
@@ -884,30 +951,19 @@ internal fun renderTwoPageSpreadSnapshot(
                     dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
                 )
             }
-        } else if (rightText.isNotBlank()) {
-            val baseFontSize = pageTextStyle.fontSize.value
-            val baseLineHeight = pageTextStyle.lineHeight.value
-            var fontScale = 1.0f
-            var effectiveRightStyle = pageTextStyle
-            var rightAnnotated = buildSpreadColumnAnnotated(rightText, baseFontSize * fontScale)
-            var rightLayout = textMeasurer.measure(
-                text = rightAnnotated,
-                style = effectiveRightStyle,
-                constraints = Constraints(maxWidth = colInnerW)
+        } else if (rightIllustBmp != null) {
+            val scale = minOf(colInnerW.toFloat() / rightIllustBmp.width.toFloat(), colInnerH / rightIllustBmp.height.toFloat())
+            val dstW = (rightIllustBmp.width * scale).roundToInt().coerceAtLeast(1)
+            val dstH = (rightIllustBmp.height * scale).roundToInt().coerceAtLeast(1)
+            val dstX = (halfW + colPadHoriz + (colInnerW - dstW) / 2f).roundToInt()
+            val dstY = (textTop + (colInnerH - dstH) / 2f).roundToInt()
+            drawImage(
+                image = rightIllustBmp.asImageBitmap(),
+                dstOffset = IntOffset(dstX, dstY),
+                dstSize = IntSize(dstW, dstH)
             )
-            while (rightLayout.size.height > colInnerH && fontScale > 0.48f) {
-                fontScale *= 0.94f
-                effectiveRightStyle = pageTextStyle.copy(
-                    fontSize = (baseFontSize * fontScale).sp,
-                    lineHeight = (baseLineHeight * fontScale).sp
-                )
-                rightAnnotated = buildSpreadColumnAnnotated(rightText, baseFontSize * fontScale)
-                rightLayout = textMeasurer.measure(
-                    text = rightAnnotated,
-                    style = effectiveRightStyle,
-                    constraints = Constraints(maxWidth = colInnerW)
-                )
-            }
+        } else if (rightText.isNotBlank()) {
+            val rightLayout = measureFittedSpreadColumn(rightText)
             clipRect(halfW + colPadHoriz, textTop, halfW + colPadHoriz + colInnerW, clipBottom) {
                 drawText(rightLayout, topLeft = Offset(halfW + colPadHoriz, textTop))
                 if (prefs?.fontWeight == 500) {

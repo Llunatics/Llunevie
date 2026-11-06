@@ -456,7 +456,9 @@ internal fun BoxScope.ReaderTopChrome(
                 }
 
                 // Right: 34.dp circular Bookmark button
-                val isCurrentPageBookmarked = if (isSpread) {
+                val isBilingualSpread = isSpread && (isPageTranslationActive || uiState.isTranslationActive) &&
+                    uiState.translationMode.equals("bilingual", ignoreCase = true)
+                val isCurrentPageBookmarked = if (isSpread && !isBilingualSpread) {
                     val sStart = (displayPageIndex / 2) * 2
                     bookBookmarks.any { it.pageNumber == sStart + 1 || it.pageNumber == sStart + 2 }
                 } else {

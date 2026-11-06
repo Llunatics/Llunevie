@@ -379,8 +379,8 @@ internal fun InteractiveTextPageContent(
         else -> 18.dp
     }
 
-    val topPadDp = if (isBilingual) 56.dp else if (!scrollable && topClearanceDp > 0.dp) topClearanceDp else verticalMarginDp
-    val bottomPadDp = if (isBilingual) 68.dp else if (!scrollable && bottomClearanceDp > 0.dp) bottomClearanceDp else verticalMarginDp + 4.dp
+    val topPadDp = if (topClearanceDp > 0.dp) maxOf(topClearanceDp, verticalMarginDp) else verticalMarginDp
+    val bottomPadDp = if (bottomClearanceDp > 0.dp) maxOf(bottomClearanceDp, verticalMarginDp + 4.dp) else verticalMarginDp + 4.dp
 
     val padX = with(density) { horizontalMarginDp.toPx() }
     val padTop = with(density) { topPadDp.toPx() }

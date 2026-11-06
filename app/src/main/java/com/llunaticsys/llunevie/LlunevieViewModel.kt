@@ -371,26 +371,37 @@ class LlunevieViewModel(
             val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
             val globalPageIdx = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
             val mode = st.translationMode
+            val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
+            val isBilingualSpread = isSpread && mode.equals("bilingual", ignoreCase = true)
+            val targetPages = if (isSpread && !isBilingualSpread) {
+                val sStart = (globalPageIdx / 2) * 2
+                listOf(sStart, sStart + 1).filter { it in 0 until metrics.totalBookPages }
+            } else {
+                listOf(globalPageIdx)
+            }
 
             if (isPdf) {
                 val path = book.localFilePath ?: return@launch
-                loadOrTranslatePdfPageBitmap(
-                    bookId = bookId,
-                    filePath = path,
-                    pageIndex = globalPageIdx,
-                    targetLang = normLang,
-                    mode = mode
-                )
-            } else {
-                val curCh = chapters.getOrNull(st.activeChapterIndex)
-                val pageRaw = curCh?.pages?.getOrNull(st.activePageIndex).orEmpty()
-                if (pageRaw.isNotBlank()) {
-                    loadOrTranslatePageParagraphs(
+                for (pZero in targetPages) {
+                    loadOrTranslatePdfPageBitmap(
                         bookId = bookId,
-                        pageIndex = globalPageIdx,
-                        pageRaw = pageRaw,
-                        targetLang = normLang
+                        filePath = path,
+                        pageIndex = pZero,
+                        targetLang = normLang,
+                        mode = if (isBilingualSpread) "replace" else mode
                     )
+                }
+            } else {
+                for (pZero in targetPages) {
+                    val pageRaw = getPageContentAtGlobalZeroIndex(chapters, pZero)?.third.orEmpty()
+                    if (pageRaw.isNotBlank()) {
+                        loadOrTranslatePageParagraphs(
+                            bookId = bookId,
+                            pageIndex = pZero,
+                            pageRaw = pageRaw,
+                            targetLang = normLang
+                        )
+                    }
                 }
             }
         }
@@ -2078,11 +2089,12 @@ class LlunevieViewModel(
         val chapters = st.activeBookChapters
         if (chapters.isEmpty()) return
         val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
+        val isBilingualSpread = isSpread && st.isTranslationActive && st.translationMode.equals("bilingual", ignoreCase = true)
         val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
         val currentZero = metrics.currentGlobalPage - 1
-        val spreadStart = if (isSpread) (currentZero / 2) * 2 else currentZero
-        val maxSpread = if (isSpread) (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0) else (metrics.totalBookPages - 1).coerceAtLeast(0)
-        val targetZero = if (isSpread) {
+        val spreadStart = if (isSpread && !isBilingualSpread) (currentZero / 2) * 2 else currentZero
+        val maxSpread = if (isSpread && !isBilingualSpread) (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0) else (metrics.totalBookPages - 1).coerceAtLeast(0)
+        val targetZero = if (isSpread && !isBilingualSpread) {
             if (deltaSteps > 0) (spreadStart + 2 * deltaSteps).coerceAtMost(maxSpread)
             else (spreadStart + 2 * deltaSteps).coerceAtLeast(0)
         } else {

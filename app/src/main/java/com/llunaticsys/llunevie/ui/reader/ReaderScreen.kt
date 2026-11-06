@@ -33,11 +33,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -371,8 +373,6 @@ fun ReaderScreen(
 
     LaunchedEffect(
         uiState.translationTargetLang,
-        uiState.translationMode,
-        uiState.isTranslationActive,
         prefs.translatorEngine,
         prefs.aiModelName,
         prefs.aiSystemPrompt
@@ -395,8 +395,12 @@ fun ReaderScreen(
 
         val curTargetLang = uiState.translationTargetLang
         val curMode = uiState.translationMode
+        val isBilingualSpreadNow = isSpread && curMode.equals("bilingual", ignoreCase = true)
+        val effPdfMode = if (isBilingualSpreadNow) "replace" else curMode
 
-        val pagesToTranslate = if (isSpread) {
+        val pagesToTranslate = if (isBilingualSpreadNow) {
+            listOf(displayPageIndex)
+        } else if (isSpread) {
             val sStart = (displayPageIndex / 2) * 2
             listOf(sStart, sStart + 1)
         } else {
@@ -415,7 +419,7 @@ fun ReaderScreen(
                             filePath = path,
                             pageIndex = pZero,
                             targetLang = curTargetLang,
-                            mode = curMode,
+                            mode = effPdfMode,
                             targetWidthPx = targetW
                         )
                         val blocks = pdfPageBlocksMap[pZero] ?: translationRepo.extractPdfPageParagraphBlocks(context, path, pZero, book.title)
@@ -425,8 +429,10 @@ fun ReaderScreen(
                     }
                 }
 
-                // Pre-extract & pre-translate displayPageIndex + 1 and displayPageIndex + 2 in the background
-                val nextPages = if (isSpread) {
+                // Pre-extract & pre-translate upcoming pages in the background
+                val nextPages = if (isBilingualSpreadNow) {
+                    listOf(displayPageIndex + 1, displayPageIndex + 2)
+                } else if (isSpread) {
                     val sStart = (displayPageIndex / 2) * 2
                     listOf(sStart + 2, sStart + 3, sStart + 4, sStart + 5)
                 } else {
@@ -440,7 +446,7 @@ fun ReaderScreen(
                             filePath = path,
                             pageIndex = nextP,
                             targetLang = curTargetLang,
-                            mode = curMode,
+                            mode = effPdfMode,
                             targetWidthPx = targetW
                         )
                         pageTranslationMap = pageTranslationMap + (nextP to emptyList())
@@ -474,7 +480,9 @@ fun ReaderScreen(
             }
 
             // Pre-fetch next 2 pages in background
-            val nextPages = if (isSpread) {
+            val nextPages = if (isBilingualSpreadNow) {
+                listOf(displayPageIndex + 1, displayPageIndex + 2)
+            } else if (isSpread) {
                 val sStart = (displayPageIndex / 2) * 2
                 listOf(sStart + 2, sStart + 3)
             } else {
@@ -536,20 +544,33 @@ fun ReaderScreen(
         ) {
             val stageW = with(density) { maxWidth.roundToPx() }.coerceIn(320, 1920)
             val stageH = with(density) { maxHeight.roundToPx() }.coerceIn(360, 2400)
-            val spreadW = (stageH * 1.414f).toInt().coerceAtMost(stageW)
 
             val currentStatusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            val currentCutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+            val effectiveTopSystemInset = maxOf(currentStatusBarTop, currentCutoutTop)
             val currentNavBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             var stableStatusBarTopDp by remember { mutableStateOf(24.dp) }
             var stableNavBarBottomDp by remember { mutableStateOf(16.dp) }
-            if (currentStatusBarTop > 0.dp && currentStatusBarTop > stableStatusBarTopDp) {
-                stableStatusBarTopDp = currentStatusBarTop
+            if (effectiveTopSystemInset > 0.dp && effectiveTopSystemInset > stableStatusBarTopDp) {
+                stableStatusBarTopDp = effectiveTopSystemInset
             }
             if (currentNavBarBottom > 0.dp && currentNavBarBottom > stableNavBarBottomDp) {
                 stableNavBarBottomDp = currentNavBarBottom
             }
-            val topClearanceDp = stableStatusBarTopDp + 64.dp
+            val isTranslationQuickBarActive = isPageTranslationActive || uiState.isTranslationActive
+            val topClearanceDp = stableStatusBarTopDp + if (isTranslationQuickBarActive) 68.dp else 64.dp
             val bottomClearanceDp = stableNavBarBottomDp + 76.dp
+
+            val spreadTopPadDp = if (isSpread) {
+                effectiveTopSystemInset + if (showReaderChrome || isTranslationQuickBarActive) 52.dp else 8.dp
+            } else 0.dp
+            val spreadBottomPadDp = if (isSpread) 8.dp else 0.dp
+            val spreadStageH = if (isSpread) {
+                (stageH - with(density) { (spreadTopPadDp + spreadBottomPadDp).roundToPx() }).coerceAtLeast(240)
+            } else stageH
+            val spreadW = (spreadStageH * 1.414f).toInt().coerceAtMost(
+                (stageW - with(density) { (if (isSpread) 32.dp else 0.dp).roundToPx() }).coerceAtLeast(240)
+            )
 
             val horizontalMarginDp = when (prefs.pageMargin) {
                 0 -> 12.dp
@@ -569,27 +590,31 @@ fun ReaderScreen(
                         nonFlipZoomScale = 1f
                         nonFlipZoomOffset = Offset.Zero
                     }
-                    val spreadStart = if (isSpread) (curZero / 2) * 2 else curZero
+                    val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
+                    val transTargetLang = uiState.translationTargetLang
+                    val transMode = uiState.translationMode
+                    val transRev = uiState.translationRevision
+                    val isBilingualSpread = isSpread && isTrans && transMode.equals("bilingual", ignoreCase = true)
+                    val spreadStep = if (isBilingualSpread) 1 else if (isSpread) 2 else 1
+
+                    val spreadStart = if (isBilingualSpread) curZero else if (isSpread) (curZero / 2) * 2 else curZero
                     val curLeftIdx = spreadStart
-                    val curRightIdx = spreadStart + 1
-                    val nextLeftIdx = if (isSpread) spreadStart + 2 else curZero + 1
-                    val nextRightIdx = if (isSpread) spreadStart + 3 else curZero + 2
-                    val prevLeftIdx = if (isSpread) spreadStart - 2 else curZero - 1
-                    val prevRightIdx = if (isSpread) spreadStart - 1 else curZero
+                    val curRightIdx = if (isBilingualSpread) spreadStart else spreadStart + 1
+                    val nextLeftIdx = if (isSpread) spreadStart + spreadStep else curZero + 1
+                    val nextRightIdx = if (isBilingualSpread) nextLeftIdx else if (isSpread) spreadStart + spreadStep + 1 else curZero + 2
+                    val prevLeftIdx = if (isSpread) spreadStart - spreadStep else curZero - 1
+                    val prevRightIdx = if (isBilingualSpread) prevLeftIdx else if (isSpread) spreadStart - spreadStep + 1 else curZero
 
                     val needStagePdfBitmaps = isPdfBook && (
                         (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) ||
                             isSpread
                         )
-
-                    val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
-                    val transTargetLang = uiState.translationTargetLang
-                    val transMode = uiState.translationMode
-                    val transRev = uiState.translationRevision
+                    val leftPdfShouldTranslate = isTrans && !isBilingualSpread
+                    val rightPdfTransMode = if (isBilingualSpread) "replace" else transMode
 
                     val curLeftPdfBmp by produceState<Bitmap?>(
                         initialValue = if (needStagePdfBitmaps) {
-                            if (isTrans) {
+                            if (leftPdfShouldTranslate) {
                                 viewModel?.getCachedTranslatedPdfBitmap(book.id, curLeftIdx, transTargetLang, transMode)
                                     ?: viewModel?.getCachedPdfBitmap(book.id, curLeftIdx, book.localFilePath)
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
@@ -599,10 +624,10 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, curLeftIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
                     ) {
                         value = if (needStagePdfBitmaps) {
-                            if (isTrans && viewModel != null) {
+                            if (leftPdfShouldTranslate && viewModel != null) {
                                 viewModel.loadOrTranslatePdfPageBitmap(
                                     bookId = book.id,
                                     filePath = book.localFilePath!!,
@@ -619,7 +644,7 @@ fun ReaderScreen(
                     val curRightPdfBmp by produceState<Bitmap?>(
                         initialValue = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
                             if (isTrans) {
-                                viewModel?.getCachedTranslatedPdfBitmap(book.id, curRightIdx, transTargetLang, transMode)
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, curRightIdx, transTargetLang, rightPdfTransMode)
                                     ?: viewModel?.getCachedPdfBitmap(book.id, curRightIdx, book.localFilePath)
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, curRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
                             } else {
@@ -628,7 +653,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, isSpread, curRightIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
                     ) {
                         value = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
                             if (isTrans && viewModel != null) {
@@ -637,7 +662,7 @@ fun ReaderScreen(
                                     filePath = book.localFilePath!!,
                                     pageIndex = curRightIdx,
                                     targetLang = transTargetLang,
-                                    mode = transMode,
+                                    mode = rightPdfTransMode,
                                     targetWidthPx = stageW / 2
                                 )
                             } else {
@@ -647,7 +672,7 @@ fun ReaderScreen(
                     }
                     val nextLeftPdfBmp by produceState<Bitmap?>(
                         initialValue = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
-                            if (isTrans) {
+                            if (leftPdfShouldTranslate) {
                                 viewModel?.getCachedTranslatedPdfBitmap(book.id, nextLeftIdx, transTargetLang, transMode)
                                     ?: viewModel?.getCachedPdfBitmap(book.id, nextLeftIdx, book.localFilePath)
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
@@ -657,10 +682,10 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, nextLeftIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
                     ) {
                         value = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
-                            if (isTrans && viewModel != null) {
+                            if (leftPdfShouldTranslate && viewModel != null) {
                                 viewModel.loadOrTranslatePdfPageBitmap(
                                     bookId = book.id,
                                     filePath = book.localFilePath!!,
@@ -677,7 +702,7 @@ fun ReaderScreen(
                     val nextRightPdfBmp by produceState<Bitmap?>(
                         initialValue = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
                             if (isTrans) {
-                                viewModel?.getCachedTranslatedPdfBitmap(book.id, nextRightIdx, transTargetLang, transMode)
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, nextRightIdx, transTargetLang, rightPdfTransMode)
                                     ?: viewModel?.getCachedPdfBitmap(book.id, nextRightIdx, book.localFilePath)
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, nextRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
                             } else {
@@ -686,7 +711,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, isSpread, nextRightIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
                     ) {
                         value = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
                             if (isTrans && viewModel != null) {
@@ -695,7 +720,7 @@ fun ReaderScreen(
                                     filePath = book.localFilePath!!,
                                     pageIndex = nextRightIdx,
                                     targetLang = transTargetLang,
-                                    mode = transMode,
+                                    mode = rightPdfTransMode,
                                     targetWidthPx = stageW / 2
                                 )
                             } else {
@@ -705,7 +730,7 @@ fun ReaderScreen(
                     }
                     val prevLeftPdfBmp by produceState<Bitmap?>(
                         initialValue = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
-                            if (isTrans) {
+                            if (leftPdfShouldTranslate) {
                                 viewModel?.getCachedTranslatedPdfBitmap(book.id, prevLeftIdx, transTargetLang, transMode)
                                     ?: viewModel?.getCachedPdfBitmap(book.id, prevLeftIdx, book.localFilePath)
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevLeftIdx, ((stageW / 120) * 120).coerceAtLeast(360))
@@ -715,10 +740,10 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, prevLeftIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
                     ) {
                         value = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
-                            if (isTrans && viewModel != null) {
+                            if (leftPdfShouldTranslate && viewModel != null) {
                                 viewModel.loadOrTranslatePdfPageBitmap(
                                     bookId = book.id,
                                     filePath = book.localFilePath!!,
@@ -735,7 +760,7 @@ fun ReaderScreen(
                     val prevRightPdfBmp by produceState<Bitmap?>(
                         initialValue = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
                             if (isTrans) {
-                                viewModel?.getCachedTranslatedPdfBitmap(book.id, prevRightIdx, transTargetLang, transMode)
+                                viewModel?.getCachedTranslatedPdfBitmap(book.id, prevRightIdx, transTargetLang, rightPdfTransMode)
                                     ?: viewModel?.getCachedPdfBitmap(book.id, prevRightIdx, book.localFilePath)
                                     ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath!!, prevRightIdx, ((stageW / 240) * 120).coerceAtLeast(360))
                             } else {
@@ -744,7 +769,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, isSpread, prevRightIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev
+                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
                     ) {
                         value = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
                             if (isTrans && viewModel != null) {
@@ -753,7 +778,7 @@ fun ReaderScreen(
                                     filePath = book.localFilePath!!,
                                     pageIndex = prevRightIdx,
                                     targetLang = transTargetLang,
-                                    mode = transMode,
+                                    mode = rightPdfTransMode,
                                     targetWidthPx = stageW / 2
                                 )
                             } else {
@@ -762,12 +787,12 @@ fun ReaderScreen(
                         } else null
                     }
 
-                    val curLeftEffectivePdfBmp = getEffectivePdfPageBitmap(curLeftIdx, curLeftPdfBmp)
-                    val curRightEffectivePdfBmp = getEffectivePdfPageBitmap(curRightIdx, curRightPdfBmp)
-                    val nextLeftEffectivePdfBmp = getEffectivePdfPageBitmap(nextLeftIdx, nextLeftPdfBmp)
-                    val nextRightEffectivePdfBmp = getEffectivePdfPageBitmap(nextRightIdx, nextRightPdfBmp)
-                    val prevLeftEffectivePdfBmp = getEffectivePdfPageBitmap(prevLeftIdx, prevLeftPdfBmp)
-                    val prevRightEffectivePdfBmp = getEffectivePdfPageBitmap(prevRightIdx, prevRightPdfBmp)
+                    val curLeftEffectivePdfBmp = if (isBilingualSpread) curLeftPdfBmp else getEffectivePdfPageBitmap(curLeftIdx, curLeftPdfBmp)
+                    val curRightEffectivePdfBmp = curRightPdfBmp ?: getEffectivePdfPageBitmap(curRightIdx, curRightPdfBmp)
+                    val nextLeftEffectivePdfBmp = if (isBilingualSpread) nextLeftPdfBmp else getEffectivePdfPageBitmap(nextLeftIdx, nextLeftPdfBmp)
+                    val nextRightEffectivePdfBmp = nextRightPdfBmp ?: getEffectivePdfPageBitmap(nextRightIdx, nextRightPdfBmp)
+                    val prevLeftEffectivePdfBmp = if (isBilingualSpread) prevLeftPdfBmp else getEffectivePdfPageBitmap(prevLeftIdx, prevLeftPdfBmp)
+                    val prevRightEffectivePdfBmp = prevRightPdfBmp ?: getEffectivePdfPageBitmap(prevRightIdx, prevRightPdfBmp)
 
                     val textMeasurer = rememberTextMeasurer()
                     val resolvedFontFamily = remember(prefs.fontFamily, prefs.fontWeight) {
@@ -804,10 +829,30 @@ fun ReaderScreen(
 
                     val isReplaceMode = (isPageTranslationActive || uiState.isTranslationActive) &&
                         uiState.translationMode.equals("replace", ignoreCase = true)
+                    val isBilingualMode = (isPageTranslationActive || uiState.isTranslationActive) &&
+                        uiState.translationMode.equals("bilingual", ignoreCase = true)
 
                     fun resolveEffectiveEpubText(pageZero: Int, fallbackRaw: String = ""): String {
                         val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
-                        if (isPdfBook || !isReplaceMode || raw.isBlank()) return raw
+                        if (isPdfBook || raw.isBlank()) return raw
+                        if (!isReplaceMode && (!isBilingualMode || isSpread)) return raw
+                        val cachedTrans = viewModel?.getCachedTranslatedParagraphs(
+                            book.id,
+                            pageZero,
+                            uiState.translationTargetLang,
+                            raw.hashCode()
+                        ) ?: pageTranslationMap[pageZero]
+                        val effMode = if (isReplaceMode) "replace" else "bilingual"
+                        return if (!cachedTrans.isNullOrEmpty()) {
+                            buildTranslatedPageRaw(raw, cachedTrans, effMode)
+                        } else {
+                            raw
+                        }
+                    }
+
+                    fun resolveTranslatedOnlyEpubText(pageZero: Int, fallbackRaw: String = ""): String {
+                        val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
+                        if (isPdfBook || raw.isBlank()) return ""
                         val cachedTrans = viewModel?.getCachedTranslatedParagraphs(
                             book.id,
                             pageZero,
@@ -817,25 +862,50 @@ fun ReaderScreen(
                         return if (!cachedTrans.isNullOrEmpty()) {
                             buildTranslatedPageRaw(raw, cachedTrans, "replace")
                         } else {
-                            raw
+                            ""
                         }
                     }
 
-                    fun buildEpubSnapshotKey(pageZero: Int, textHash: Int, spread: Boolean): String {
+                    fun resolveSpreadPairTexts(leftZero: Int, rightZero: Int, fallbackLeftRaw: String = ""): Pair<String, String> {
+                        val leftOrig = getPageAtGlobalZero(leftZero)?.third.orEmpty().ifBlank { fallbackLeftRaw }
+                        if (isPdfBook) {
+                            val rightOrig = if (rightZero < metrics.totalBookPages) getPageAtGlobalZero(rightZero)?.third.orEmpty() else ""
+                            return leftOrig to rightOrig
+                        }
+                        return when {
+                            isBilingualSpread -> {
+                                // Bilingual Spread: Left = Original of leftZero, Right = Translation of the EXACT SAME leftZero
+                                leftOrig to resolveTranslatedOnlyEpubText(leftZero, leftOrig)
+                            }
+                            isReplaceMode -> {
+                                val leftRep = resolveEffectiveEpubText(leftZero, leftOrig)
+                                val rightRep = if (rightZero < metrics.totalBookPages) resolveEffectiveEpubText(rightZero) else ""
+                                leftRep to rightRep
+                            }
+                            else -> {
+                                val rightOrig = if (rightZero < metrics.totalBookPages) getPageAtGlobalZero(rightZero)?.third.orEmpty() else ""
+                                leftOrig to rightOrig
+                            }
+                        }
+                    }
+
+                    fun buildEpubSnapshotKey(pageZero: Int, textHash: Int, spread: Boolean, rightZero: Int = pageZero): String {
                         val transActive = isPageTranslationActive || uiState.isTranslationActive
-                        val combinedHash = ((bookHighlights.hashCode() * 31 + textHash) * 31 +
+                        val modeTag = if (transActive) "${uiState.translationMode}:${uiState.translationTargetLang}" else "orig"
+                        val combinedHash = (((bookHighlights.hashCode() * 31 + textHash) * 31 +
                             (if (transActive) uiState.translationTargetLang.hashCode() else 0)) * 31 +
-                            (if (transActive) uiState.translationMode.hashCode() else 0)
+                            (if (transActive) uiState.translationMode.hashCode() else 0)) * 31 + rightZero
                         return buildSnapshotCacheKey(
                             bookId = book.id,
                             pageZero = pageZero,
                             widthPx = if (spread) spreadW else stageW,
-                            heightPx = stageH,
+                            heightPx = if (spread) spreadStageH else stageH,
                             prefs = prefs,
                             bgArgb = (if (spread) palette.bgCard else palette.bgApp).toArgb(),
                             textArgb = palette.textMain.toArgb(),
                             isSpread = spread,
-                            highlightsHash = combinedHash
+                            highlightsHash = combinedHash,
+                            translationSuffix = ":$modeTag:$rightZero"
                         )
                     }
 
@@ -864,9 +934,8 @@ fun ReaderScreen(
                                 ?: viewModel?.getCachedPdfBitmap(book.id, curZero, book.localFilePath))?.asImageBitmap()
                         } else if (!isPdfBook) {
                             if (isSpread) {
-                                val leftText = resolveEffectiveEpubText(spreadStart, if (spreadStart == curZero) currentPageRaw else "")
-                                val rightText = resolveEffectiveEpubText(spreadStart + 1)
-                                epubSnapshotCache.get(buildEpubSnapshotKey(spreadStart, leftText.hashCode() * 31 + rightText.hashCode(), true))
+                                val (leftText, rightText) = resolveSpreadPairTexts(curLeftIdx, curRightIdx, if (curLeftIdx == curZero) currentPageRaw else "")
+                                epubSnapshotCache.get(buildEpubSnapshotKey(curLeftIdx, leftText.hashCode() * 31 + rightText.hashCode(), true, curRightIdx))
                             } else {
                                 val curText = resolveEffectiveEpubText(curZero, currentPageRaw)
                                 epubSnapshotCache.get(buildEpubSnapshotKey(curZero, curText.hashCode(), false))
@@ -875,25 +944,26 @@ fun ReaderScreen(
 
                         val curBitmap by produceState<ImageBitmap?>(
                             initialValue = curBitmapInitial,
-                            curZero, isSpread, isPdfBook, currentPageRaw, curLeftEffectivePdfBmp, curRightEffectivePdfBmp,
-                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                            curZero, curLeftIdx, curRightIdx, isSpread, isBilingualSpread, isPdfBook, currentPageRaw,
+                            curLeftEffectivePdfBmp, curRightEffectivePdfBmp,
+                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
                             prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                            pageTranslationMap[curZero], peekOriginalPdfPage,
+                            pageTranslationMap[curZero], pageTranslationMap[curLeftIdx], pageTranslationMap[curRightIdx],
+                            peekOriginalPdfPage,
                             uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
                         ) {
                             if (isSpread) {
-                                val leftZero = spreadStart
-                                val rightZero = spreadStart + 1
+                                val leftZero = curLeftIdx
+                                val rightZero = curRightIdx
                                 val leftTriple = getPageAtGlobalZero(leftZero)
                                 val rightTriple = getPageAtGlobalZero(rightZero)
                                 val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
                                 val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
-                                val leftText = resolveEffectiveEpubText(leftZero, if (leftZero == curZero) currentPageRaw else "")
-                                val rightText = resolveEffectiveEpubText(rightZero)
-                                val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                                val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero, if (leftZero == curZero) currentPageRaw else "")
+                                val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
                                 val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
                                 if (cached != null) {
                                     value = cached
@@ -912,7 +982,7 @@ fun ReaderScreen(
                                             cacheKey = if (isPdfBook) null else cacheKey,
                                             textMeasurer = textMeasurer,
                                             widthPx = spreadW,
-                                            heightPx = stageH,
+                                            heightPx = spreadStageH,
                                             density = density,
                                             leftPageIndex = leftZero,
                                             rightPageIndex = rightZero,
@@ -967,8 +1037,8 @@ fun ReaderScreen(
                             }
                         }
 
-                        val nextSpreadStart = spreadStart + 2
-                        val nextTriple = remember(chapters, curZero, isSpread, spreadStart) {
+                        val nextSpreadStart = spreadStart + spreadStep
+                        val nextTriple = remember(chapters, curZero, isSpread, isBilingualSpread, spreadStart, nextSpreadStart) {
                             if (isSpread) {
                                 if (nextSpreadStart < metrics.totalBookPages) getPageAtGlobalZero(nextSpreadStart) else null
                             } else {
@@ -978,9 +1048,8 @@ fun ReaderScreen(
                         val nextBitmapInitial = if (!isPdfBook) {
                             if (isSpread) {
                                 if (nextSpreadStart < metrics.totalBookPages) {
-                                    val leftText = resolveEffectiveEpubText(nextSpreadStart)
-                                    val rightText = resolveEffectiveEpubText(nextSpreadStart + 1)
-                                    epubSnapshotCache.get(buildEpubSnapshotKey(nextSpreadStart, leftText.hashCode() * 31 + rightText.hashCode(), true))
+                                    val (leftText, rightText) = resolveSpreadPairTexts(nextLeftIdx, nextRightIdx)
+                                    epubSnapshotCache.get(buildEpubSnapshotKey(nextLeftIdx, leftText.hashCode() * 31 + rightText.hashCode(), true, nextRightIdx))
                                 } else null
                             } else if (nextTriple != null) {
                                 val nextPZero = curZero + 1
@@ -990,14 +1059,17 @@ fun ReaderScreen(
                         } else null
                         val nextBitmap by produceState<ImageBitmap?>(
                             initialValue = nextBitmapInitial,
-                            curZero, isSpread, isPdfBook, nextTriple, nextLeftEffectivePdfBmp, nextRightEffectivePdfBmp,
-                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                            curZero, nextLeftIdx, nextRightIdx, isSpread, isBilingualSpread, isPdfBook, nextTriple,
+                            nextLeftEffectivePdfBmp, nextRightEffectivePdfBmp,
+                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
                             prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
                             activeDraggingSliderKey == null,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                            pageTranslationMap[if (isSpread) nextSpreadStart else curZero + 1], peekOriginalPdfPage,
+                            pageTranslationMap[if (isSpread) nextLeftIdx else curZero + 1],
+                            pageTranslationMap[nextRightIdx],
+                            peekOriginalPdfPage,
                             uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
                         ) {
                             if (activeDraggingSliderKey != null) return@produceState
@@ -1005,15 +1077,14 @@ fun ReaderScreen(
                                 if (nextSpreadStart >= metrics.totalBookPages) {
                                     value = null
                                 } else {
-                                    val leftZero = nextSpreadStart
-                                    val rightZero = leftZero + 1
+                                    val leftZero = nextLeftIdx
+                                    val rightZero = nextRightIdx
                                     val leftTripleSpread = getPageAtGlobalZero(leftZero)
                                     val rightTripleSpread = getPageAtGlobalZero(rightZero)
                                     val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
                                     val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    val leftText = resolveEffectiveEpubText(leftZero)
-                                    val rightText = resolveEffectiveEpubText(rightZero)
-                                    val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                                    val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero)
+                                    val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
                                     val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
                                     if (cached != null) {
                                         value = cached
@@ -1032,7 +1103,7 @@ fun ReaderScreen(
                                                 cacheKey = if (isPdfBook) null else cacheKey,
                                                 textMeasurer = textMeasurer,
                                                 widthPx = spreadW,
-                                                heightPx = stageH,
+                                                heightPx = spreadStageH,
                                                 density = density,
                                                 leftPageIndex = leftZero,
                                                 rightPageIndex = rightZero,
@@ -1090,8 +1161,8 @@ fun ReaderScreen(
                             }
                         }
 
-                        val prevSpreadStart = spreadStart - 2
-                        val prevTriple = remember(chapters, curZero, isSpread, spreadStart) {
+                        val prevSpreadStart = spreadStart - spreadStep
+                        val prevTriple = remember(chapters, curZero, isSpread, isBilingualSpread, spreadStart, prevSpreadStart) {
                             if (isSpread) {
                                 if (prevSpreadStart >= 0) getPageAtGlobalZero(prevSpreadStart) else null
                             } else {
@@ -1101,9 +1172,8 @@ fun ReaderScreen(
                         val prevBitmapInitial = if (!isPdfBook) {
                             if (isSpread) {
                                 if (prevSpreadStart >= 0) {
-                                    val leftText = resolveEffectiveEpubText(prevSpreadStart)
-                                    val rightText = resolveEffectiveEpubText(prevSpreadStart + 1)
-                                    epubSnapshotCache.get(buildEpubSnapshotKey(prevSpreadStart, leftText.hashCode() * 31 + rightText.hashCode(), true))
+                                    val (leftText, rightText) = resolveSpreadPairTexts(prevLeftIdx, prevRightIdx)
+                                    epubSnapshotCache.get(buildEpubSnapshotKey(prevLeftIdx, leftText.hashCode() * 31 + rightText.hashCode(), true, prevRightIdx))
                                 } else null
                             } else if (prevTriple != null) {
                                 val prevPZero = curZero - 1
@@ -1113,14 +1183,17 @@ fun ReaderScreen(
                         } else null
                         val prevBitmap by produceState<ImageBitmap?>(
                             initialValue = prevBitmapInitial,
-                            curZero, isSpread, isPdfBook, prevTriple, prevLeftEffectivePdfBmp, prevRightEffectivePdfBmp,
-                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH,
+                            curZero, prevLeftIdx, prevRightIdx, isSpread, isBilingualSpread, isPdfBook, prevTriple,
+                            prevLeftEffectivePdfBmp, prevRightEffectivePdfBmp,
+                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
                             prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
                             activeDraggingSliderKey == null,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                            pageTranslationMap[if (isSpread) prevSpreadStart else curZero - 1], peekOriginalPdfPage,
+                            pageTranslationMap[if (isSpread) prevLeftIdx else curZero - 1],
+                            pageTranslationMap[prevRightIdx],
+                            peekOriginalPdfPage,
                             uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
                         ) {
                             if (activeDraggingSliderKey != null) return@produceState
@@ -1128,15 +1201,14 @@ fun ReaderScreen(
                                 if (prevSpreadStart < 0) {
                                     value = null
                                 } else {
-                                    val leftZero = prevSpreadStart
-                                    val rightZero = leftZero + 1
+                                    val leftZero = prevLeftIdx
+                                    val rightZero = prevRightIdx
                                     val leftTripleSpread = getPageAtGlobalZero(leftZero)
                                     val rightTripleSpread = getPageAtGlobalZero(rightZero)
                                     val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
                                     val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
-                                    val leftText = resolveEffectiveEpubText(leftZero)
-                                    val rightText = resolveEffectiveEpubText(rightZero)
-                                    val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                                    val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero)
+                                    val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
                                     val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
                                     if (cached != null) {
                                         value = cached
@@ -1155,7 +1227,7 @@ fun ReaderScreen(
                                                 cacheKey = if (isPdfBook) null else cacheKey,
                                                 textMeasurer = textMeasurer,
                                                 widthPx = spreadW,
-                                                heightPx = stageH,
+                                                heightPx = spreadStageH,
                                                 density = density,
                                                 leftPageIndex = leftZero,
                                                 rightPageIndex = rightZero,
@@ -1221,15 +1293,25 @@ fun ReaderScreen(
 
                         LaunchedEffect(
                             pageTranslationMap[curZero],
+                            pageTranslationMap[curLeftIdx],
+                            pageTranslationMap[curRightIdx],
                             pageTranslationMap[nextLeftIdx],
+                            pageTranslationMap[nextRightIdx],
                             pageTranslationMap[prevLeftIdx],
+                            pageTranslationMap[prevRightIdx],
                             prefs.translatorDisplayMode,
                             prefs.translatorTargetLang,
                             isPageTranslationActive,
-                            peekOriginalPdfPage
+                            peekOriginalPdfPage,
+                            uiState.isTranslationActive,
+                            uiState.translationMode,
+                            uiState.translationTargetLang,
+                            uiState.translationRevision
                         ) {
                             committedCurrentBmp = null
                             lockedCurrBmp = null
+                            lockedNextBmp = null
+                            lockedPrevBmp = null
                         }
 
                         val curPdfColorFilter = pdfFilterForPage(curLeftIdx)
@@ -1350,9 +1432,9 @@ fun ReaderScreen(
                                                     }
                                                     val dir = flipTurnDir
                                                     val targetPage = if (isSpread) {
-                                                        val spreadStart = (displayPageIndex / 2) * 2
-                                                        val maxSpread = (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
-                                                        if (dir > 0) (spreadStart + 2).coerceAtMost(maxSpread) else (spreadStart - 2).coerceAtLeast(0)
+                                                        val sStart = if (isBilingualSpread) displayPageIndex else (displayPageIndex / 2) * 2
+                                                        val maxSpread = if (isBilingualSpread) (metrics.totalBookPages - 1).coerceAtLeast(0) else (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
+                                                        if (dir > 0) (sStart + spreadStep).coerceAtMost(maxSpread) else (sStart - spreadStep).coerceAtLeast(0)
                                                     } else {
                                                         if (dir > 0) (displayPageIndex + 1).coerceAtMost(metrics.totalBookPages - 1) else (displayPageIndex - 1).coerceAtLeast(0)
                                                     }
@@ -1402,7 +1484,7 @@ fun ReaderScreen(
                                         } else if (!dragLocked) {
                                             val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
                                             if (relX >= 0.76f) {
-                                                val canGoNext = if (isSpread) ((curZero / 2) * 2 + 2 < metrics.totalBookPages) else (curZero + 1 < metrics.totalBookPages)
+                                                val canGoNext = if (isSpread) (spreadStart + spreadStep < metrics.totalBookPages) else (curZero + 1 < metrics.totalBookPages)
                                                 if (canGoNext && nextBitmap != null) {
                                                     lockedCurrBmp = curBitmap
                                                     lockedNextBmp = nextBitmap
@@ -1414,7 +1496,7 @@ fun ReaderScreen(
                                                     externalFlipTrigger = 1
                                                 }
                                             } else if (relX <= 0.24f) {
-                                                val canGoPrev = if (isSpread) ((curZero / 2) * 2 - 2 >= 0) else (curZero - 1 >= 0)
+                                                val canGoPrev = if (isSpread) (spreadStart - spreadStep >= 0) else (curZero - 1 >= 0)
                                                 if (canGoPrev && prevBitmap != null) {
                                                     lockedCurrBmp = curBitmap
                                                     lockedNextBmp = nextBitmap
@@ -1448,10 +1530,11 @@ fun ReaderScreen(
                                         if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * horizThresholdRatio) {
                                             val candidateDir = if (totalDx < 0f) 1 else -1
                                             if (candidateDir > 0) {
-                                                val isAtEnd = if (isSpread) ((curZero / 2) * 2 >= (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)) else (curZero >= metrics.totalBookPages - 1)
+                                                val maxSpread = if (isBilingualSpread) (metrics.totalBookPages - 1).coerceAtLeast(0) else (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
+                                                val isAtEnd = if (isSpread) (spreadStart >= maxSpread) else (curZero >= metrics.totalBookPages - 1)
                                                 if (isAtEnd) break
                                             } else {
-                                                val isAtStart = if (isSpread) ((curZero / 2) * 2 <= 0) else (curZero <= 0)
+                                                val isAtStart = if (isSpread) (spreadStart <= 0) else (curZero <= 0)
                                                 if (isAtStart) break
                                             }
                                             dragLocked = true
@@ -1480,7 +1563,12 @@ fun ReaderScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = if (isSpread) 16.dp else 0.dp, vertical = if (isSpread) 6.dp else 0.dp)
+                                .padding(
+                                    start = if (isSpread) 16.dp else 0.dp,
+                                    end = if (isSpread) 16.dp else 0.dp,
+                                    top = spreadTopPadDp,
+                                    bottom = spreadBottomPadDp
+                                )
                                 .then(flipbookGestureModifier),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1521,9 +1609,9 @@ fun ReaderScreen(
                                                 isTurnCommitting = true
                                                 isFlippingInProgress = true
                                                 val targetPage = if (isSpread) {
-                                                    val spreadStart = (displayPageIndex / 2) * 2
-                                                    val maxSpread = (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
-                                                    if (dir > 0) (spreadStart + 2).coerceAtMost(maxSpread) else (spreadStart - 2).coerceAtLeast(0)
+                                                    val sStart = if (isBilingualSpread) displayPageIndex else (displayPageIndex / 2) * 2
+                                                    val maxSpread = if (isBilingualSpread) (metrics.totalBookPages - 1).coerceAtLeast(0) else (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0)
+                                                    if (dir > 0) (sStart + spreadStep).coerceAtMost(maxSpread) else (sStart - spreadStep).coerceAtLeast(0)
                                                 } else {
                                                     (displayPageIndex + dir).coerceIn(0, metrics.totalBookPages - 1)
                                                 }
@@ -1668,8 +1756,7 @@ fun ReaderScreen(
                             val rightTriple = getPageAtGlobalZero(rightZero)
                             val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
                             val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
-                            val leftText = resolveEffectiveEpubText(leftZero, if (leftZero == curZero) currentPageRaw else "")
-                            val rightText = resolveEffectiveEpubText(rightZero)
+                            val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero, if (leftZero == curZero) currentPageRaw else "")
 
                             var leftPdfBmp by remember(book.id, leftZero) {
                                 mutableStateOf(
@@ -1680,32 +1767,45 @@ fun ReaderScreen(
                                     } else null
                                 )
                             }
-                            var rightPdfBmp by remember(book.id, rightZero) {
+                            var rightPdfBmp by remember(book.id, rightZero, isBilingualSpread, uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision) {
                                 mutableStateOf(
                                     if (isPdfBook) {
-                                        viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
-                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
-                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        if (isBilingualSpread) {
+                                            viewModel?.getCachedTranslatedPdfBitmap(book.id, rightZero, uiState.translationTargetLang, "replace")
+                                        } else {
+                                            viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        }
                                     } else null
                                 )
                             }
 
                             if (isPdfBook) {
-                                LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero) {
+                                LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero, isBilingualSpread, uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision) {
                                     val path = book.localFilePath ?: return@LaunchedEffect
                                     if (leftPdfBmp == null) {
                                         leftPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, leftZero)
                                     }
-                                    if (rightPdfBmp == null) {
+                                    if (isBilingualSpread) {
+                                        rightPdfBmp = viewModel?.loadOrTranslatePdfPageBitmap(
+                                            bookId = book.id,
+                                            filePath = path,
+                                            pageIndex = rightZero,
+                                            targetLang = uiState.translationTargetLang,
+                                            mode = "replace",
+                                            targetWidthPx = stageW / 2
+                                        )
+                                    } else if (rightPdfBmp == null) {
                                         rightPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, rightZero)
                                     }
                                     viewModel?.prefetchPdfNeighbors(book.id, path, leftZero, isTwoPageSpread = true)
                                 }
                             }
 
-                            val effLeftBmp = getEffectivePdfPageBitmap(leftZero, leftPdfBmp)
-                            val effRightBmp = getEffectivePdfPageBitmap(rightZero, rightPdfBmp)
-                            val spreadCacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true)
+                            val effLeftBmp = if (isBilingualSpread) leftPdfBmp else getEffectivePdfPageBitmap(leftZero, leftPdfBmp)
+                            val effRightBmp = if (isBilingualSpread) rightPdfBmp else getEffectivePdfPageBitmap(rightZero, rightPdfBmp)
+                            val spreadCacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
                             val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                 !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
                                     leftZero, indexedIllustrationPages
@@ -1717,12 +1817,16 @@ fun ReaderScreen(
                                 ))
                             val spreadBmp by produceState<ImageBitmap?>(
                                 initialValue = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null,
-                                spreadCacheKey, leftZero, rightZero, stageW, stageH,
+                                spreadCacheKey, leftZero, rightZero, isBilingualSpread, leftText, rightText,
+                                stageW, stageH, spreadW, spreadStageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                                 prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
                                 palette, isPdfBook, effLeftBmp, effRightBmp,
-                                prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations, effectiveTheme, prefs.amoledBlack
+                                prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations, effectiveTheme, prefs.amoledBlack,
+                                isPageTranslationActive, uiState.isTranslationActive, uiState.translationMode,
+                                uiState.translationTargetLang, uiState.translationRevision,
+                                pageTranslationMap[leftZero], pageTranslationMap[rightZero]
                             ) {
                                 val cached = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null
                                 value = cached ?: withContext(Dispatchers.Default) {
@@ -1730,7 +1834,7 @@ fun ReaderScreen(
                                         cacheKey = if (isPdfBook) null else spreadCacheKey,
                                         textMeasurer = textMeasurer,
                                         widthPx = spreadW,
-                                        heightPx = stageH,
+                                        heightPx = spreadStageH,
                                         density = density,
                                         leftPageIndex = leftZero,
                                         rightPageIndex = rightZero,
@@ -1750,7 +1854,14 @@ fun ReaderScreen(
                                 }
                             }
                             Box(
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(
+                                        start = 16.dp,
+                                        end = 16.dp,
+                                        top = spreadTopPadDp,
+                                        bottom = spreadBottomPadDp
+                                    ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (spreadBmp != null) {
@@ -1758,7 +1869,7 @@ fun ReaderScreen(
                                         bitmap = spreadBmp!!,
                                         contentDescription = null,
                                         modifier = Modifier
-                                            .fillMaxHeight(0.92f)
+                                            .fillMaxHeight()
                                             .aspectRatio(1.414f)
                                             .shadow(14.dp, RoundedCornerShape(6.dp))
                                             .clip(RoundedCornerShape(6.dp))
@@ -1771,8 +1882,8 @@ fun ReaderScreen(
                         @Composable
                         fun RenderPageForNonFlipbook(pageZero: Int) {
                             if (isSpread) {
-                                val leftZero = (pageZero / 2) * 2
-                                val rightZero = leftZero + 1
+                                val leftZero = if (isBilingualSpread) pageZero else (pageZero / 2) * 2
+                                val rightZero = if (isBilingualSpread) pageZero else leftZero + 1
                                 RenderSpreadPageForNonFlipbook(leftZero, rightZero)
                             } else if (isPdfBook) {
                                 val isTransPage = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
@@ -1979,18 +2090,37 @@ fun ReaderScreen(
                         ) {
                             if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
                                 if (isSpread) {
-                                    val totalSpreads = (metrics.totalBookPages + 1) / 2
-                                    val initialSpread = (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                    val totalSpreads = if (isBilingualSpread) {
+                                        metrics.totalBookPages.coerceAtLeast(1)
+                                    } else {
+                                        ((metrics.totalBookPages + 1) / 2).coerceAtLeast(1)
+                                    }
+                                    val initialSpread = if (isBilingualSpread) {
+                                        displayPageIndex.coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                    } else {
+                                        (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                    }
                                     val spreadPagerState = rememberPagerState(
                                         initialPage = initialSpread,
-                                        pageCount = { totalSpreads.coerceAtLeast(1) }
+                                        pageCount = { totalSpreads }
                                     )
-                                    LaunchedEffect(spreadPagerState) {
+                                    LaunchedEffect(isBilingualSpread) {
+                                        val desiredSpread = if (isBilingualSpread) {
+                                            displayPageIndex.coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                        } else {
+                                            (displayPageIndex / 2).coerceIn(0, (totalSpreads - 1).coerceAtLeast(0))
+                                        }
+                                        if (spreadPagerState.currentPage != desiredSpread) {
+                                            spreadPagerState.scrollToPage(desiredSpread)
+                                        }
+                                    }
+                                    LaunchedEffect(spreadPagerState, isBilingualSpread) {
                                         snapshotFlow { spreadPagerState.settledPage }
                                             .distinctUntilChanged()
                                             .collect { settledSpread ->
-                                                val targetPage = settledSpread * 2
-                                                if (targetPage / 2 != displayPageIndex / 2) {
+                                                val targetPage = if (isBilingualSpread) settledSpread else settledSpread * 2
+                                                val currentSpread = if (isBilingualSpread) displayPageIndex else displayPageIndex / 2
+                                                if (settledSpread != currentSpread) {
                                                     displayPageIndex = targetPage
                                                     val target = getPageAtGlobalZero(targetPage)
                                                     if (target != null) {
@@ -1999,8 +2129,8 @@ fun ReaderScreen(
                                                 }
                                             }
                                     }
-                                    LaunchedEffect(curZeroFromMetrics) {
-                                        val targetSpread = curZeroFromMetrics / 2
+                                    LaunchedEffect(curZeroFromMetrics, isBilingualSpread) {
+                                        val targetSpread = if (isBilingualSpread) curZeroFromMetrics else curZeroFromMetrics / 2
                                         if (!spreadPagerState.isScrollInProgress &&
                                             spreadPagerState.settledPage != targetSpread &&
                                             spreadPagerState.currentPage != targetSpread &&
@@ -2008,7 +2138,7 @@ fun ReaderScreen(
                                         ) {
                                             displayPageIndex = curZeroFromMetrics
                                             spreadPagerState.animateScrollToPage(
-                                                targetSpread,
+                                                targetSpread.coerceIn(0, (totalSpreads - 1).coerceAtLeast(0)),
                                                 animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
                                             )
                                         }
@@ -2016,12 +2146,12 @@ fun ReaderScreen(
                                     HorizontalPager(
                                         state = spreadPagerState,
                                         beyondViewportPageCount = 2,
-                                        key = { spreadIndex -> "slide_spread_$spreadIndex" },
+                                        key = { spreadIndex -> "slide_spread_${isBilingualSpread}_$spreadIndex" },
                                         userScrollEnabled = (nonFlipZoomScale <= 1.02f),
                                         modifier = Modifier.fillMaxSize()
                                     ) { spreadIndex ->
-                                        val spreadLeftPage = spreadIndex * 2
-                                        val spreadRightPage = spreadIndex * 2 + 1
+                                        val spreadLeftPage = if (isBilingualSpread) spreadIndex else spreadIndex * 2
+                                        val spreadRightPage = if (isBilingualSpread) spreadIndex else spreadIndex * 2 + 1
                                         RenderSpreadPageForNonFlipbook(spreadLeftPage, spreadRightPage)
                                     }
                                 } else {
@@ -2349,9 +2479,16 @@ fun ReaderScreen(
                         }
                     }
 
+                    val scrollTopInsetDp = if (showReaderChrome || isTranslationQuickBarActive) {
+                        topClearanceDp
+                    } else {
+                        stableStatusBarTopDp
+                    }
+
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .padding(top = scrollTopInsetDp)
                             .clipToBounds()
                             .then(scrollZoomGestureModifier)
                             .graphicsLayer {
@@ -2367,6 +2504,7 @@ fun ReaderScreen(
                             LazyColumn(
                                 state = scrollListState,
                                 userScrollEnabled = (nonFlipZoomScale <= 1.02f),
+                                contentPadding = PaddingValues(bottom = bottomClearanceDp),
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = if (isWebtoon) 0.dp else 12.dp),
@@ -2398,6 +2536,7 @@ fun ReaderScreen(
                             LazyColumn(
                                 state = scrollListState,
                                 userScrollEnabled = (nonFlipZoomScale <= 1.02f),
+                                contentPadding = PaddingValues(bottom = bottomClearanceDp),
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = prefs.pageMarginDp.dp)
