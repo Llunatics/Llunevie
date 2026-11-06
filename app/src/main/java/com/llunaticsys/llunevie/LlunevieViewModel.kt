@@ -485,6 +485,9 @@ class LlunevieViewModel(
         val activeDeferred = inFlightPdfTranslations.compute(inFlightKey) { _, existing ->
             if (existing != null && existing.isActive) existing else newDeferred
         }!!
+        if (activeDeferred !== newDeferred) {
+            newDeferred.cancel()
+        }
         activeDeferred.start()
         runCatching { activeDeferred.await() }.getOrNull()
     }
@@ -535,6 +538,9 @@ class LlunevieViewModel(
         val activeDeferred = inFlightTextTranslations.compute(inFlightKey) { _, existing ->
             if (existing != null && existing.isActive) existing else newDeferred
         }!!
+        if (activeDeferred !== newDeferred) {
+            newDeferred.cancel()
+        }
         activeDeferred.start()
         runCatching { activeDeferred.await() }.getOrNull()
     }
@@ -714,6 +720,9 @@ class LlunevieViewModel(
         val curState = _uiState.value
         if (curState.activeTab == MainNavTab.READER && tab != MainNavTab.READER) {
             flushActiveReadingSession(curState.activeBookId)
+            com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
+            EpubNativeParser.clearMemoryCaches()
+            PdfNativeRenderer.clearMemoryCaches(evictPageBitmaps = false)
             viewModelScope.launch(Dispatchers.IO) {
                 PdfNativeRenderer.closeCachedDoc()
             }
@@ -2362,7 +2371,7 @@ class LlunevieViewModel(
     }
 
     fun importLocalBookOrBackupFile(uri: Uri) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val fileName = queryFileName(uri)
             val ext = fileName.substringAfterLast('.', "").lowercase()
             val isId = preferences.value.lang != "en"

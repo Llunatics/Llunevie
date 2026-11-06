@@ -77,6 +77,7 @@ android {
             excludes += "META-INF/*.MD"
             excludes += "META-INF/com/android/build/gradle/*"
             excludes += "META-INF/version-control-info.textproto"
+            excludes += "org/bouncycastle/pqc/**"
         }
     }
 }

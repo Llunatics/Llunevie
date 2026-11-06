@@ -5,4 +5,5 @@
 -dontwarn org.jsoup.**
 -dontwarn com.tom_roush.**
 -dontwarn org.apache.commons.logging.**
+-dontwarn org.bouncycastle.**
 

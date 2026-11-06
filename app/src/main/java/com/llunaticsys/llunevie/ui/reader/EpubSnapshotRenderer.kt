@@ -265,7 +265,14 @@ internal fun buildEpubPageAnnotatedString(
     }
 }
 
-internal fun computeOnePageFitScale(
+internal data class OnePageFittedLayout(
+    val fitScale: Float,
+    val annotatedString: AnnotatedString,
+    val textLayout: TextLayoutResult?,
+    val titleLayout: TextLayoutResult?
+)
+
+internal fun computeOnePageFittedLayout(
     textMeasurer: TextMeasurer,
     widthPx: Int,
     heightPx: Int,
@@ -283,22 +290,23 @@ internal fun computeOnePageFitScale(
     pageIndex: Int,
     palette: LluneviePalette,
     prefs: UserPreferencesState
-): Float {
+): OnePageFittedLayout {
     val rawParagraphs = pageText.split("\n\n").map { it.trim() }.filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
     val isCoverActual = isCover ||
         ((chapterTitle.equals("Sampul", ignoreCase = true) || chapterTitle.equals("Cover", ignoreCase = true)) && rawParagraphs.any { it.startsWith("[ILLUST:") }) ||
         (rawParagraphs.size == 1 && rawParagraphs[0].startsWith("[ILLUST:"))
 
-    // Covers and illustration-only pages don't need scaling
-    if (isCoverActual) return 1f
+    if (isCoverActual) {
+        return OnePageFittedLayout(1f, AnnotatedString(""), null, null)
+    }
 
     val availableH = (heightPx - padTop - padBottom - with(density) { 8.dp.toPx() }).coerceAtLeast(140f)
     val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
 
-    // Measure chapter header height
+    var titleLayout: TextLayoutResult? = null
     var headerH = 0f
     if (showChapterHeader && chapterTitle.isNotBlank()) {
-        val titleLayout = textMeasurer.measure(
+        titleLayout = textMeasurer.measure(
             text = AnnotatedString(chapterTitle),
             style = TextStyle(
                 color = palette.textMain,
@@ -313,7 +321,9 @@ internal fun computeOnePageFitScale(
     }
 
     val textParagraphs = rawParagraphs.filter { !it.startsWith("[ILLUST:") }
-    if (textParagraphs.isEmpty()) return 1f
+    if (textParagraphs.isEmpty()) {
+        return OnePageFittedLayout(1f, AnnotatedString(""), null, titleLayout)
+    }
 
     val resolvedTextAlign = when (prefs.textAlign.lowercase()) {
         "justify" -> TextAlign.Justify
@@ -321,7 +331,7 @@ internal fun computeOnePageFitScale(
         else -> TextAlign.Start
     }
 
-    fun fitsAtScale(candidateScale: Float): Boolean {
+    fun measureCandidate(candidateScale: Float): Pair<AnnotatedString, TextLayoutResult> {
         val annotatedString = buildEpubPageAnnotatedString(
             textParagraphs = textParagraphs,
             prefs = prefs,
@@ -342,28 +352,74 @@ internal fun computeOnePageFitScale(
             style = scaledStyle,
             constraints = Constraints(maxWidth = contentW)
         )
-        return (headerH + layout.size.height) <= availableH
+        return annotatedString to layout
     }
 
     // Fast path: 1.0f fits without scaling
-    if (fitsAtScale(1f)) return 1f
+    val (annotatedAtOne, layoutAtOne) = measureCandidate(1f)
+    if ((headerH + layoutAtOne.size.height) <= availableH) {
+        return OnePageFittedLayout(1f, annotatedAtOne, layoutAtOne, titleLayout)
+    }
 
     // 4-step binary search over [0.52f, 1.0f]
     var low = 0.52f
     var high = 1.0f
     var bestScale = 0.52f
+    var bestPair: Pair<AnnotatedString, TextLayoutResult>? = null
     repeat(4) {
         val mid = (low + high) * 0.5f
-        if (fitsAtScale(mid)) {
+        val pair = measureCandidate(mid)
+        if ((headerH + pair.second.size.height) <= availableH) {
             bestScale = mid
+            bestPair = pair
             low = mid
         } else {
             high = mid
         }
     }
 
-    return bestScale.coerceAtLeast(0.52f)
+    val finalScale = bestScale.coerceAtLeast(0.52f)
+    val finalPair = bestPair ?: measureCandidate(finalScale)
+    return OnePageFittedLayout(finalScale, finalPair.first, finalPair.second, titleLayout)
 }
+
+internal fun computeOnePageFitScale(
+    textMeasurer: TextMeasurer,
+    widthPx: Int,
+    heightPx: Int,
+    density: Density,
+    chapterTitle: String,
+    pageText: String,
+    baseTextStyle: TextStyle,
+    padX: Float,
+    padTop: Float,
+    padBottom: Float,
+    showChapterHeader: Boolean,
+    isCover: Boolean,
+    highlights: List<HighlightNoteEntity>,
+    chapterIndex: Int,
+    pageIndex: Int,
+    palette: LluneviePalette,
+    prefs: UserPreferencesState
+): Float = computeOnePageFittedLayout(
+    textMeasurer = textMeasurer,
+    widthPx = widthPx,
+    heightPx = heightPx,
+    density = density,
+    chapterTitle = chapterTitle,
+    pageText = pageText,
+    baseTextStyle = baseTextStyle,
+    padX = padX,
+    padTop = padTop,
+    padBottom = padBottom,
+    showChapterHeader = showChapterHeader,
+    isCover = isCover,
+    highlights = highlights,
+    chapterIndex = chapterIndex,
+    pageIndex = pageIndex,
+    palette = palette,
+    prefs = prefs
+).fitScale
 
 internal suspend fun renderCachedEpubPageSnapshot(
     cacheKey: String,
@@ -478,35 +534,8 @@ internal fun renderEpubPageSnapshot(
             }
         }
 
-        val contentW = (widthPx - padX * 2).roundToInt().coerceAtLeast(100)
-        var currentY = padTop
-
-        if (showChapterHeader && chapterTitle.isNotBlank()) {
-            val titleLayout = textMeasurer.measure(
-                text = AnnotatedString(chapterTitle),
-                style = TextStyle(
-                    color = palette.textMain,
-                    fontSize = ((prefs?.fontSizeSp ?: 16) + 6).sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
-                ),
-                constraints = Constraints(maxWidth = contentW)
-            )
-            drawText(titleLayout, topLeft = Offset(padX, currentY))
-            currentY += titleLayout.size.height + with(density) { 16.dp.toPx() }
-        }
-
-        val textParagraphs = rawParagraphs.filter { !it.startsWith("[ILLUST:") }
         val effectivePrefs = prefs ?: UserPreferencesState()
-        val resolvedTextAlign = when (effectivePrefs.textAlign.lowercase()) {
-            "justify" -> TextAlign.Justify
-            "center" -> TextAlign.Center
-            else -> TextAlign.Start
-        }
-
-        // Compute fit scale to prevent text cropping
-        val fitScale = computeOnePageFitScale(
+        val fitted = computeOnePageFittedLayout(
             textMeasurer = textMeasurer,
             widthPx = widthPx,
             heightPx = heightPx,
@@ -526,28 +555,15 @@ internal fun renderEpubPageSnapshot(
             prefs = effectivePrefs
         )
 
-        val annotatedString = buildEpubPageAnnotatedString(
-            textParagraphs = textParagraphs,
-            prefs = effectivePrefs,
-            fontScale = fitScale,
-            resolvedTextAlign = resolvedTextAlign,
-            bookHighlights = highlights,
-            currentChapterIndex = chapterIndex,
-            currentPageInChapter = pageIndex,
-            displayPageIndex = -1,
-            palette = palette
-        )
+        var currentY = padTop
+        val titleLayout = fitted.titleLayout
+        if (titleLayout != null) {
+            drawText(titleLayout, topLeft = Offset(padX, currentY))
+            currentY += titleLayout.size.height + with(density) { 16.dp.toPx() }
+        }
 
-        val scaledStyle = pageTextStyle.copy(
-            fontSize = (effectivePrefs.fontSizeSp * fitScale).sp,
-            lineHeight = (effectivePrefs.fontSizeSp * effectivePrefs.lineHeightMultiplier * fitScale).sp
-        )
-
-        val layout = textMeasurer.measure(
-            text = annotatedString,
-            style = scaledStyle,
-            constraints = Constraints(maxWidth = contentW)
-        )
+        val layout = fitted.textLayout ?: return@draw
+        val annotatedString = fitted.annotatedString
 
         val snapshotFullText = annotatedString.text
         val pageHls = highlights.filter { hl ->

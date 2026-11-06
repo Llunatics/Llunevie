@@ -276,7 +276,6 @@ fun ReaderScreen(
     val translationRepo = remember { TranslationRepository.getInstance() }
     var isPageTranslationActive by remember { mutableStateOf(false) }
     var peekOriginalPdfPage by remember { mutableStateOf(false) }
-    var pdfPageBlocksMap by remember { mutableStateOf<Map<Int, List<PdfNativeRenderer.PdfParagraphBlock>>>(emptyMap()) }
     var pageTranslationMap by remember { mutableStateOf<Map<Int, List<Pair<String, String?>>>>(emptyMap()) }
     var isTranslatingPage by remember { mutableStateOf(false) }
 
@@ -289,35 +288,7 @@ fun ReaderScreen(
             if (cachedTrans != null && !cachedTrans.isRecycled) {
                 cachedTrans
             } else {
-                val blocks = pdfPageBlocksMap[pageZero]
-                val transList = pageTranslationMap[pageZero]
-                if (blocks.isNullOrEmpty() || transList.isNullOrEmpty()) {
-                    origBmp
-                } else {
-                    val transTexts = transList.map { it.second ?: it.first }
-                    val path = book.localFilePath.orEmpty()
-                    val targetW = if (isSpread) 540 else 1080
-                    val isIllust = pageZero in indexedIllustrationPages
-                    if (path.isNotBlank()) {
-                        val rendered = PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
-                            pdfFilePath = path,
-                            pageIndex = pageZero,
-                            blocks = blocks,
-                            translatedTexts = transTexts,
-                            displayMode = uiState.translationMode,
-                            targetWidthPx = targetW,
-                            isIllustrationPage = isIllust,
-                            targetLang = uiState.translationTargetLang,
-                            engine = prefs.translatorEngine
-                        ) ?: origBmp
-                        if (rendered != null && rendered !== origBmp) {
-                            viewModel?.putCachedTranslatedPdfBitmap(book.id, pageZero, uiState.translationTargetLang, uiState.translationMode, rendered)
-                        }
-                        rendered
-                    } else {
-                        origBmp
-                    }
-                }
+                origBmp
             }
         }
     }
@@ -414,7 +385,7 @@ fun ReaderScreen(
                     if (pZero < metrics.totalBookPages && !pageTranslationMap.containsKey(pZero)) {
                         isTranslatingPage = true
                         val targetW = if (isSpread) 540 else 1080
-                        val bmp = viewModel?.loadOrTranslatePdfPageBitmap(
+                        viewModel?.loadOrTranslatePdfPageBitmap(
                             bookId = book.id,
                             filePath = path,
                             pageIndex = pZero,
@@ -422,8 +393,6 @@ fun ReaderScreen(
                             mode = effPdfMode,
                             targetWidthPx = targetW
                         )
-                        val blocks = pdfPageBlocksMap[pZero] ?: translationRepo.extractPdfPageParagraphBlocks(context, path, pZero, book.title)
-                        pdfPageBlocksMap = pdfPageBlocksMap + (pZero to blocks)
                         pageTranslationMap = pageTranslationMap + (pZero to emptyList())
                         isTranslatingPage = false
                     }
@@ -464,12 +433,16 @@ fun ReaderScreen(
                             pageTranslationMap = pageTranslationMap + (pZero to cached)
                         } else {
                             isTranslatingPage = true
-                            val res = viewModel?.loadOrTranslatePageParagraphs(
-                                bookId = book.id,
-                                pageIndex = pZero,
-                                pageRaw = pRaw,
-                                targetLang = curTargetLang
-                            ) ?: translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
+                            val res = if (viewModel != null) {
+                                viewModel.loadOrTranslatePageParagraphs(
+                                    bookId = book.id,
+                                    pageIndex = pZero,
+                                    pageRaw = pRaw,
+                                    targetLang = curTargetLang
+                                )
+                            } else {
+                                translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
+                            }
                             if (res != null) {
                                 pageTranslationMap = pageTranslationMap + (pZero to res)
                             }
@@ -494,12 +467,16 @@ fun ReaderScreen(
                     val nextRaw = nextTriple?.third.orEmpty()
                     if (nextRaw.isNotBlank()) {
                         val cached = viewModel?.getCachedTranslatedParagraphs(book.id, nextP, curTargetLang, nextRaw.hashCode())
-                        val res = cached ?: viewModel?.loadOrTranslatePageParagraphs(
-                            bookId = book.id,
-                            pageIndex = nextP,
-                            pageRaw = nextRaw,
-                            targetLang = curTargetLang
-                        ) ?: translationRepo.translatePageParagraphs(nextRaw, prefs, context, curTargetLang).getOrNull()
+                        val res = cached ?: if (viewModel != null) {
+                            viewModel.loadOrTranslatePageParagraphs(
+                                bookId = book.id,
+                                pageIndex = nextP,
+                                pageRaw = nextRaw,
+                                targetLang = curTargetLang
+                            )
+                        } else {
+                            translationRepo.translatePageParagraphs(nextRaw, prefs, context, curTargetLang).getOrNull()
+                        }
                         if (res != null) {
                             pageTranslationMap = pageTranslationMap + (nextP to res)
                         }
@@ -1508,12 +1485,16 @@ fun ReaderScreen(
                                                     externalFlipTrigger = -1
                                                 }
                                             } else {
-                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
-                                                    hasSelectionActive = false
-                                                    clearSelectionTrigger++
-                                                    selectedQuoteForPopover = null
-                                                } else {
-                                                    showReaderChrome = !showReaderChrome
+                                                val elapsed = change.uptimeMillis - down.uptimeMillis
+                                                val childHandlesTap = !isPdfBook && !isSpread && !isBilingualMode
+                                                if (elapsed < 340L && (!childHandlesTap || selectedQuoteForPopover != null)) {
+                                                    if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                        hasSelectionActive = false
+                                                        clearSelectionTrigger++
+                                                        selectedQuoteForPopover = null
+                                                    } else {
+                                                        showReaderChrome = !showReaderChrome
+                                                    }
                                                 }
                                             }
                                         }
@@ -1699,6 +1680,31 @@ fun ReaderScreen(
                                         !uiState.translationMode.equals("original", ignoreCase = true) &&
                                         !curCachedTrans.isNullOrEmpty()
                                     val isBilingualActive = hasActivePageTranslation && uiState.translationMode.equals("bilingual", ignoreCase = true)
+                                    val effectiveTextForFit = resolveEffectiveEpubText(curZero, curText)
+                                    val curFitScale = remember(
+                                        curZero, effectiveTextForFit, stageW, stageH, baseTextStyle,
+                                        padX, padTop, padBottom, curCh?.title, curPInCh, bookHighlights, palette, prefs
+                                    ) {
+                                        if (isBilingualActive) 1f else computeOnePageFitScale(
+                                            textMeasurer = textMeasurer,
+                                            widthPx = stageW,
+                                            heightPx = stageH,
+                                            density = density,
+                                            chapterTitle = curCh?.title.orEmpty(),
+                                            pageText = effectiveTextForFit,
+                                            baseTextStyle = baseTextStyle,
+                                            padX = padX,
+                                            padTop = padTop,
+                                            padBottom = padBottom,
+                                            showChapterHeader = curPInCh == 0,
+                                            isCover = (curZero == 0),
+                                            highlights = bookHighlights,
+                                            chapterIndex = curChIdx,
+                                            pageIndex = curPInCh,
+                                            palette = palette,
+                                            prefs = prefs
+                                        )
+                                    }
                                     val contentModifier = if (hasActivePageTranslation) {
                                         Modifier.fillMaxSize().background(if (isSpread) palette.bgCard else palette.bgApp)
                                     } else {
@@ -1730,7 +1736,7 @@ fun ReaderScreen(
                                             onSearchInBook = { inBookSearchQuery = it },
                                             isCoverPage = (curZero == 0),
                                             bookTitle = book.title,
-                                            fontScale = 1f,
+                                            fontScale = curFitScale,
                                             transparentTextForFlipbook = (activeBmp != null && !hasActivePageTranslation),
                                             topClearanceDp = topClearanceDp,
                                             bottomClearanceDp = bottomClearanceDp,
@@ -1739,6 +1745,15 @@ fun ReaderScreen(
                                                 hasSelectionActive = active
                                                 selStartHandleAnchor = start
                                                 selEndHandleAnchor = end
+                                            },
+                                            onCenterTap = {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                    hasSelectionActive = false
+                                                    clearSelectionTrigger++
+                                                    selectedQuoteForPopover = null
+                                                } else {
+                                                    showReaderChrome = !showReaderChrome
+                                                }
                                             },
                                             isPageTranslationActive = isPageTranslationActive,
                                             translatedParagraphs = curCachedTrans,
@@ -1986,6 +2001,15 @@ fun ReaderScreen(
                                         selStartHandleAnchor = start
                                         selEndHandleAnchor = end
                                     },
+                                    onCenterTap = {
+                                        if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                            hasSelectionActive = false
+                                            clearSelectionTrigger++
+                                            selectedQuoteForPopover = null
+                                        } else {
+                                            showReaderChrome = !showReaderChrome
+                                        }
+                                    },
                                     isPageTranslationActive = isPageTranslationActive,
                                     translatedParagraphs = curCachedTrans,
                                     viewModel = viewModel,
@@ -2011,15 +2035,21 @@ fun ReaderScreen(
                                 val touchSlop = viewConfiguration.touchSlop
                                 var movedBeyondSlop = false
                                 var hadMultiTouch = false
+                                var lastEventUptime = down.uptimeMillis
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    event.changes.firstOrNull()?.let { lastEventUptime = it.uptimeMillis }
                                     val pressedCount = event.changes.count { it.pressed }
                                     if (pressedCount == 0) {
                                         if (nonFlipZoomScale < 1.03f) {
                                             nonFlipZoomScale = 1f
                                             nonFlipZoomOffset = Offset.Zero
                                         }
-                                        if (!movedBeyondSlop && !hadMultiTouch && nonFlipZoomScale <= 1.02f) {
+                                        val elapsed = lastEventUptime - down.uptimeMillis
+                                        val childHandlesTap = !isPdfBook && !isSpread && !isBilingualMode
+                                        if (!movedBeyondSlop && !hadMultiTouch && nonFlipZoomScale <= 1.02f &&
+                                            elapsed < 340L && (!childHandlesTap || selectedQuoteForPopover != null)
+                                        ) {
                                             val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
                                             if (relX in 0.24f..0.76f) {
                                                 if (hasSelectionActive || selectedQuoteForPopover != null) {
@@ -2414,15 +2444,23 @@ fun ReaderScreen(
                             val touchSlop = viewConfiguration.touchSlop
                             var movedBeyondSlop = false
                             var hadMultiTouch = false
+                            var lastEventUptime = down.uptimeMillis
+                            val isBilingualScroll = (isPageTranslationActive || uiState.isTranslationActive) &&
+                                uiState.translationMode.equals("bilingual", ignoreCase = true)
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
+                                event.changes.firstOrNull()?.let { lastEventUptime = it.uptimeMillis }
                                 val pressedCount = event.changes.count { it.pressed }
                                 if (pressedCount == 0) {
                                     if (nonFlipZoomScale < 1.03f) {
                                         nonFlipZoomScale = 1f
                                         nonFlipZoomOffset = Offset.Zero
                                     }
-                                    if (!movedBeyondSlop && !hadMultiTouch && nonFlipZoomScale <= 1.02f) {
+                                    val elapsed = lastEventUptime - down.uptimeMillis
+                                    val childHandlesTap = !isPdfBook && !isBilingualScroll
+                                    if (!movedBeyondSlop && !hadMultiTouch && nonFlipZoomScale <= 1.02f &&
+                                        elapsed < 340L && (!childHandlesTap || selectedQuoteForPopover != null)
+                                    ) {
                                         val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
                                         if (relX in 0.24f..0.76f) {
                                             if (hasSelectionActive || selectedQuoteForPopover != null) {
@@ -2610,6 +2648,15 @@ fun ReaderScreen(
                                                 selStartHandleAnchor = start
                                                 selEndHandleAnchor = end
                                             },
+                                            onCenterTap = {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                    hasSelectionActive = false
+                                                    clearSelectionTrigger++
+                                                    selectedQuoteForPopover = null
+                                                } else {
+                                                    showReaderChrome = !showReaderChrome
+                                                }
+                                            },
                                             isPageTranslationActive = isPageTranslationActive,
                                             translatedParagraphs = curCachedTrans,
                                             viewModel = viewModel,
@@ -2658,7 +2705,8 @@ fun ReaderScreen(
             nonFlipZoomScale = nonFlipZoomScale,
             nonFlipZoomOffset = nonFlipZoomOffset,
             onResetZoom = {
-                val isFlipbookMode = prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK
+                val isFlipbookMode = prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK &&
+                    (prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD)
                 val startZ = if (isFlipbookMode) readerZoom else nonFlipZoomScale
                 val startP = if (isFlipbookMode) readerPan else nonFlipZoomOffset
                 scope.launch {

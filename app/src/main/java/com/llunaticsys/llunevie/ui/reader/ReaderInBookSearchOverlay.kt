@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +54,11 @@ import androidx.compose.ui.zIndex
 import com.llunaticsys.llunevie.model.BookChapter
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+private val SEARCH_ILLUST_TAG_REGEX = Regex("\\[ILLUST:[^]]+]")
+private val SEARCH_PDF_PAGE_TAG_REGEX = Regex("\\[PDF_PAGE:[^]]+]")
 
 @Composable
 internal fun BoxScope.ReaderInBookSearchOverlay(
@@ -98,27 +104,34 @@ internal fun BoxScope.ReaderInBookSearchOverlay(
     ) {
         val initialQuery = cachedSearchQuery ?: inBookSearchQuery.orEmpty()
         var currentQuery by remember(cachedSearchQuery) { mutableStateOf(initialQuery) }
-        val searchResults = remember(currentQuery, chapters) {
+        val searchResults by produceState(
+            initialValue = emptyList<Triple<Int, Int, String>>(),
+            currentQuery,
+            chapters
+        ) {
             val q = currentQuery.trim()
-            if (q.length < 2) emptyList()
-            else {
-                val list = mutableListOf<Triple<Int, Int, String>>()
-                for ((chIdx, ch) in chapters.withIndex()) {
-                    for ((pgIdx, pageContent) in ch.pages.withIndex()) {
-                        val clean = pageContent
-                            .replace(Regex("\\[ILLUST:[^]]+]"), "")
-                            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                            .trim()
-                        if (clean.contains(q, ignoreCase = true)) {
+            value = if (q.length < 2) {
+                emptyList()
+            } else {
+                withContext(Dispatchers.Default) {
+                    val list = mutableListOf<Triple<Int, Int, String>>()
+                    for ((chIdx, ch) in chapters.withIndex()) {
+                        for ((pgIdx, pageContent) in ch.pages.withIndex()) {
+                            val clean = pageContent
+                                .replace(SEARCH_ILLUST_TAG_REGEX, "")
+                                .replace(SEARCH_PDF_PAGE_TAG_REGEX, "")
+                                .trim()
                             val matchIdx = clean.indexOf(q, ignoreCase = true)
-                            val start = maxOf(0, matchIdx - 30)
-                            val end = minOf(clean.length, matchIdx + q.length + 45)
-                            val snip = (if (start > 0) "…" else "") + clean.substring(start, end).trim() + (if (end < clean.length) "…" else "")
-                            list.add(Triple(chIdx, pgIdx, snip))
+                            if (matchIdx >= 0) {
+                                val start = maxOf(0, matchIdx - 30)
+                                val end = minOf(clean.length, matchIdx + q.length + 45)
+                                val snip = (if (start > 0) "…" else "") + clean.substring(start, end).trim() + (if (end < clean.length) "…" else "")
+                                list.add(Triple(chIdx, pgIdx, snip))
+                            }
                         }
                     }
+                    list
                 }
-                list
             }
         }
 
