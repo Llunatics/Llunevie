@@ -46,7 +46,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -100,6 +104,7 @@ import com.llunaticsys.llunevie.ui.components.LlunevieThinSlider
 import com.llunaticsys.llunevie.ui.components.ModernSwitch
 import com.llunaticsys.llunevie.ui.components.PrototypeIconType
 import com.llunaticsys.llunevie.ui.components.PrototypeSvgIcon
+import com.llunaticsys.llunevie.ui.components.resolveDisplayFolderPath
 import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import coil.compose.AsyncImage
@@ -168,6 +173,7 @@ fun SettingsScreen(
     var cropScale by remember { mutableFloatStateOf(1f) }
     var cropOffset by remember { mutableStateOf(Offset.Zero) }
     var cropRotationDegrees by remember { mutableFloatStateOf(0f) }
+    val coroutineScope = rememberCoroutineScope()
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -188,10 +194,25 @@ fun SettingsScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            runCatching {
-                val stream = context.contentResolver.openInputStream(uri)
-                val decoded = BitmapFactory.decodeStream(stream)
-                stream?.close()
+            coroutineScope.launch {
+                val decoded = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BitmapFactory.decodeStream(stream, null, boundsOpts)
+                        }
+                        val rawW = boundsOpts.outWidth.coerceAtLeast(1)
+                        val rawH = boundsOpts.outHeight.coerceAtLeast(1)
+                        var sampleSize = 1
+                        while (maxOf(rawW / sampleSize, rawH / sampleSize) > 1024) {
+                            sampleSize *= 2
+                        }
+                        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BitmapFactory.decodeStream(stream, null, decodeOpts)
+                        }
+                    }.getOrNull()
+                }
                 if (decoded != null) {
                     pendingCropBitmap = decoded
                     cropScale = 1f
@@ -285,9 +306,12 @@ fun SettingsScreen(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                if (!prefs.userPhotoPath.isNullOrBlank() && File(prefs.userPhotoPath).exists()) {
+                                val hasUserPhoto = remember(prefs.userPhotoPath) {
+                                    !prefs.userPhotoPath.isNullOrBlank() && File(prefs.userPhotoPath).exists()
+                                }
+                                if (hasUserPhoto) {
                                     AsyncImage(
-                                        model = File(prefs.userPhotoPath),
+                                        model = File(prefs.userPhotoPath!!),
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
@@ -2254,22 +2278,39 @@ fun SettingsScreen(
 
                             Surface(
                                 onClick = {
-                                    val out = renderCroppedBitmapWithExactMatrix(
-                                        src = cropBmp,
-                                        outputSizePx = 512,
-                                        stageSizePx = stageSizePx,
-                                        zoom = cropScale,
-                                        clampedPanStagePx = cropOffset,
-                                        rotationDeg = cropRotationDegrees,
-                                        circularMask = true
-                                    )
-                                    val dir = File(context.filesDir, "profile").apply { mkdirs() }
-                                    val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
-                                    FileOutputStream(outFile).use { fos ->
-                                        out.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                                    val capturedScale = cropScale
+                                    val capturedOffset = cropOffset
+                                    val capturedRotation = cropRotationDegrees
+                                    coroutineScope.launch {
+                                        val savedPath = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                val out = renderCroppedBitmapWithExactMatrix(
+                                                    src = cropBmp,
+                                                    outputSizePx = 512,
+                                                    stageSizePx = stageSizePx,
+                                                    zoom = capturedScale,
+                                                    clampedPanStagePx = capturedOffset,
+                                                    rotationDeg = capturedRotation,
+                                                    circularMask = true
+                                                )
+                                                val dir = File(context.filesDir, "profile").apply { mkdirs() }
+                                                val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
+                                                FileOutputStream(outFile).use { fos ->
+                                                    out.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                                                }
+                                                dir.listFiles()?.forEach { existing ->
+                                                    if (existing != outFile && existing.name.startsWith("avatar_")) {
+                                                        runCatching { existing.delete() }
+                                                    }
+                                                }
+                                                outFile.absolutePath
+                                            }.getOrNull()
+                                        }
+                                        if (savedPath != null) {
+                                            onSavePhotoPath(savedPath)
+                                        }
+                                        pendingCropBitmap = null
                                     }
-                                    onSavePhotoPath(outFile.absolutePath)
-                                    pendingCropBitmap = null
                                 },
                                 shape = CircleShape,
                                 color = palette.textPrimary,
@@ -2360,15 +2401,4 @@ fun renderCroppedBitmapWithExactMatrix(
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
     canvas.drawBitmap(src, matrix, paint)
     return out
-}
-
-private fun resolveDisplayFolderPath(uri: Uri): String {
-    val path = uri.path.orEmpty()
-    val decoded = Uri.decode(path)
-    return when {
-        decoded.startsWith("/tree/primary:") -> "/sdcard/" + decoded.removePrefix("/tree/primary:")
-        decoded.startsWith("primary:") -> "/sdcard/" + decoded.removePrefix("primary:")
-        decoded.contains(":") -> "/sdcard/" + decoded.substringAfterLast(":")
-        else -> "/sdcard/Llunevie/Books"
-    }
 }

@@ -17,6 +17,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
@@ -57,6 +58,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -118,15 +120,71 @@ object PdfNativeRenderer {
     )
 
     private val renderMutex = Mutex()
+    private val rendererSessionLock = Any()
+    private var activeRendererPath: String? = null
+    private var activePfd: ParcelFileDescriptor? = null
+    private var activePdfRenderer: PdfRenderer? = null
 
-    // High-speed in-memory Bitmap LRU Cache capped to at most 32 page bitmaps (capacity >= 16)
-    private val pageBitmapCache = object : LruCache<String, Bitmap>(32) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    const val CANONICAL_PDF_WIDTH_BUCKET = 1080
+
+    private fun buildPageCacheKey(pdfFilePath: String, pageIndex: Int): String =
+        "$pdfFilePath:$pageIndex:$CANONICAL_PDF_WIDTH_BUCKET"
+
+    private fun getOrOpenPdfRendererLocked(pdfFilePath: String): PdfRenderer? {
+        if (pdfFilePath.isBlank()) return null
+        if (activeRendererPath == pdfFilePath && activePdfRenderer != null) {
+            return activePdfRenderer
+        }
+        closePooledPdfRendererLocked()
+        val file = File(pdfFilePath)
+        if (!file.exists()) return null
+        return runCatching {
+            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            try {
+                val renderer = PdfRenderer(pfd)
+                activePfd = pfd
+                activePdfRenderer = renderer
+                activeRendererPath = pdfFilePath
+                renderer
+            } catch (t: Throwable) {
+                runCatching { pfd.close() }
+                throw t
+            }
+        }.getOrNull()
     }
 
-    // Dedicated in-memory Bitmap LRU Cache for translated PDF page bitmaps
-    val translatedPdfBitmapCache = object : LruCache<String, Bitmap>(16) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    private fun closePooledPdfRendererLocked() {
+        runCatching { activePdfRenderer?.close() }
+        runCatching { activePfd?.close() }
+        activePdfRenderer = null
+        activePfd = null
+        activeRendererPath = null
+    }
+
+    fun getPageCount(pdfFilePath: String, fallback: Int = 1): Int {
+        if (pdfFilePath.isBlank()) return fallback
+        return synchronized(rendererSessionLock) {
+            val renderer = getOrOpenPdfRendererLocked(pdfFilePath) ?: return@synchronized fallback
+            runCatching { renderer.pageCount.coerceAtLeast(1) }.getOrDefault(fallback)
+        }
+    }
+
+    // Byte-bounded in-memory Bitmap LRU Cache for raw PDF pages (48 MB max, size in KB)
+    private val pageBitmapCache = object : LruCache<String, Bitmap>(48 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
+    }
+
+    // Byte-bounded in-memory Bitmap LRU Cache for translated PDF page bitmaps (32 MB max, size in KB)
+    val translatedPdfBitmapCache = object : LruCache<String, Bitmap>(32 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
+    }
+
+    fun buildTranslatedCacheKey(pdfFilePath: String, pageIndex: Int, targetLang: String, displayMode: String): String {
+        val normLang = normalizeTranslationLangCode(targetLang)
+        val normMode = displayMode.trim().lowercase()
+        return "$pdfFilePath|$pageIndex|$normLang|$normMode"
     }
 
     fun getCachedTranslatedBitmap(key: String): Bitmap? {
@@ -134,11 +192,33 @@ object PdfNativeRenderer {
         return if (cached != null && !cached.isRecycled) cached else null
     }
 
-    private val aspectRatioCache = mutableMapOf<String, Float>()
+    fun getCachedTranslatedPageBitmap(
+        pdfFilePath: String,
+        pageIndex: Int,
+        targetLang: String,
+        displayMode: String
+    ): Bitmap? {
+        val key = buildTranslatedCacheKey(pdfFilePath, pageIndex, targetLang, displayMode)
+        return getCachedTranslatedBitmap(key)
+    }
 
-    // Dedicated high-resolution in-memory Bitmap LRU Cache for the full-screen illustration viewer (1600-2048px display resolution)
-    private val highResIllustCache = object : LruCache<String, Bitmap>(6) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    fun putCachedTranslatedPageBitmap(
+        pdfFilePath: String,
+        pageIndex: Int,
+        targetLang: String,
+        displayMode: String,
+        bitmap: Bitmap
+    ) {
+        val key = buildTranslatedCacheKey(pdfFilePath, pageIndex, targetLang, displayMode)
+        translatedPdfBitmapCache.put(key, bitmap)
+    }
+
+    private val aspectRatioCache = ConcurrentHashMap<String, Float>()
+
+    // Byte-bounded high-resolution in-memory Bitmap LRU Cache for the full-screen illustration viewer (24 MB max, size in KB)
+    private val highResIllustCache = object : LruCache<String, Bitmap>(24 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
     }
 
     fun getCachedHighResIllustration(pdfFilePath: String, pageIndex: Int): Bitmap? {
@@ -163,40 +243,44 @@ object PdfNativeRenderer {
             highResIllustCache.get(cacheKey)?.let { cached ->
                 if (!cached.isRecycled) return@withLock cached
             }
-            runCatching {
-                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                    PdfRenderer(pfd).use { renderer ->
-                        if (pageIndex !in 0 until renderer.pageCount) return@use null
-                        renderer.openPage(pageIndex).use { page ->
-                            val rawW = page.width.coerceAtLeast(1)
-                            val rawH = page.height.coerceAtLeast(1)
-                            val targetW = targetWidthPx.coerceIn(1600, 2048)
-                            val scale = (targetW.toFloat() / rawW.toFloat()).coerceAtLeast(1.0f)
-                            var bmpW = (rawW * scale).toInt().coerceAtLeast(1)
-                            var bmpH = (rawH * scale).toInt().coerceAtLeast(1)
-                            val maxDim = 3840
-                            if (maxOf(bmpW, bmpH) > maxDim) {
-                                val downscale = maxDim.toFloat() / maxOf(bmpW, bmpH).toFloat()
-                                bmpW = (bmpW * downscale).toInt().coerceAtLeast(1)
-                                bmpH = (bmpH * downscale).toInt().coerceAtLeast(1)
-                            }
-                            val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
-                            val canvas = Canvas(bitmap)
-                            canvas.drawColor(Color.WHITE)
-                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            highResIllustCache.put(cacheKey, bitmap)
-                            bitmap
+            synchronized(rendererSessionLock) {
+                val renderer = getOrOpenPdfRendererLocked(pdfFilePath) ?: return@synchronized null
+                runCatching {
+                    if (pageIndex !in 0 until renderer.pageCount) return@runCatching null
+                    renderer.openPage(pageIndex).use { page ->
+                        val rawW = page.width.coerceAtLeast(1)
+                        val rawH = page.height.coerceAtLeast(1)
+                        val targetW = targetWidthPx.coerceIn(1600, 2048)
+                        val scale = (targetW.toFloat() / rawW.toFloat()).coerceAtLeast(1.0f)
+                        var bmpW = (rawW * scale).toInt().coerceAtLeast(1)
+                        var bmpH = (rawH * scale).toInt().coerceAtLeast(1)
+                        val maxDim = 3840
+                        if (maxOf(bmpW, bmpH) > maxDim) {
+                            val downscale = maxDim.toFloat() / maxOf(bmpW, bmpH).toFloat()
+                            bmpW = (bmpW * downscale).toInt().coerceAtLeast(1)
+                            bmpH = (bmpH * downscale).toInt().coerceAtLeast(1)
                         }
+                        val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bitmap)
+                        canvas.drawColor(Color.WHITE)
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        highResIllustCache.put(cacheKey, bitmap)
+                        bitmap
                     }
-                }
-            }.getOrNull()
+                }.getOrNull()
+            }
         }
     }
 
-    fun getCachedBitmap(pdfFilePath: String, pageIndex: Int, widthBucket: Int): Bitmap? {
-        val bmp = pageBitmapCache.get("$pdfFilePath:$pageIndex:$widthBucket")
+    fun getCachedBitmap(pdfFilePath: String, pageIndex: Int, widthBucket: Int = CANONICAL_PDF_WIDTH_BUCKET): Bitmap? {
+        if (pdfFilePath.isBlank() || pageIndex < 0) return null
+        val bmp = pageBitmapCache.get(buildPageCacheKey(pdfFilePath, pageIndex))
         if (bmp != null && !bmp.isRecycled) return bmp
         return null
+    }
+
+    fun getAnyCachedPageBitmap(pdfFilePath: String, pageIndex: Int): Bitmap? {
+        return getCachedBitmap(pdfFilePath, pageIndex)
     }
 
     fun getCachedPageAspectRatio(pdfFilePath: String): Float {
@@ -376,7 +460,7 @@ object PdfNativeRenderer {
                             }
                             coverFilePath = coverFile.absolutePath
                             firstPageBitmap = bmp
-                            pageBitmapCache.put("${pdfFile.absolutePath}:0:720", bmp)
+                            pageBitmapCache.put(buildPageCacheKey(pdfFile.absolutePath, 0), bmp)
                         }
                     }
                 }
@@ -385,7 +469,7 @@ object PdfNativeRenderer {
         onProgressUpdate(bookId, 80)
 
         val (spineHex, spineTextHex) = SpineColorExtractor.extractSpineColors(firstPageBitmap)
-        if (firstPageBitmap != null && pageBitmapCache.get("${pdfFile.absolutePath}:0:720") == null) {
+        if (firstPageBitmap != null && pageBitmapCache.get(buildPageCacheKey(pdfFile.absolutePath, 0)) == null) {
             firstPageBitmap?.recycle()
         }
 
@@ -436,10 +520,8 @@ object PdfNativeRenderer {
         pageIndex: Int,
         targetWidthPx: Int = 960
     ): Bitmap? {
-        if (pageIndex < 0) return null
-        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
-        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
-        val cacheKey = "$pdfFilePath:$pageIndex:$widthBucket"
+        if (pageIndex < 0 || pdfFilePath.isBlank()) return null
+        val cacheKey = buildPageCacheKey(pdfFilePath, pageIndex)
         pageBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return cached
         }
@@ -447,28 +529,30 @@ object PdfNativeRenderer {
         val file = File(pdfFilePath)
         if (!file.exists()) return null
 
-        return runCatching {
-            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    if (pageIndex !in 0 until renderer.pageCount) return@use null
-                    renderer.openPage(pageIndex).use { page ->
-                        val rawW = page.width.coerceAtLeast(1)
-                        val rawH = page.height.coerceAtLeast(1)
-                        aspectRatioCache[pdfFilePath] = (rawW.toFloat() / rawH.toFloat()).coerceIn(0.45f, 1.6f)
-                        val scale = minOf(1.8f, 1080f / rawW.toFloat()).coerceAtLeast(0.5f)
-                        val bmpW = (rawW * scale).toInt().coerceIn(240, 1080)
-                        val bmpH = (rawH * scale).toInt().coerceIn(320, 1920)
-                        val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
-                        val canvas = Canvas(bitmap)
-                        // Always fill PDF page background with pure white paper (#FFFFFF)
-                        canvas.drawColor(Color.WHITE)
-                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        pageBitmapCache.put(cacheKey, bitmap)
-                        bitmap
-                    }
-                }
+        return synchronized(rendererSessionLock) {
+            pageBitmapCache.get(cacheKey)?.let { cached ->
+                if (!cached.isRecycled) return@synchronized cached
             }
-        }.getOrNull()
+            val renderer = getOrOpenPdfRendererLocked(pdfFilePath) ?: return@synchronized null
+            runCatching {
+                if (pageIndex !in 0 until renderer.pageCount) return@runCatching null
+                renderer.openPage(pageIndex).use { page ->
+                    val rawW = page.width.coerceAtLeast(1)
+                    val rawH = page.height.coerceAtLeast(1)
+                    aspectRatioCache[pdfFilePath] = (rawW.toFloat() / rawH.toFloat()).coerceIn(0.45f, 1.6f)
+                    val scale = minOf(1.8f, 1080f / rawW.toFloat()).coerceAtLeast(0.5f)
+                    val bmpW = (rawW * scale).toInt().coerceIn(240, 1080)
+                    val bmpH = (rawH * scale).toInt().coerceIn(320, 1920)
+                    val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    // Always fill PDF page background with pure white paper (#FFFFFF)
+                    canvas.drawColor(Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    pageBitmapCache.put(cacheKey, bitmap)
+                    bitmap
+                }
+            }.getOrNull()
+        }
     }
 
     suspend fun renderPageBitmap(
@@ -476,10 +560,8 @@ object PdfNativeRenderer {
         pageIndex: Int,
         targetWidthPx: Int = 960
     ): Bitmap? = withContext(Dispatchers.IO) {
-        if (pageIndex < 0) return@withContext null
-        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
-        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
-        val cacheKey = "$pdfFilePath:$pageIndex:$widthBucket"
+        if (pageIndex < 0 || pdfFilePath.isBlank()) return@withContext null
+        val cacheKey = buildPageCacheKey(pdfFilePath, pageIndex)
         pageBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return@withContext cached
         }
@@ -507,25 +589,23 @@ object PdfNativeRenderer {
         engine: String = ""
     ): Bitmap? {
         if (pageIndex < 0 || blocks.isEmpty() || translatedTexts.isEmpty()) return null
-        val normLang = normalizeTranslationLangCode(targetLang)
-        val normMode = displayMode.trim().lowercase()
-        val cacheKey = "$pdfFilePath|$pageIndex|$normLang|$engine|$normMode|$targetWidthPx"
+        val cacheKey = buildTranslatedCacheKey(pdfFilePath, pageIndex, targetLang, displayMode)
         translatedPdfBitmapCache.get(cacheKey)?.let { cached ->
             if (!cached.isRecycled) return cached
         }
 
-        val boundedTargetW = targetWidthPx.coerceIn(360, 1080)
-        val widthBucket = ((boundedTargetW / 120) * 120).coerceAtLeast(360)
-        val origBmp = getCachedBitmap(pdfFilePath, pageIndex, widthBucket)
+        val origBmp = getCachedBitmap(pdfFilePath, pageIndex)
             ?: renderPage(pdfFilePath, pageIndex, targetWidthPx)
             ?: return null
+
+        val effectiveIsIllust = isIllustrationPage || isIllustrationOrArtworkPage(origBmp, pageIndex)
 
         val rendered = renderTranslatedPdfPageBitmap(
             origBmp = origBmp,
             blocks = blocks,
             translatedTexts = translatedTexts,
             displayMode = displayMode,
-            isIllustrationPage = isIllustrationPage
+            isIllustrationPage = effectiveIsIllust
         )
         translatedPdfBitmapCache.put(cacheKey, rendered)
         return rendered
@@ -1096,7 +1176,8 @@ object PdfNativeRenderer {
             val file = File(pdfFilePath)
             if (!file.exists()) return null
             PDFBoxResourceLoader.init(context.applicationContext)
-            val doc = runCatching { PDDocument.load(file) }.getOrNull()
+            val memSetting = com.tom_roush.pdfbox.io.MemoryUsageSetting.setupMixed(16L * 1024L * 1024L)
+            val doc = runCatching { PDDocument.load(file, memSetting) }.getOrNull()
             if (doc != null) {
                 cachedDoc = doc
                 cachedDocPath = pdfFilePath
@@ -1106,12 +1187,26 @@ object PdfNativeRenderer {
     }
 
     fun closeCachedDoc() {
+        synchronized(rendererSessionLock) {
+            closePooledPdfRendererLocked()
+        }
         synchronized(docCacheLock) {
             runCatching { cachedDoc?.close() }
             cachedDoc = null
             cachedDocPath = null
             pageParagraphBlocksCache.evictAll()
             translatedPdfBitmapCache.evictAll()
+        }
+    }
+
+    fun clearMemoryCaches(evictPageBitmaps: Boolean = true) {
+        highResIllustCache.evictAll()
+        translatedPdfBitmapCache.evictAll()
+        pageParagraphBlocksCache.evictAll()
+        if (evictPageBitmaps) {
+            pageBitmapCache.evictAll()
+        } else {
+            pageBitmapCache.trimToSize(pageBitmapCache.maxSize() / 2)
         }
     }
 
@@ -1161,14 +1256,18 @@ object PdfNativeRenderer {
             } else 14f
 
             val titleClean = bookTitle.trim().lowercase()
-            val bodyLines = allLines.filter { vl ->
+            val bodyLines = allLines.filterIndexed { lineIdx, vl ->
                 val txt = vl.text.trim()
-                if (txt.isEmpty()) return@filter false
+                if (txt.isEmpty()) return@filterIndexed false
                 val lower = txt.lowercase()
 
-                if (lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
-                    lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")) {
-                    return@filter false
+                val isHeaderOrFooterMargin = vl.yTop < pageH * 0.088f || vl.yTop > pageH * 0.90f
+                if (isHeaderOrFooterMargin && (
+                        lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
+                        lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")
+                    )
+                ) {
+                    return@filterIndexed false
                 }
 
                 // Top header zone: yTop < pageH * 0.088f
@@ -1176,19 +1275,34 @@ object PdfNativeRenderer {
                     val isTitleMatch = titleClean.length >= 3 && (lower == titleClean || lower.contains(titleClean))
                     val isPageNum = txt.matches(Regex("""^(?:[\-–—#\s]*\d+[\-–—#\s]*|page\s*\d+|\d+\s*\|\s*\d+)$""", RegexOption.IGNORE_CASE))
                     val isVolumeOrTrans = lower.contains("translation") || (lower.contains("volume") && (lower.contains("|") || lower.contains("vol")))
-                    val isDistantSmallFirstLine = allLines.indexOf(vl) == 0 && allLines.size >= 2 &&
+                    val isDistantSmallFirstLine = lineIdx == 0 && allLines.size >= 2 &&
                         vl.maxFontSize < bodyMedianFontSize - 0.6f &&
                         (allLines[1].yTop - vl.yTop) > normalLineStep * 1.65f
 
                     if (isTitleMatch || isPageNum || isVolumeOrTrans || isDistantSmallFirstLine) {
-                        return@filter false
+                        return@filterIndexed false
                     }
                 }
 
-                // Bottom footer zone: yTop > pageH * 0.885f
+                // Bottom footer zone: only filter out true standalone page numbers or separated running footers
                 if (vl.yTop > pageH * 0.885f) {
-                    if (txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))) return@filter false
-                    if (lower.contains("chapter") || lower.contains("bab") || lower.contains("pusat perhatian") || txt.matches(Regex(""".*\b\d+\s*$"""))) return@filter false
+                    val isPurePageNumber = txt.matches(
+                        Regex("""^(?:[-—–~#|•\s]*\d+[-—–~#|•\s]*|page\s*\d+|hal(?:aman)?\.?\s*\d+|\d+\s*[/|]\s*\d+)$""", RegexOption.IGNORE_CASE)
+                    )
+                    if (isPurePageNumber) return@filterIndexed false
+
+                    val isVeryBottomLine = lineIdx == allLines.lastIndex || vl.yTop > pageH * 0.915f
+                    val gapFromPrev = if (lineIdx > 0) (vl.yTop - allLines[lineIdx - 1].yTop) else Float.MAX_VALUE
+                    val isSeparatedFooter = vl.yTop > pageH * 0.915f ||
+                        gapFromPrev > normalLineStep * 1.38f ||
+                        vl.maxFontSize < bodyMedianFontSize - 0.5f
+                    val hasRunningFooterPattern = Regex("""(?i)^(?:chapter|bab|bagian|part|volume|vol\.?)\b.*""").matches(txt) ||
+                        Regex("""(?i).*\b(?:chapter|bab)\s+\d+.*""").matches(txt) ||
+                        lower.contains("pusat perhatian") ||
+                        txt.matches(Regex("""^.+?\s+\d{1,4}\s*$"""))
+                    if (isVeryBottomLine && isSeparatedFooter && hasRunningFooterPattern) {
+                        return@filterIndexed false
+                    }
                 }
 
                 true
@@ -1429,82 +1543,148 @@ object PdfNativeRenderer {
             layoutWidths.add(layoutWidthPx)
         }
 
+        // Safe maximum bottom boundary above the footer zone:
+        // Never clamp above the actual bottom of the extracted body blocks (rawMaxBlockBottomPx),
+        // while allowing the final block a small safe breathing margin above the footer zone (~92.2% page height).
+        val rawMaxBlockBottomPx = (blocks.maxOf { it.pdfBottom } * scaleY + 4f)
+            .coerceAtMost(outBmp.height - 4f)
+            .coerceAtLeast(16f)
+        val lastBlockFontPx = (blocks.last().avgFontSizePt * scaleY).coerceAtLeast(10f)
+        val lastOrigBottomPx = maxOf(
+            rawMaxBlockBottomPx,
+            minOf(rawMaxBlockBottomPx + lastBlockFontPx * 0.45f, outBmp.height * 0.922f)
+        ).coerceAtMost(outBmp.height - 4f)
+
+        fun buildFittedBlockLayout(
+            b: PdfParagraphBlock,
+            spannable: SpannableString,
+            widthPx: Int,
+            availHeightPx: Float,
+            inkColor: Int
+        ): StaticLayout {
+            val baseFontPx = (b.avgFontSizePt * scaleY).coerceAtLeast(8f)
+            val align = if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL
+            val tf = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
+
+            fun createLayout(scale: Float, lineMult: Float, maxLines: Int = Int.MAX_VALUE): StaticLayout {
+                val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+                    color = inkColor
+                    typeface = tf
+                    textSize = (baseFontPx * scale).coerceAtLeast(6.5f)
+                }
+                val builder = StaticLayout.Builder.obtain(spannable, 0, spannable.length, paint, widthPx)
+                    .setAlignment(align)
+                    .setLineSpacing(0f, lineMult)
+                    .setIncludePad(false)
+                if (maxLines < Int.MAX_VALUE) {
+                    builder.setMaxLines(maxLines.coerceAtLeast(1))
+                    builder.setEllipsize(TextUtils.TruncateAt.END)
+                }
+                return builder.build()
+            }
+
+            var bestLayout = createLayout(1.0f, lineSpacingMultiplier)
+            if (bestLayout.height <= availHeightPx) {
+                return bestLayout
+            }
+
+            // Try progressively smaller font scales and tighter line spacing so translated text fits inside its original block box
+            var scale = 0.96f
+            while (scale >= 0.46f) {
+                val mult = if (scale <= 0.88f || isBilingual) 1.0f else 1.05f
+                val candidate = createLayout(scale, mult)
+                bestLayout = candidate
+                if (candidate.height <= availHeightPx) {
+                    return candidate
+                }
+                scale -= 0.04f
+            }
+
+            // If still taller than availHeightPx at minimum readable scale, cap maxLines to strictly fit inside availHeightPx
+            if (bestLayout.height > availHeightPx && bestLayout.lineCount > 1) {
+                var fittingLines = bestLayout.lineCount
+                for (lineIdx in 0 until bestLayout.lineCount) {
+                    if (bestLayout.getLineBottom(lineIdx) > availHeightPx) {
+                        fittingLines = lineIdx.coerceAtLeast(1)
+                        break
+                    }
+                }
+                bestLayout = createLayout(0.46f, 1.0f, maxLines = fittingLines)
+            }
+            return bestLayout
+        }
+
         if (!isIllustrationPage) {
             // Case A — Normal Text Page (!isIllustrationPage)
-            val minBlockLeftPx = (blocks.minOf { it.pdfLeft } * scaleX - 6f).coerceAtLeast(4f)
-            val maxBlockRightPx = (blocks.maxOf { maxOf(it.pdfRight, it.colRight) } * scaleX + 6f).coerceAtMost(outBmp.width - 4f)
-            val firstBlockTopPx = (blocks.minOf { it.pdfTop } * scaleY - 4f).coerceAtLeast(4f)
-            val lastBlockBottomPx = (blocks.maxOf { it.pdfBottom } * scaleY + 6f).coerceAtMost(outBmp.height - 4f)
-
-            // Erase the entire body text column zone cleanly in ONE single rectangle
-            canvas.drawRect(RectF(minBlockLeftPx, firstBlockTopPx, maxBlockRightPx, lastBlockBottomPx), erasePaint)
-
-            val totalAvailH = lastBlockBottomPx - firstBlockTopPx
-
-            fun buildLayoutsForScale(scale: Float): Pair<List<StaticLayout>, Float> {
-                var curH = 0f
-                val layouts = ArrayList<StaticLayout>(blocks.size)
-                for (i in blocks.indices) {
-                    val b = blocks[i]
-                    val spannable = spannables[i]
-                    val widthPx = layoutWidths[i]
-                    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-                        color = darkInkColor
-                        typeface = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
-                        textSize = b.avgFontSizePt * scaleY * scale
-                    }
-                    val sl = StaticLayout.Builder.obtain(spannable, 0, spannable.length, paint, widthPx)
-                        .setAlignment(if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
-                        .setLineSpacing(0f, lineSpacingMultiplier)
-                        .setIncludePad(false)
-                        .build()
-                    layouts.add(sl)
-                    val paraGapPx = (b.avgFontSizePt * scaleY * 0.55f).coerceAtLeast(8f)
-                    curH += sl.height + if (i < blocks.size - 1) paraGapPx else 0f
-                }
-                return Pair(layouts, curH)
-            }
-
-            var (layouts, totalH) = buildLayoutsForScale(1.0f)
-            var fontScale = 1.0f
-
-            if (totalH > totalAvailH) {
-                val candidateScales = listOf(0.96f, 0.92f, 0.88f, 0.84f, 0.80f, 0.76f)
-                for (cand in candidateScales) {
-                    val (candLayouts, candH) = buildLayoutsForScale(cand)
-                    layouts = candLayouts
-                    totalH = candH
-                    fontScale = cand
-                    if (candH <= totalAvailH) break
-                }
-            }
-
-            var cursorY = firstBlockTopPx
+            // First pass: erase each paragraph block strictly within its own original bounding box
+            // so headers, footers, separator lines, and inline artwork outside the blocks are never erased.
             for (i in blocks.indices) {
                 val b = blocks[i]
-                val sl = layouts[i]
-                val leftPx = leftPxs[i]
-                val idealTopPx = b.pdfTop * scaleY
-                val drawTopPx = if (fontScale < 0.96f) cursorY else maxOf(cursorY, idealTopPx)
+                val eraseLeft = (b.pdfLeft * scaleX - 4f).coerceAtLeast(2f)
+                val eraseRight = (maxOf(b.pdfRight, b.colRight) * scaleX + 4f).coerceAtMost(outBmp.width - 2f)
+                val eraseTop = (b.pdfTop * scaleY - 2f).coerceAtLeast(2f)
+                val eraseBottom = (b.pdfBottom * scaleY + 4f).coerceAtMost(lastOrigBottomPx + 2f)
+                if (eraseRight > eraseLeft && eraseBottom > eraseTop) {
+                    canvas.drawRect(RectF(eraseLeft, eraseTop, eraseRight, eraseBottom), erasePaint)
+                }
+            }
 
-                val bottomAfterDraw = drawTopPx + sl.height
-                if (bottomAfterDraw > lastBlockBottomPx) {
-                    val extraBottom = minOf(bottomAfterDraw + 4f, outBmp.height * 0.91f)
-                    if (extraBottom > lastBlockBottomPx) {
-                        canvas.drawRect(
-                            RectF(minBlockLeftPx, lastBlockBottomPx, maxBlockRightPx, extraBottom),
-                            erasePaint
-                        )
-                    }
+            // Second pass: render each translated block strictly inside its original block bounds & scale
+            for (i in blocks.indices) {
+                val b = blocks[i]
+                val spannable = spannables[i]
+                val widthPx = layoutWidths[i]
+                val leftPx = leftPxs[i]
+                val blockTopPx = (b.pdfTop * scaleY).coerceAtLeast(4f)
+                val origBottomPx = (b.pdfBottom * scaleY + 4f).coerceAtMost(lastOrigBottomPx)
+
+                // Allowed bottom for block i: can use up to its original bottom (plus small part of inter-paragraph gap),
+                // but NEVER overlaps block i+1 and NEVER crosses lastOrigBottomPx (footer boundary).
+                val nextBlockTopPx = if (i + 1 < blocks.size && blocks[i + 1].pdfTop > b.pdfTop) {
+                    (blocks[i + 1].pdfTop * scaleY - 3f).coerceAtLeast(blockTopPx + 10f)
+                } else {
+                    lastOrigBottomPx
+                }
+                val allowedBottomPx = minOf(
+                    maxOf(origBottomPx, minOf(origBottomPx + (nextBlockTopPx - origBottomPx).coerceAtLeast(0f) * 0.65f, nextBlockTopPx)),
+                    nextBlockTopPx,
+                    lastOrigBottomPx
+                ).coerceAtLeast(blockTopPx + 10f)
+                val availBlockH = (allowedBottomPx - blockTopPx).coerceAtLeast(10f)
+
+                val sl = buildFittedBlockLayout(
+                    b = b,
+                    spannable = spannable,
+                    widthPx = widthPx,
+                    availHeightPx = availBlockH,
+                    inkColor = darkInkColor
+                )
+
+                val clipRightPx = (leftPx + widthPx + 2f).coerceAtMost(outBmp.width - 2f)
+                val clipBottomPx = minOf(blockTopPx + sl.height + 2f, allowedBottomPx + 2f, lastOrigBottomPx + 2f)
+
+                if (clipBottomPx > origBottomPx) {
+                    canvas.drawRect(
+                        RectF(
+                            (leftPx - 3f).coerceAtLeast(2f),
+                            origBottomPx,
+                            clipRightPx,
+                            clipBottomPx
+                        ),
+                        erasePaint
+                    )
                 }
 
                 canvas.save()
-                canvas.translate(leftPx, drawTopPx)
+                canvas.clipRect(
+                    (leftPx - 2f).coerceAtLeast(0f),
+                    (blockTopPx - 2f).coerceAtLeast(0f),
+                    clipRightPx,
+                    clipBottomPx
+                )
+                canvas.translate(leftPx, blockTopPx)
                 sl.draw(canvas)
                 canvas.restore()
-
-                val paraGapPx = (b.avgFontSizePt * scaleY * 0.55f).coerceAtLeast(8f)
-                cursorY = drawTopPx + sl.height + paraGapPx
             }
         } else {
             // Case B — Illustration Page with Text Overlay (isIllustrationPage == true)
@@ -1518,28 +1698,35 @@ object PdfNativeRenderer {
                 val widthPx = layoutWidths[i]
                 val leftPx = leftPxs[i]
                 val topPx = (b.pdfTop * scaleY).coerceAtLeast(4f)
-
-                val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-                    color = Color.rgb(24, 24, 26)
-                    typeface = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
-                    textSize = b.avgFontSizePt * scaleY
+                val origBottomPx = (b.pdfBottom * scaleY + 4f).coerceAtMost(outBmp.height - 4f)
+                val nextBlockTopPx = if (i + 1 < blocks.size && blocks[i + 1].pdfTop > b.pdfTop) {
+                    (blocks[i + 1].pdfTop * scaleY - 4f).coerceAtLeast(topPx + 12f)
+                } else {
+                    (outBmp.height - 6f).coerceAtLeast(topPx + 12f)
                 }
+                val allowedBottomPx = minOf(maxOf(origBottomPx, nextBlockTopPx), nextBlockTopPx, outBmp.height - 4f)
+                    .coerceAtLeast(topPx + 12f)
+                val availBlockH = (allowedBottomPx - topPx).coerceAtLeast(12f)
 
-                val sl = StaticLayout.Builder.obtain(spannable, 0, spannable.length, textPaint, widthPx)
-                    .setAlignment(if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
-                    .setLineSpacing(0f, lineSpacingMultiplier)
-                    .setIncludePad(false)
-                    .build()
+                val sl = buildFittedBlockLayout(
+                    b = b,
+                    spannable = spannable,
+                    widthPx = widthPx,
+                    availHeightPx = availBlockH,
+                    inkColor = Color.rgb(24, 24, 26)
+                )
 
+                val drawnH = minOf(sl.height.toFloat(), availBlockH)
                 val pillRect = RectF(
-                    leftPx - 6f,
-                    topPx - 3f,
-                    leftPx + widthPx + 6f,
-                    topPx + sl.height + 3f
+                    (leftPx - 6f).coerceAtLeast(2f),
+                    (topPx - 3f).coerceAtLeast(2f),
+                    (leftPx + widthPx + 6f).coerceAtMost(outBmp.width - 2f),
+                    (topPx + drawnH + 3f).coerceAtMost(outBmp.height - 2f)
                 )
                 canvas.drawRoundRect(pillRect, 8f, 8f, pillPaint)
 
                 canvas.save()
+                canvas.clipRect(pillRect)
                 canvas.translate(leftPx, topPx)
                 sl.draw(canvas)
                 canvas.restore()

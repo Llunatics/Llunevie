@@ -53,6 +53,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -147,10 +148,11 @@ class MainActivity : ComponentActivity() {
             val prefs by viewModel.preferences.collectAsState()
             val books by viewModel.books.collectAsState()
             val shelves by viewModel.shelves.collectAsState()
-            val dailyLogs by viewModel.dailyLogs.collectAsState()
-            val allHighlights by viewModel.allHighlights.collectAsState()
-            val allBookmarks by viewModel.allBookmarks.collectAsState()
-            val uiState by viewModel.uiState.collectAsState()
+                    val dailyLogs by viewModel.dailyLogs.collectAsState()
+                    val allHighlights by viewModel.allHighlights.collectAsState()
+                    val activeBookHighlights by viewModel.activeBookHighlights.collectAsState()
+                    val activeBookBookmarks by viewModel.activeBookBookmarks.collectAsState()
+                    val uiState by viewModel.uiState.collectAsState()
             val strings = getLlunevieStrings(prefs.lang)
 
             val openFileLauncher = rememberLauncherForActivityResult(
@@ -166,6 +168,14 @@ class MainActivity : ComponentActivity() {
             ) { uri ->
                 if (uri != null) {
                     viewModel.importUserPhoto(uri)
+                }
+            }
+
+            val createBackupDocumentLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.CreateDocument("application/json")
+            ) { uri ->
+                if (uri != null) {
+                    viewModel.exportBackupToUri(uri)
                 }
             }
 
@@ -249,7 +259,8 @@ class MainActivity : ComponentActivity() {
                                 shelves = shelves,
                                 dailyLogs = dailyLogs,
                                 allHighlights = allHighlights,
-                                allBookmarks = allBookmarks,
+                                activeBookHighlights = activeBookHighlights,
+                                activeBookBookmarks = activeBookBookmarks,
                                 uiState = uiState,
                                 strings = strings,
                                 onPickLocalFile = {
@@ -264,13 +275,9 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 onPickPhoto = { pickPhotoLauncher.launch("image/*") },
-                                onShareBackupJson = { jsonPayload ->
-                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "application/json"
-                                        putExtra(Intent.EXTRA_TITLE, "llunevie-backup.json")
-                                        putExtra(Intent.EXTRA_TEXT, jsonPayload)
-                                    }
-                                    startActivity(Intent.createChooser(sendIntent, "Save Llunevie Backup"))
+                                onExportBackup = {
+                                    val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+                                    createBackupDocumentLauncher.launch("llunevie-backup-$dateStr.json")
                                 },
                                 onRequestAllFilesAccess = {
                                     pendingAutoImportEnable = true
@@ -286,6 +293,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        viewModel.onAppForegroundChanged(true)
         
         pendingOnboardingData?.let { (enabled, path, uri) ->
             if (viewModel.hasAllFilesAccess()) {
@@ -304,6 +312,11 @@ class MainActivity : ComponentActivity() {
         if (prefs.autoImportFolderEnabled && viewModel.hasAllFilesAccess()) {
             viewModel.scanAutoImportFolder()
         }
+    }
+
+    override fun onStop() {
+        viewModel.onAppForegroundChanged(false)
+        super.onStop()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -330,12 +343,13 @@ private fun LlunevieMainContainer(
     shelves: List<com.llunaticsys.llunevie.data.local.ShelfEntity>,
     dailyLogs: List<com.llunaticsys.llunevie.data.local.DailyReadingLogEntity>,
     allHighlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity>,
-    allBookmarks: List<PageBookmarkEntity>,
+    activeBookHighlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity>,
+    activeBookBookmarks: List<PageBookmarkEntity>,
     uiState: LlunevieUiState,
     strings: com.llunaticsys.llunevie.ui.theme.LlunevieStrings,
     onPickLocalFile: () -> Unit,
     onPickPhoto: () -> Unit,
-    onShareBackupJson: (String) -> Unit,
+    onExportBackup: () -> Unit,
     onRequestAllFilesAccess: () -> Unit
 ) {
     val palette = LocalLluneviePalette.current
@@ -344,14 +358,8 @@ private fun LlunevieMainContainer(
         uiState.pendingCandidateForShelf != null ||
         uiState.selectedCatalogBookDetail != null
 
-    val targetBlur = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) 10.dp else 0.dp
-    val animatedBlur by animateDpAsState(
-        targetValue = targetBlur,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "screenBackdropBlur"
-    )
-    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && animatedBlur > 0.5.dp) {
-        Modifier.blur(animatedBlur)
+    val screenBlurModifier = if (Build.VERSION.SDK_INT >= 31 && isAnyModalOrSheetOpen) {
+        Modifier.blur(10.dp)
     } else {
         Modifier
     }
@@ -471,7 +479,7 @@ private fun LlunevieMainContainer(
                     },
                     onSelectAutoImportFolder = { path, uri -> viewModel.setAutoImportFolder(path, uri) },
                     onRescanFolder = { viewModel.scanAutoImportFolder(force = true) },
-                    onExportBackup = { onShareBackupJson(viewModel.buildBackupJsonString()) },
+                    onExportBackup = onExportBackup,
                     onRestoreBackup = onPickLocalFile,
                     onUpdateTranslatorPrefs = { engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt ->
                         viewModel.updateTranslatorPrefs(engine, targetLang, displayMode, apiKey, modelName, customBaseUrl, systemPrompt)
@@ -486,12 +494,8 @@ private fun LlunevieMainContainer(
                         books.find { it.id == uiState.activeBookId } ?: books.firstOrNull()
                     }
                     if (activeBook != null) {
-                        val bookHighlights = remember(allHighlights, activeBook.id) {
-                            allHighlights.filter { it.bookId == activeBook.id }
-                        }
-                        val bookBookmarks = remember(allBookmarks, activeBook.id) {
-                            allBookmarks.filter { it.bookId == activeBook.id }
-                        }
+                        val bookHighlights = activeBookHighlights
+                        val bookBookmarks = activeBookBookmarks
                         val metrics = remember(uiState.activeBookChapters, uiState.activeChapterIndex, uiState.activePageIndex, prefs.readingFlowMode) {
                             viewModel.computeGlobalPageMetrics(
                                 uiState.activeBookChapters,
@@ -679,7 +683,9 @@ private fun LlunevieMainContainer(
                                 shape = CircleShape,
                                 color = palette.bgSurface,
                                 border = BorderStroke(1.dp, palette.borderSoft),
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .size(28.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text("✕", color = palette.textMain, fontSize = 11.sp)

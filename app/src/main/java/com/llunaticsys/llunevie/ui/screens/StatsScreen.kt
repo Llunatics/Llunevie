@@ -64,12 +64,43 @@ fun StatsScreen(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalLluneviePalette.current
-    val totalMinutes = books.sumOf { it.timeMinutes }.coerceAtLeast(dailyLogs.sumOf { it.minutesRead })
-    val finishedCount = books.count { it.completedAllPages }
-    val activeLogs = dailyLogs.filter { it.minutesRead > 0 || it.pagesTurned > 0 }
-    val totalPagesTurned = dailyLogs.sumOf { it.pagesTurned }
-    val bestDayLog = activeLogs.maxByOrNull { it.minutesRead }
-    val avgDailyMins = if (activeLogs.isNotEmpty()) totalMinutes / activeLogs.size else 0
+    val totalMinutes = remember(books, dailyLogs) {
+        books.sumOf { it.timeMinutes }.coerceAtLeast(dailyLogs.sumOf { it.minutesRead })
+    }
+    val finishedCount = remember(books) { books.count { it.completedAllPages } }
+    val activeLogs = remember(dailyLogs) { dailyLogs.filter { it.minutesRead > 0 || it.pagesTurned > 0 } }
+    val totalPagesTurned = remember(dailyLogs) { dailyLogs.sumOf { it.pagesTurned } }
+    val bestDayLog = remember(activeLogs) { activeLogs.maxByOrNull { it.minutesRead } }
+    val avgDailyMins = remember(totalMinutes, activeLogs) {
+        if (activeLogs.isNotEmpty()) totalMinutes / activeLogs.size else 0
+    }
+    val (currentStreak, longestStreak) = remember(activeLogs) {
+        val activeDates = activeLogs
+            .mapNotNull { runCatching { java.time.LocalDate.parse(it.dateKey) }.getOrNull() }
+            .distinct()
+            .sorted()
+        var longest = 0
+        var run = 0
+        var prevDate: java.time.LocalDate? = null
+        for (d in activeDates) {
+            run = if (prevDate != null && d == prevDate.plusDays(1)) run + 1 else 1
+            if (run > longest) longest = run
+            prevDate = d
+        }
+        val activeDateSet = activeDates.toHashSet()
+        val today = java.time.LocalDate.now()
+        var cursor: java.time.LocalDate? = when {
+            today in activeDateSet -> today
+            today.minusDays(1) in activeDateSet -> today.minusDays(1)
+            else -> null
+        }
+        var current = 0
+        while (cursor != null && cursor in activeDateSet) {
+            current++
+            cursor = cursor.minusDays(1)
+        }
+        current to longest
+    }
 
     // Build 168-day real calendar map (24 weeks x 7 days) strictly from recorded dailyLogs
     val logMap = remember(dailyLogs) { dailyLogs.associateBy { it.dateKey } }
@@ -175,7 +206,7 @@ fun StatsScreen(
                 modifier = Modifier.weight(1f)
             )
             StatSummaryCard(
-                value = activeLogs.size.toString(),
+                value = currentStreak.toString(),
                 label = strings.statsDaysRunning,
                 modifier = Modifier.weight(1f)
             )
@@ -220,8 +251,8 @@ fun StatsScreen(
         }
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            text = if (strings.isId) "${activeLogs.size} hari bersama buku · rekor terpanjang ${activeLogs.size} hari"
-            else "${activeLogs.size} days with books · longest run ${activeLogs.size} days",
+            text = if (strings.isId) "${activeLogs.size} hari bersama buku · rekor terpanjang $longestStreak hari"
+            else "${activeLogs.size} days with books · longest run $longestStreak days",
             color = palette.textMuted,
             fontSize = 12.sp
         )
@@ -241,7 +272,7 @@ fun StatsScreen(
         Spacer(modifier = Modifier.height(6.dp))
 
         // 24 columns x 7 rows dot matrix (`dot-matrix-grid`)
-        val weeks = last168Dates.chunked(7)
+        val weeks = remember(last168Dates) { last168Dates.chunked(7) }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp)

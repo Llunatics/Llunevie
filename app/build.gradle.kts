@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +15,8 @@ android {
         applicationId = "com.llunaticsys.llunevie"
         minSdk = 26
         targetSdk = 35
-        versionCode = 61
-        versionName = "0.4.1"
+        versionCode = 70
+        versionName = "0.5.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -31,12 +33,24 @@ android {
         includeInBundle = false
     }
 
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+    }
+
     signingConfigs {
         create("release") {
-            storeFile = file("keystore/llunevie-release.jks")
-            storePassword = "llunevie123"
-            keyAlias = "llunevie"
-            keyPassword = "llunevie123"
+            val keyPath = keystoreProperties.getProperty("storeFile")
+            storeFile = if (!keyPath.isNullOrBlank()) {
+                val f = file(keyPath)
+                if (f.exists()) f else rootProject.file(keyPath)
+            } else {
+                file("keystore/llunevie-release.jks")
+            }
+            storePassword = keystoreProperties.getProperty("storePassword") ?: "llunevie123"
+            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "llunevie"
+            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "llunevie123"
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
@@ -50,7 +64,8 @@ android {
         }
         release {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -76,6 +91,7 @@ android {
             excludes += "META-INF/*.MD"
             excludes += "META-INF/com/android/build/gradle/*"
             excludes += "META-INF/version-control-info.textproto"
+            excludes += "org/bouncycastle/pqc/**"
         }
     }
 }
@@ -97,7 +113,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.ui:ui-text-google-fonts")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
@@ -116,9 +131,6 @@ dependencies {
 
     // Coil Compose for Async Book Covers & Local Extracted Images
     implementation("io.coil-kt:coil-compose:2.7.0")
-
-    // Palette for Extracting Dominant Spine Colors from Book Covers
-    implementation("androidx.palette:palette-ktx:1.0.0")
 
     // CameraX & Google ML Kit Barcode Scanning & On-Device Text Recognition
     val cameraVersion = "1.3.4"

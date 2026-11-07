@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.llunaticsys.llunevie.ui.components.resolveDisplayFolderPath
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.ui.components.ModernSwitch
@@ -388,16 +389,5 @@ fun WelcomeOnboardingScreen(
                 )
             }
         }
-    }
-}
-
-private fun resolveDisplayFolderPath(uri: Uri): String {
-    val path = uri.path.orEmpty()
-    val decoded = Uri.decode(path)
-    return when {
-        decoded.startsWith("/tree/primary:") -> "/sdcard/" + decoded.removePrefix("/tree/primary:")
-        decoded.startsWith("primary:") -> "/sdcard/" + decoded.removePrefix("primary:")
-        decoded.contains(":") -> "/sdcard/" + decoded.substringAfterLast(":")
-        else -> "/sdcard/Llunevie/Books"
     }
 }

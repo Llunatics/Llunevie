@@ -52,8 +52,12 @@ import com.llunaticsys.llunevie.model.ReadingFlowMode
 import com.llunaticsys.llunevie.ui.components.normalizeBookTitle
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import com.llunaticsys.llunevie.ui.theme.canonicalShelfKey
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -62,7 +66,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -207,19 +215,41 @@ class LlunevieViewModel(
     )
     val uiState: StateFlow<LlunevieUiState> = _uiState.asStateFlow()
 
-    private val pdfBitmapCache = object : LruCache<String, Bitmap>(32) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
-    }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activeBookHighlights: StateFlow<List<HighlightNoteEntity>> = _uiState
+        .map { it.activeBookId }
+        .distinctUntilChanged()
+        .flatMapLatest { bookId ->
+            if (bookId.isNullOrBlank()) flowOf(emptyList())
+            else dao.observeHighlightsForBook(bookId)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
-    private val translatedPdfBitmapCache = object : LruCache<String, Bitmap>(32) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
-    }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activeBookBookmarks: StateFlow<List<PageBookmarkEntity>> = _uiState
+        .map { it.activeBookId }
+        .distinctUntilChanged()
+        .flatMapLatest { bookId ->
+            if (bookId.isNullOrBlank()) flowOf(emptyList())
+            else dao.observeBookmarksForBook(bookId)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     private val translatedTextCache = object : LruCache<String, List<Pair<String, String?>>>(100) {
         override fun sizeOf(key: String, value: List<Pair<String, String?>>): Int = 1
     }
 
     private var activeTranslationJob: Job? = null
+    private val inFlightTextTranslations = ConcurrentHashMap<String, Deferred<List<Pair<String, String?>>?>>()
+    private val inFlightPdfTranslations = ConcurrentHashMap<String, Deferred<Bitmap?>>()
     private val _pdfIndexingState = MutableStateFlow<Map<String, Int?>>(emptyMap())
     val pdfIndexingState: StateFlow<Map<String, Int?>> = _pdfIndexingState.asStateFlow()
 
@@ -227,30 +257,19 @@ class LlunevieViewModel(
     fun hasAllFilesAccess(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
 
+    private fun resolvePdfFilePath(bookId: String, filePath: String? = null): String? {
+        if (!filePath.isNullOrBlank()) return filePath
+        return books.value.find { it.id == bookId }?.localFilePath?.takeIf { it.isNotBlank() }
+    }
+
     fun getCachedPdfBitmap(bookId: String, pageIndex: Int, filePath: String? = null): Bitmap? {
-        val key = "$bookId:$pageIndex"
-        val bmp = pdfBitmapCache.get(key)
-        if (bmp != null && !bmp.isRecycled) return bmp
-        if (!filePath.isNullOrBlank()) {
-            val fallback = PdfNativeRenderer.getCachedBitmap(filePath, pageIndex, 1080)
-                ?: PdfNativeRenderer.getCachedBitmap(filePath, pageIndex, 960)
-                ?: PdfNativeRenderer.getCachedBitmap(filePath, pageIndex, 720)
-            if (fallback != null && !fallback.isRecycled) {
-                pdfBitmapCache.put(key, fallback)
-                return fallback
-            }
-        }
-        return null
+        val resolvedPath = resolvePdfFilePath(bookId, filePath) ?: return null
+        return PdfNativeRenderer.getAnyCachedPageBitmap(resolvedPath, pageIndex)
     }
 
     suspend fun loadPdfPageBitmap(bookId: String, filePath: String, pageIndex: Int): Bitmap? = withContext(Dispatchers.IO) {
-        val key = "$bookId:$pageIndex"
         getCachedPdfBitmap(bookId, pageIndex, filePath)?.let { return@withContext it }
-        val bmp = PdfNativeRenderer.renderPageBitmap(filePath, pageIndex, 1080)
-        if (bmp != null) {
-            pdfBitmapCache.put(key, bmp)
-        }
-        bmp
+        PdfNativeRenderer.renderPageBitmap(filePath, pageIndex, 1080)
     }
 
     fun prefetchPdfNeighbors(bookId: String, filePath: String, pageIndex: Int, isTwoPageSpread: Boolean = false) {
@@ -270,9 +289,8 @@ class LlunevieViewModel(
                 listOf(pageIndex + 1, pageIndex - 1, pageIndex + 2, pageIndex - 2)
             }
             for (p in pagesToPrefetch) {
-                if (p in 0 until total && pdfBitmapCache.get("$bookId:$p") == null) {
-                    val bmp = PdfNativeRenderer.renderPageBitmap(filePath, p, 1080)
-                    if (bmp != null) pdfBitmapCache.put("$bookId:$p", bmp)
+                if (p in 0 until total && PdfNativeRenderer.getAnyCachedPageBitmap(filePath, p) == null) {
+                    PdfNativeRenderer.renderPageBitmap(filePath, p, 1080)
                 }
             }
         }
@@ -290,23 +308,37 @@ class LlunevieViewModel(
     }
 
     fun getCachedTranslatedPdfBitmap(bookId: String, pageIndex: Int, targetLang: String, mode: String): Bitmap? {
-        val key = buildTranslatedPdfCacheKey(bookId, pageIndex, targetLang, mode)
-        val bmp = translatedPdfBitmapCache.get(key)
-        if (bmp != null && !bmp.isRecycled) return bmp
-        return null
+        val keyOwner = resolvePdfFilePath(bookId) ?: bookId
+        return PdfNativeRenderer.getCachedTranslatedPageBitmap(keyOwner, pageIndex, targetLang, mode)
     }
 
     fun putCachedTranslatedPdfBitmap(bookId: String, pageIndex: Int, targetLang: String, mode: String, bitmap: Bitmap) {
-        val key = buildTranslatedPdfCacheKey(bookId, pageIndex, targetLang, mode)
-        translatedPdfBitmapCache.put(key, bitmap)
+        val keyOwner = resolvePdfFilePath(bookId) ?: bookId
+        PdfNativeRenderer.putCachedTranslatedPageBitmap(keyOwner, pageIndex, targetLang, mode, bitmap)
     }
 
     fun getCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): List<Pair<String, String?>>? {
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
-        return translatedTextCache.get(key)
+        val cached = translatedTextCache.get(key) ?: return null
+        val hasTranslatable = cached.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
+        val hasValid = cached.any { (orig, trans) ->
+            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+        }
+        if (hasTranslatable && !hasValid) {
+            translatedTextCache.remove(key)
+            return null
+        }
+        return cached
     }
 
     fun putCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int, paragraphs: List<Pair<String, String?>>) {
+        val hasTranslatable = paragraphs.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
+        val hasValid = paragraphs.any { (orig, trans) ->
+            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+        }
+        if (hasTranslatable && !hasValid) return
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         translatedTextCache.put(key, paragraphs)
     }
@@ -314,6 +346,7 @@ class LlunevieViewModel(
     fun setTranslationTargetLang(newLang: String) {
         val normLang = normalizeTranslationLangCode(newLang)
         activeTranslationJob?.cancel()
+        com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
         _uiState.update {
             it.copy(
                 translationTargetLang = normLang,
@@ -347,6 +380,7 @@ class LlunevieViewModel(
 
     fun setTranslationActive(active: Boolean) {
         activeTranslationJob?.cancel()
+        com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
         _uiState.update {
             it.copy(
                 isTranslationActive = active,
@@ -362,6 +396,7 @@ class LlunevieViewModel(
     fun setTranslationMode(mode: String) {
         val normMode = mode.trim().lowercase()
         activeTranslationJob?.cancel()
+        com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
         _uiState.update {
             it.copy(
                 translationMode = normMode,
@@ -383,29 +418,41 @@ class LlunevieViewModel(
             val bookId = st.activeBookId ?: return@launch
             val book = books.value.find { it.id == bookId } ?: return@launch
             val isPdf = book.format.equals("PDF", ignoreCase = true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
-            val pageIdx = st.activePageIndex
+            val chapters = st.activeBookChapters
+            val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
+            val globalPageIdx = (metrics.currentGlobalPage - 1).coerceAtLeast(0)
             val mode = st.translationMode
+            val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
+            val isBilingualSpread = isSpread && mode.equals("bilingual", ignoreCase = true)
+            val targetPages = if (isSpread) {
+                val sStart = (globalPageIdx / 2) * 2
+                listOf(globalPageIdx, sStart, sStart + 1).distinct().filter { it in 0 until metrics.totalBookPages }
+            } else {
+                listOf(globalPageIdx)
+            }
 
             if (isPdf) {
                 val path = book.localFilePath ?: return@launch
-                loadOrTranslatePdfPageBitmap(
-                    bookId = bookId,
-                    filePath = path,
-                    pageIndex = pageIdx,
-                    targetLang = normLang,
-                    mode = mode
-                )
-            } else {
-                val chapters = st.activeBookChapters
-                val curCh = chapters.getOrNull(st.activeChapterIndex)
-                val pageRaw = curCh?.pages?.getOrNull(st.activePageIndex).orEmpty()
-                if (pageRaw.isNotBlank()) {
-                    loadOrTranslatePageParagraphs(
+                for (pZero in targetPages) {
+                    loadOrTranslatePdfPageBitmap(
                         bookId = bookId,
-                        pageIndex = pageIdx,
-                        pageRaw = pageRaw,
-                        targetLang = normLang
+                        filePath = path,
+                        pageIndex = pZero,
+                        targetLang = normLang,
+                        mode = if (isBilingualSpread) "replace" else mode
                     )
+                }
+            } else {
+                for (pZero in targetPages) {
+                    val pageRaw = getPageContentAtGlobalZeroIndex(chapters, pZero)?.third.orEmpty()
+                    if (pageRaw.isNotBlank()) {
+                        loadOrTranslatePageParagraphs(
+                            bookId = bookId,
+                            pageIndex = pZero,
+                            pageRaw = pageRaw,
+                            targetLang = normLang
+                        )
+                    }
                 }
             }
         }
@@ -426,58 +473,74 @@ class LlunevieViewModel(
         }
         getCachedTranslatedPdfBitmap(bookId, pageIndex, normLang, normMode)?.let { return@withContext it }
 
-        _uiState.update { it.copy(isTranslatingPage = true) }
+        val inFlightKey = "${buildTranslatedPdfCacheKey(bookId, pageIndex, normLang, normMode)}:$targetWidthPx"
+        val newDeferred = viewModelScope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            try {
+                getCachedTranslatedPdfBitmap(bookId, pageIndex, normLang, normMode)?.let { return@async it }
 
-        val translationRepo = TranslationRepository.getInstance(appContext)
-        val book = books.value.find { it.id == bookId }
-        val bookTitle = book?.title.orEmpty()
-        val blocks = translationRepo.extractPdfPageParagraphBlocks(appContext, filePath, pageIndex, bookTitle)
-        if (blocks.isEmpty()) {
-            val orig = loadPdfPageBitmap(bookId, filePath, pageIndex)
-            _uiState.update { it.copy(isTranslatingPage = false) }
-            return@withContext orig
+                _uiState.update { it.copy(isTranslatingPage = true) }
+
+                val translationRepo = TranslationRepository.getInstance(appContext)
+                val book = books.value.find { it.id == bookId }
+                val bookTitle = book?.title.orEmpty()
+                val blocks = translationRepo.extractPdfPageParagraphBlocks(appContext, filePath, pageIndex, bookTitle)
+                if (blocks.isEmpty()) {
+                    val orig = loadPdfPageBitmap(bookId, filePath, pageIndex)
+                    _uiState.update { it.copy(isTranslatingPage = false) }
+                    return@async orig
+                }
+
+                val texts = blocks.map { it.text }
+                val currentPrefs = preferences.value
+                val res = translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
+                if (!res.isSuccess) {
+                    _uiState.update { it.copy(isTranslatingPage = false) }
+                    return@async loadPdfPageBitmap(bookId, filePath, pageIndex)
+                }
+
+                val transPairs = res.getOrThrow()
+                val transTexts = transPairs.map { it.second ?: it.first }
+
+                val isIllust = pageIndex == 0 || _uiState.value.activeBookIllustrations.any { it.pageIndexInBook == pageIndex }
+                val rendered = PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
+                    pdfFilePath = filePath,
+                    pageIndex = pageIndex,
+                    blocks = blocks,
+                    translatedTexts = transTexts,
+                    displayMode = normMode,
+                    targetWidthPx = targetWidthPx,
+                    isIllustrationPage = isIllust,
+                    targetLang = normLang,
+                    engine = currentPrefs.translatorEngine
+                ) ?: loadPdfPageBitmap(bookId, filePath, pageIndex)
+
+                if (rendered != null) {
+                    putCachedTranslatedPdfBitmap(bookId, pageIndex, normLang, normMode, rendered)
+                }
+
+                if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == normLang) {
+                    _uiState.update {
+                        it.copy(
+                            isTranslatingPage = false,
+                            translationRevision = it.translationRevision + 1
+                        )
+                    }
+                }
+
+                rendered
+            } finally {
+                inFlightPdfTranslations.remove(inFlightKey)
+            }
         }
 
-        val texts = blocks.map { it.text }
-        val currentPrefs = preferences.value
-        val res = translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
-        if (!res.isSuccess) {
-            _uiState.update { it.copy(isTranslatingPage = false) }
-            return@withContext loadPdfPageBitmap(bookId, filePath, pageIndex)
+        val activeDeferred = inFlightPdfTranslations.compute(inFlightKey) { _, existing ->
+            if (existing != null && existing.isActive) existing else newDeferred
+        }!!
+        if (activeDeferred !== newDeferred) {
+            newDeferred.cancel()
         }
-
-        val transPairs = res.getOrThrow()
-        val transTexts = transPairs.map { it.second ?: it.first }
-
-        val isIllust = pageIndex == 0 || _uiState.value.activeBookIllustrations.any { it.pageIndexInBook == pageIndex }
-        val rendered = PdfNativeRenderer.getOrRenderTranslatedPdfPageBitmap(
-            pdfFilePath = filePath,
-            pageIndex = pageIndex,
-            blocks = blocks,
-            translatedTexts = transTexts,
-            displayMode = normMode,
-            targetWidthPx = targetWidthPx,
-            isIllustrationPage = isIllust,
-            targetLang = normLang,
-            engine = currentPrefs.translatorEngine
-        ) ?: loadPdfPageBitmap(bookId, filePath, pageIndex)
-
-        if (rendered != null) {
-            putCachedTranslatedPdfBitmap(bookId, pageIndex, normLang, normMode, rendered)
-        }
-
-        if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) != normLang) {
-            return@withContext rendered
-        }
-
-        _uiState.update {
-            it.copy(
-                isTranslatingPage = false,
-                translationRevision = it.translationRevision + 1
-            )
-        }
-
-        rendered
+        activeDeferred.start()
+        runCatching { activeDeferred.await() }.getOrNull()
     }
 
     suspend fun loadOrTranslatePageParagraphs(
@@ -490,41 +553,62 @@ class LlunevieViewModel(
         val sourceHash = pageRaw.hashCode()
         getCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash)?.let { return@withContext it }
 
-        _uiState.update { it.copy(isTranslatingPage = true) }
+        val inFlightKey = buildTranslatedTextCacheKey(bookId, pageIndex, normLang, sourceHash)
+        val newDeferred = viewModelScope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            try {
+                getCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash)?.let { return@async it }
 
-        val translationRepo = TranslationRepository.getInstance(appContext)
-        val currentPrefs = preferences.value
-        val res = translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
-        if (!res.isSuccess) {
-            _uiState.update { it.copy(isTranslatingPage = false) }
-            return@withContext null
+                _uiState.update { it.copy(isTranslatingPage = true) }
+
+                val translationRepo = TranslationRepository.getInstance(appContext)
+                val currentPrefs = preferences.value
+                val res = translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
+                if (!res.isSuccess) {
+                    _uiState.update { it.copy(isTranslatingPage = false) }
+                    return@async null
+                }
+
+                val transList = res.getOrThrow()
+                putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
+
+                if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == normLang) {
+                    _uiState.update {
+                        it.copy(
+                            isTranslatingPage = false,
+                            translationRevision = it.translationRevision + 1
+                        )
+                    }
+                }
+
+                transList
+            } finally {
+                inFlightTextTranslations.remove(inFlightKey)
+            }
         }
 
-        val transList = res.getOrThrow()
-        putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
-
-        if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) != normLang) {
-            return@withContext transList
+        val activeDeferred = inFlightTextTranslations.compute(inFlightKey) { _, existing ->
+            if (existing != null && existing.isActive) existing else newDeferred
+        }!!
+        if (activeDeferred !== newDeferred) {
+            newDeferred.cancel()
         }
-
-        _uiState.update {
-            it.copy(
-                isTranslatingPage = false,
-                translationRevision = it.translationRevision + 1
-            )
-        }
-
-        transList
+        activeDeferred.start()
+        runCatching { activeDeferred.await() }.getOrNull()
     }
 
     private var searchJob: Job? = null
     private var toastJob: Job? = null
     private var readingTimerJob: Job? = null
+    @Volatile
+    private var isAppInForeground: Boolean = true
     private var sessionAccumulatedSeconds: Int = 0
+    private val sessionFlushLock = Any()
+    private val orphanSweepDone = CompletableDeferred<Unit>()
 
     init {
         startActiveReadingSessionTicker()
-        viewModelScope.launch {
+        _uiState.update { it.copy(isInitialDataReady = true) }
+        viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val all = dao.getAllBooks()
                 all.forEach { b ->
@@ -545,78 +629,104 @@ class LlunevieViewModel(
                 }
             }
         }
-        viewModelScope.launch {
-            preferences.first()
-            if (preferences.value.autoImportFolderEnabled) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                runCatching {
+                    // Delete all redundant .epub and .txt files inside File(appContext.filesDir, "books")
+                    val booksDir = File(appContext.filesDir, "books")
+                    if (booksDir.exists()) {
+                        booksDir.listFiles()?.forEach { f ->
+                            val ext = f.extension.lowercase()
+                            if (ext == "epub" || ext == "txt") {
+                                f.delete()
+                            }
+                        }
+                    }
+
+                    // Delete any subfolder in covers or file in books whose book ID is not in activeBookIds
+                    val activeBookIds = dao.getAllBooks().map { it.id }.toSet()
+                    val coversDir = File(appContext.filesDir, "covers")
+                    if (coversDir.exists()) {
+                        coversDir.listFiles()?.forEach { folder ->
+                            if (folder.isDirectory && folder.name !in activeBookIds) {
+                                folder.deleteRecursively()
+                            }
+                        }
+                    }
+                    if (booksDir.exists()) {
+                        booksDir.listFiles()?.forEach { file ->
+                            val baseName = file.nameWithoutExtension
+                            if (baseName !in activeBookIds) {
+                                file.delete()
+                            }
+                        }
+                    }
+
+                    // Delete leftover PDFBox* or tmp_* files inside appContext.cacheDir
+                    appContext.cacheDir.listFiles()?.forEach { f ->
+                        val name = f.name
+                        if (name.startsWith("PDFBox", ignoreCase = true) || name.startsWith("tmp_", ignoreCase = true)) {
+                            if (f.isDirectory) f.deleteRecursively() else f.delete()
+                        }
+                    }
+                }
+            } finally {
+                orphanSweepDone.complete(Unit)
+            }
+            val initialPrefs = prefsRepo.preferencesFlow.first()
+            _uiState.update {
+                it.copy(
+                    translationTargetLang = normalizeTranslationLangCode(initialPrefs.translatorTargetLang),
+                    translationMode = initialPrefs.translatorDisplayMode.ifBlank { "replace" }
+                )
+            }
+            if (initialPrefs.autoImportFolderEnabled) {
                 scanAutoImportFolder()
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                // Delete all redundant .epub and .txt files inside File(appContext.filesDir, "books")
-                val booksDir = File(appContext.filesDir, "books")
-                if (booksDir.exists()) {
-                    booksDir.listFiles()?.forEach { f ->
-                        val ext = f.extension.lowercase()
-                        if (ext == "epub" || ext == "txt") {
-                            f.delete()
-                        }
-                    }
-                }
+    }
 
-                // Delete any subfolder in covers or file in books whose book ID is not in activeBookIds
-                val activeBookIds = dao.getAllBooks().map { it.id }.toSet()
-                val coversDir = File(appContext.filesDir, "covers")
-                if (coversDir.exists()) {
-                    coversDir.listFiles()?.forEach { folder ->
-                        if (folder.isDirectory && folder.name !in activeBookIds) {
-                            folder.deleteRecursively()
-                        }
-                    }
-                }
-                if (booksDir.exists()) {
-                    booksDir.listFiles()?.forEach { file ->
-                        val baseName = file.nameWithoutExtension
-                        if (baseName !in activeBookIds) {
-                            file.delete()
-                        }
-                    }
-                }
-
-                // Delete leftover PDFBox* or tmp_* files inside appContext.cacheDir
-                appContext.cacheDir.listFiles()?.forEach { f ->
-                    val name = f.name
-                    if (name.startsWith("PDFBox", ignoreCase = true) || name.startsWith("tmp_", ignoreCase = true)) {
-                        if (f.isDirectory) f.deleteRecursively() else f.delete()
-                    }
-                }
-            }
+    fun onAppForegroundChanged(inForeground: Boolean) {
+        isAppInForeground = inForeground
+        if (!inForeground) {
+            flushActiveReadingSession(_uiState.value.activeBookId)
         }
+    }
+
+    fun flushActiveReadingSession(bookIdOverride: String? = null) {
+        val targetBookId = bookIdOverride ?: _uiState.value.activeBookId ?: return
+        val deltaSeconds: Int
+        synchronized(sessionFlushLock) {
+            deltaSeconds = sessionAccumulatedSeconds
+            sessionAccumulatedSeconds = 0
+        }
+        if (deltaSeconds <= 0) return
+
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                // Pre-warm LocalCoverBitmapCache on cold start to eliminate 1-3 frame monogram flash
-                prefsRepo.preferencesFlow.first()
-                val allBooks = dao.getAllBooks()
-                val onTheGoBooks = allBooks.filter { !it.completedAllPages }.sortedByDescending { it.createdAtMillis }.take(6)
-                val recentBooks = allBooks.sortedByDescending { it.createdAtMillis }.take(9)
-                val visibleBooks = (onTheGoBooks + recentBooks).distinctBy { it.id }
-                visibleBooks.forEach { book ->
-                    val path = book.coverImagePath
-                    if (!path.isNullOrBlank() && !path.startsWith("http", ignoreCase = true)) {
-                        com.llunaticsys.llunevie.ui.components.LocalCoverBitmapCache.loadOrDecode(path, 540)
-                    }
-                }
-                _uiState.update { it.copy(isInitialDataReady = true) }
-            }.onFailure {
-                _uiState.update { it.copy(isInitialDataReady = true) }
+            val book = dao.getBookById(targetBookId) ?: books.value.find { it.id == targetBookId } ?: return@launch
+            val prevTotalSeconds = maxOf(book.readingSeconds, book.timeMinutes * 60)
+            val prevWholeMinutes = prevTotalSeconds / 60
+            val newTotalSeconds = prevTotalSeconds + deltaSeconds
+            val newWholeMinutes = newTotalSeconds / 60
+            val newlyCompletedMinutes = (newWholeMinutes - prevWholeMinutes).coerceAtLeast(0)
+
+            dao.updateBook(
+                book.copy(
+                    readingSeconds = newTotalSeconds,
+                    timeMinutes = newWholeMinutes,
+                    lastReadAtMillis = System.currentTimeMillis()
+                )
+            )
+            if (newlyCompletedMinutes > 0) {
+                recordDailyReadingMinute(newlyCompletedMinutes, 0)
             }
         }
     }
 
     /**
      * Smooth, zero-jank reading timer:
-     * Accumulates seconds in memory without writing to Room every second (which would trigger
-     * full-screen StateFlow recompositions every 1s). Writes to Room only once every 60 seconds!
+     * Accumulates seconds in memory while app is in the foreground and in Reader tab without writing
+     * to Room every second. Flushes every 60 seconds and on Reader exit / lifecycle stop!
      */
     private fun startActiveReadingSessionTicker() {
         readingTimerJob?.cancel()
@@ -624,20 +734,14 @@ class LlunevieViewModel(
             while (isActive) {
                 delay(1000L)
                 val st = _uiState.value
-                if (st.activeTab == MainNavTab.READER && st.activeBookId != null) {
-                    sessionAccumulatedSeconds++
-                    if (sessionAccumulatedSeconds >= 60) {
-                        sessionAccumulatedSeconds = 0
-                        val book = books.value.find { it.id == st.activeBookId }
-                        if (book != null) {
-                            val nextSecs = book.readingSeconds + 60
-                            val nextMins = book.timeMinutes + 1
-                            dao.updateBook(book.copy(readingSeconds = nextSecs, timeMinutes = nextMins, lastReadAtMillis = System.currentTimeMillis()))
-                            recordDailyReadingMinute(1, 0)
-                        }
+                if (isAppInForeground && st.activeTab == MainNavTab.READER && st.activeBookId != null) {
+                    val shouldFlush = synchronized(sessionFlushLock) {
+                        sessionAccumulatedSeconds++
+                        sessionAccumulatedSeconds >= 60
                     }
-                } else {
-                    sessionAccumulatedSeconds = 0
+                    if (shouldFlush) {
+                        flushActiveReadingSession(st.activeBookId)
+                    }
                 }
             }
         }
@@ -664,6 +768,16 @@ class LlunevieViewModel(
     }
 
     fun switchTab(tab: MainNavTab) {
+        val curState = _uiState.value
+        if (curState.activeTab == MainNavTab.READER && tab != MainNavTab.READER) {
+            flushActiveReadingSession(curState.activeBookId)
+            com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
+            EpubNativeParser.clearMemoryCaches()
+            PdfNativeRenderer.clearMemoryCaches(evictPageBitmaps = false)
+            viewModelScope.launch(Dispatchers.IO) {
+                PdfNativeRenderer.closeCachedDoc()
+            }
+        }
         _uiState.update { cur ->
             val prev = if (cur.activeTab != MainNavTab.READER) cur.activeTab else cur.previousTab
             cur.copy(
@@ -675,6 +789,11 @@ class LlunevieViewModel(
                 showReaderNotesDrawer = false
             )
         }
+    }
+
+    override fun onCleared() {
+        PdfNativeRenderer.closeCachedDoc()
+        super.onCleared()
     }
 
     // -------------------------------------------------------------------------
@@ -744,15 +863,20 @@ class LlunevieViewModel(
 
     fun importUserPhoto(uri: Uri) {
         viewModelScope.launch {
-            runCatching {
-                val dir = File(appContext.filesDir, "profile").apply { mkdirs() }
-                val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
-                appContext.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(outFile).use { output ->
-                        input.copyTo(output)
+            val savedPath = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = File(appContext.filesDir, "profile").apply { mkdirs() }
+                    val outFile = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
+                    appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(outFile).use { output ->
+                            input.copyTo(output)
+                        }
                     }
-                }
-                prefsRepo.setUserPhotoPath(outFile.absolutePath)
+                    outFile.absolutePath
+                }.getOrNull()
+            }
+            if (savedPath != null) {
+                prefsRepo.setUserPhotoPath(savedPath)
             }
         }
     }
@@ -831,6 +955,7 @@ class LlunevieViewModel(
             )
         }
         if (normLang != null || displayMode != null) {
+            com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
             _uiState.update {
                 it.copy(
                     translationTargetLang = normLang ?: it.translationTargetLang,
@@ -843,9 +968,9 @@ class LlunevieViewModel(
 
     fun clearTranslationCache() {
         viewModelScope.launch {
-            translatedPdfBitmapCache.evictAll()
+            com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
             translatedTextCache.evictAll()
-            PdfNativeRenderer.translatedPdfBitmapCache.evictAll()
+            PdfNativeRenderer.clearTranslatedPdfBitmaps()
             TranslationRepository.getInstance(appContext).clearCache(appContext)
             _uiState.update { it.copy(translationRevision = it.translationRevision + 1) }
             val isId = preferences.value.lang != "en"
@@ -1143,13 +1268,41 @@ class LlunevieViewModel(
         _uiState.update { it.copy(showDeleteConfirmDialog = show) }
     }
 
+    private fun sanitizeBookId(rawId: String): String {
+        val cleaned = rawId.trim().replace(Regex("[^a-zA-Z0-9_-]"), "_")
+        return if (cleaned.isBlank() || cleaned.all { it == '_' }) {
+            "book_${System.currentTimeMillis()}"
+        } else {
+            cleaned
+        }
+    }
+
+    private fun isCanonicalPathInsideDir(path: String, parentDir: File): Boolean {
+        return runCatching {
+            val targetCanon = File(path).canonicalPath
+            val parentCanon = parentDir.canonicalPath
+            targetCanon.startsWith("$parentCanon${File.separator}")
+        }.getOrDefault(false)
+    }
+
     private fun deleteInternalBookFiles(bookId: String, localFilePath: String?) {
         runCatching {
-            File(appContext.filesDir, "covers/$bookId").deleteRecursively()
-            File(appContext.filesDir, "books/$bookId.epub").delete()
-            File(appContext.filesDir, "books/$bookId.pdf").delete()
-            File(appContext.filesDir, "books/$bookId.txt").delete()
-            if (localFilePath != null && localFilePath.startsWith(appContext.filesDir.absolutePath)) {
+            val safeId = sanitizeBookId(bookId)
+            val coversRoot = File(appContext.filesDir, "covers")
+            val booksRoot = File(appContext.filesDir, "books")
+            val coverDir = File(coversRoot, safeId)
+            if (isCanonicalPathInsideDir(coverDir.path, coversRoot)) {
+                coverDir.deleteRecursively()
+            }
+            listOf("epub", "pdf", "txt").forEach { ext ->
+                val bookFile = File(booksRoot, "$safeId.$ext")
+                if (isCanonicalPathInsideDir(bookFile.path, booksRoot)) {
+                    bookFile.delete()
+                }
+            }
+            if (!localFilePath.isNullOrBlank() &&
+                (isCanonicalPathInsideDir(localFilePath, booksRoot) || isCanonicalPathInsideDir(localFilePath, coversRoot))
+            ) {
                 File(localFilePath).delete()
             }
         }
@@ -1160,10 +1313,13 @@ class LlunevieViewModel(
         if (ids.isEmpty()) return
         viewModelScope.launch {
             val booksToDelete = books.value.filter { it.id in ids }
-            booksToDelete.forEach { b ->
-                deleteInternalBookFiles(b.id, b.localFilePath)
+            withContext(Dispatchers.IO) {
+                PdfNativeRenderer.closeCachedDoc()
+                booksToDelete.forEach { b ->
+                    deleteInternalBookFiles(b.id, b.localFilePath)
+                }
+                dao.deleteBooksByIds(ids)
             }
-            dao.deleteBooksByIds(ids)
             _uiState.update {
                 it.copy(
                     showDeleteConfirmDialog = false,
@@ -1238,179 +1394,226 @@ class LlunevieViewModel(
     }
     
     fun openBookInReader(bookId: String) {
+        val prevActiveBookId = _uiState.value.activeBookId
+        if (prevActiveBookId != null && prevActiveBookId != bookId) {
+            flushActiveReadingSession(prevActiveBookId)
+            viewModelScope.launch(Dispatchers.IO) {
+                PdfNativeRenderer.closeCachedDoc()
+            }
+        }
         viewModelScope.launch {
-            val rawBook = dao.getBookById(bookId) ?: return@launch
-            val sanitizedTitle = sanitizeBookOrChapterText(rawBook.title)
-            val book = if (sanitizedTitle != rawBook.title) {
-                val updated = rawBook.copy(title = sanitizedTitle)
-                dao.updateBook(updated)
-                updated
-            } else rawBook
+            data class OpenBookPrepared(
+                val book: BookEntity,
+                val actualPageCount: Int,
+                val needsPdfIndexing: Boolean,
+                val safeChIdx: Int,
+                val safePgIdx: Int,
+                val parsedChapters: List<BookChapter>,
+                val parsedIllustrations: List<BookIllustration>
+            )
 
-            val chEntities = dao.getChaptersForBook(bookId)
-            val parsedChapters = mutableListOf<BookChapter>()
-            val parsedIllustrations = mutableListOf<BookIllustration>()
+            val isEn = preferences.value.lang == "en"
+            val prepared = withContext(Dispatchers.IO) {
+                val rawBook = dao.getBookById(bookId) ?: return@withContext null
+                val sanitizedTitle = sanitizeBookOrChapterText(rawBook.title)
+                val book = if (sanitizedTitle != rawBook.title) {
+                    val updated = rawBook.copy(title = sanitizedTitle)
+                    dao.updateBook(updated)
+                    updated
+                } else rawBook
 
-            if (chEntities.isNotEmpty()) {
-                var globalTracker = 0
+                val chEntities = dao.getChaptersForBook(bookId)
+                val parsedChapters = mutableListOf<BookChapter>()
+                val parsedIllustrations = mutableListOf<BookIllustration>()
                 val isPdf = book.format.equals("PDF", true)
-                val isEn = preferences.value.lang == "en"
-                val pdfIllustFilePageRegex = Regex("""_illust_p(\d+)\.""", RegexOption.IGNORE_CASE)
 
-                for (ce in chEntities) {
-                    val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                    val rawPagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }.ifEmpty { listOf(book.synopsis) }
-                    // Apply reflow to fix oversized pages in existing EPUB/TXT books
-                    val basePagesList = if (!isPdf) reflowOversizedTextPages(rawPagesList) else rawPagesList
-                    val cleanChTitle = sanitizeBookOrChapterText(ce.title)
+                if (chEntities.isNotEmpty()) {
+                    withContext(Dispatchers.Default) {
+                        var globalTracker = 0
+                        val pdfIllustFilePageRegex = Regex("""_illust_p(\d+)\.""", RegexOption.IGNORE_CASE)
 
-                    // For PDF books, clean any polluted [ILLUST:...] tag out of pagesList when fileOneBasedPage - 1 != globalTracker + pIdx
-                    val pagesList = if (isPdf) {
-                        basePagesList.mapIndexed { pIdx, pText ->
-                            if (pText.contains("[ILLUST:")) {
-                                val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
-                                val path = inner.substringBefore("|")
-                                val filePageMatch = pdfIllustFilePageRegex.find(path)
-                                val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                if (fileOneBasedPage == null || fileOneBasedPage - 1 != globalTracker + pIdx) {
-                                    val stripped = pText.replace(Regex("""\[ILLUST:[^]]+\]"""), "").trim()
-                                    if (stripped.isBlank()) "[PDF_PAGE:${globalTracker + pIdx}]" else stripped
-                                } else {
-                                    pText
+                        for (ce in chEntities) {
+                            val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                            val rawPagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }.ifEmpty { listOf(book.synopsis) }
+                            // Apply reflow to fix oversized pages in existing EPUB/TXT books
+                            val basePagesList = if (!isPdf) reflowOversizedTextPages(rawPagesList) else rawPagesList
+                            val cleanChTitle = sanitizeBookOrChapterText(ce.title)
+
+                            // For PDF books, clean any polluted [ILLUST:...] tag out of pagesList when fileOneBasedPage - 1 != globalTracker + pIdx
+                            val pagesList = if (isPdf) {
+                                basePagesList.mapIndexed { pIdx, pText ->
+                                    if (pText.contains("[ILLUST:")) {
+                                        val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
+                                        val path = inner.substringBefore("|")
+                                        val filePageMatch = pdfIllustFilePageRegex.find(path)
+                                        val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                        if (fileOneBasedPage == null || fileOneBasedPage - 1 != globalTracker + pIdx) {
+                                            val stripped = pText.replace(Regex("""\[ILLUST:[^]]+\]"""), "").trim()
+                                            if (stripped.isBlank()) "[PDF_PAGE:${globalTracker + pIdx}]" else stripped
+                                        } else {
+                                            pText
+                                        }
+                                    } else {
+                                        pText
+                                    }
                                 }
                             } else {
-                                pText
+                                basePagesList
                             }
-                        }
-                    } else {
-                        basePagesList
-                    }
 
-                    parsedChapters.add(BookChapter(index = ce.chapterIndex, title = cleanChTitle, pages = pagesList))
+                            parsedChapters.add(BookChapter(index = ce.chapterIndex, title = cleanChTitle, pages = pagesList))
 
-                    val illustArr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
-                    for (i in 0 until illustArr.length()) {
-                        val obj = illustArr.optJSONObject(i) ?: continue
-                        val path = obj.optString("uriOrPath")
-                        if (path.isNotBlank()) {
-                            val filePageMatch = pdfIllustFilePageRegex.find(path)
-                            val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
-                            val savedPageIdx = obj.optInt("pageIndexInBook", -1)
-                            val effectivePageIdx = when {
-                                fileOneBasedPage != null && fileOneBasedPage >= 1 -> fileOneBasedPage - 1
-                                savedPageIdx >= 0 -> savedPageIdx
-                                else -> {
-                                    val found = pagesList.indexOfFirst { it.contains(path) }
-                                    if (found >= 0) globalTracker + found else globalTracker
-                                }
-                            }
-                            val rawCaption = obj.optString("caption", cleanChTitle)
-                            val cleanCaption = if (fileOneBasedPage != null && fileOneBasedPage >= 1) {
-                                if (isEn) "Illustration — Page $fileOneBasedPage" else "Ilustrasi — Hal $fileOneBasedPage"
-                            } else {
-                                sanitizeBookOrChapterText(rawCaption)
-                            }
-                            if (parsedIllustrations.none { it.uriOrPath == path || (isPdf && it.pageIndexInBook == effectivePageIdx) }) {
-                                parsedIllustrations.add(
-                                    BookIllustration(
-                                        uriOrPath = path,
-                                        caption = cleanCaption,
-                                        pageIndexInBook = effectivePageIdx
-                                    )
-                                )
-                            }
-                        }
-                    }
-
-                    // Extract embedded illustrations in page texts if not already recorded
-                    basePagesList.forEachIndexed { pIdx, pText ->
-                        if (pText.contains("[ILLUST:")) {
-                            val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
-                            val path = inner.substringBefore("|")
-                            val cap = inner.substringAfter("|", "")
-                            if (path.isNotBlank()) {
-                                if (isPdf) {
+                            val illustArr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
+                            for (i in 0 until illustArr.length()) {
+                                val obj = illustArr.optJSONObject(i) ?: continue
+                                val path = obj.optString("uriOrPath")
+                                if (path.isNotBlank()) {
                                     val filePageMatch = pdfIllustFilePageRegex.find(path)
                                     val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    if (fileOneBasedPage != null && fileOneBasedPage >= 1) {
-                                        val truePageIdx = fileOneBasedPage - 1
-                                        val cleanCaption = if (isEn) "Illustration — Page $fileOneBasedPage" else "Ilustrasi — Hal $fileOneBasedPage"
-                                        if (parsedIllustrations.none { it.uriOrPath == path || it.pageIndexInBook == truePageIdx }) {
-                                            parsedIllustrations.add(
-                                                BookIllustration(
-                                                    uriOrPath = path,
-                                                    caption = cleanCaption,
-                                                    pageIndexInBook = truePageIdx
-                                                )
-                                            )
+                                    val savedPageIdx = obj.optInt("pageIndexInBook", -1)
+                                    val effectivePageIdx = when {
+                                        fileOneBasedPage != null && fileOneBasedPage >= 1 -> fileOneBasedPage - 1
+                                        savedPageIdx >= 0 -> savedPageIdx
+                                        else -> {
+                                            val found = pagesList.indexOfFirst { it.contains(path) }
+                                            if (found >= 0) globalTracker + found else globalTracker
                                         }
                                     }
-                                } else {
-                                    if (parsedIllustrations.none { it.uriOrPath == path }) {
+                                    val rawCaption = obj.optString("caption", cleanChTitle)
+                                    val cleanCaption = if (fileOneBasedPage != null && fileOneBasedPage >= 1) {
+                                        if (isEn) "Illustration — Page $fileOneBasedPage" else "Ilustrasi — Hal $fileOneBasedPage"
+                                    } else {
+                                        sanitizeBookOrChapterText(rawCaption)
+                                    }
+                                    if (parsedIllustrations.none { it.uriOrPath == path || (isPdf && it.pageIndexInBook == effectivePageIdx) }) {
                                         parsedIllustrations.add(
                                             BookIllustration(
                                                 uriOrPath = path,
-                                                caption = sanitizeBookOrChapterText(cap.ifBlank { cleanChTitle }),
-                                                pageIndexInBook = globalTracker + pIdx
+                                                caption = cleanCaption,
+                                                pageIndexInBook = effectivePageIdx
                                             )
                                         )
                                     }
                                 }
                             }
+
+                            // Extract embedded illustrations in page texts if not already recorded
+                            basePagesList.forEachIndexed { pIdx, pText ->
+                                if (pText.contains("[ILLUST:")) {
+                                    val inner = pText.substringAfter("[ILLUST:").substringBefore("]")
+                                    val path = inner.substringBefore("|")
+                                    val cap = inner.substringAfter("|", "")
+                                    if (path.isNotBlank()) {
+                                        if (isPdf) {
+                                            val filePageMatch = pdfIllustFilePageRegex.find(path)
+                                            val fileOneBasedPage = filePageMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                            if (fileOneBasedPage != null && fileOneBasedPage >= 1) {
+                                                val truePageIdx = fileOneBasedPage - 1
+                                                val cleanCaption = if (isEn) "Illustration — Page $fileOneBasedPage" else "Ilustrasi — Hal $fileOneBasedPage"
+                                                if (parsedIllustrations.none { it.uriOrPath == path || it.pageIndexInBook == truePageIdx }) {
+                                                    parsedIllustrations.add(
+                                                        BookIllustration(
+                                                            uriOrPath = path,
+                                                            caption = cleanCaption,
+                                                            pageIndexInBook = truePageIdx
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            if (parsedIllustrations.none { it.uriOrPath == path }) {
+                                                parsedIllustrations.add(
+                                                    BookIllustration(
+                                                        uriOrPath = path,
+                                                        caption = sanitizeBookOrChapterText(cap.ifBlank { cleanChTitle }),
+                                                        pageIndexInBook = globalTracker + pIdx
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            globalTracker += pagesList.size
                         }
+                        parsedIllustrations.sortBy { it.pageIndexInBook }
                     }
-                    globalTracker += pagesList.size
                 }
-                parsedIllustrations.sortBy { it.pageIndexInBook }
-            }
 
-            // Verify real PDF page count: if book is PDF, verify against actual file pageCount and rebuild if needed
-            val isPdf = book.format.equals("PDF", true)
-            if (isPdf && book.localFilePath != null) {
-                val pdfFile = File(book.localFilePath)
-                if (pdfFile.exists()) {
-                    val actualPageCount = runCatching {
-                        android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                            android.graphics.pdf.PdfRenderer(pfd).use { it.pageCount }
+                // Verify real PDF page count: if book is PDF, verify against actual file pageCount and rebuild if needed
+                var actualPageCount = book.pagesCount
+                var needsPdfIndexing = false
+                if (isPdf && book.localFilePath != null) {
+                    val pdfFile = File(book.localFilePath)
+                    if (pdfFile.exists()) {
+                        actualPageCount = PdfNativeRenderer.getPageCount(pdfFile.absolutePath, book.pagesCount)
+
+                        if (parsedChapters.isEmpty()) {
+                            val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
+                            dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), rebuilt)
+                            rebuilt.forEach { ce ->
+                                val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                                val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }
+                                parsedChapters.add(BookChapter(index = ce.chapterIndex, title = ce.title, pages = pagesList))
+                            }
                         }
-                    }.getOrDefault(book.pagesCount)
 
-                    val isEn = preferences.value.lang == "en"
-
-                    if (parsedChapters.isEmpty()) {
-                        val rebuilt = PdfNativeRenderer.buildPdfChapters(bookId, actualPageCount, book.title, isEn)
-                        dao.saveBookWithChapters(book.copy(pagesCount = actualPageCount), rebuilt)
-                        rebuilt.forEach { ce ->
-                            val pagesArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                            val pagesList = (0 until pagesArr.length()).map { pagesArr.optString(it) }
-                            parsedChapters.add(BookChapter(index = ce.chapterIndex, title = ce.title, pages = pagesList))
-                        }
+                        needsPdfIndexing = !book.tocIndexed || book.tocIndexVersion < PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
                     }
-
-                    val needsPdfIndexing = !book.tocIndexed || book.tocIndexVersion < PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
-                    if (needsPdfIndexing && _pdfIndexingState.value[bookId] == null) {
-                        indexPdfChaptersAndIllustrations(book.copy(pagesCount = actualPageCount))
+                } else {
+                    val isLegacyDuplicatedSynopsisChapters = parsedChapters.size == 2 &&
+                        parsedChapters[1].pages.firstOrNull()?.let { firstPageCh2 ->
+                            firstPageCh2.startsWith("Continuation of ") || firstPageCh2.startsWith("Bagian lanjutan dari ")
+                        } == true
+                    if (parsedChapters.isEmpty() || isLegacyDuplicatedSynopsisChapters) {
+                        parsedChapters.clear()
+                        val rebuiltSynopsisChapters = buildStructuredChaptersFromSynopsis(book)
+                        parsedChapters.addAll(rebuiltSynopsisChapters)
+                        if (isLegacyDuplicatedSynopsisChapters) {
+                            val rebuiltEntities = rebuiltSynopsisChapters.map {
+                                BookChapterEntity(
+                                    bookId = bookId,
+                                    chapterIndex = it.index,
+                                    title = it.title,
+                                    pagesJson = JSONArray(it.pages).toString(),
+                                    illustrationsJson = "[]"
+                                )
+                            }
+                            dao.saveBookWithChapters(book, rebuiltEntities)
+                        }
                     }
                 }
-            } else if (parsedChapters.isEmpty()) {
-                parsedChapters.addAll(buildStructuredChaptersFromSynopsis(book))
+
+                val safeChIdx = book.savedChapterIndex.coerceIn(0, (parsedChapters.size - 1).coerceAtLeast(0))
+                val safePgIdx = book.savedPageIndex.coerceIn(0, (parsedChapters.getOrNull(safeChIdx)?.pages?.size ?: 1) - 1)
+
+                val nowMillis = System.currentTimeMillis()
+                dao.updateBook(book.copy(onTheGo = !book.completedAllPages, lastReadAtMillis = nowMillis))
+
+                OpenBookPrepared(
+                    book = book,
+                    actualPageCount = actualPageCount,
+                    needsPdfIndexing = needsPdfIndexing,
+                    safeChIdx = safeChIdx,
+                    safePgIdx = safePgIdx,
+                    parsedChapters = parsedChapters,
+                    parsedIllustrations = parsedIllustrations
+                )
+            } ?: return@launch
+
+            if (prepared.needsPdfIndexing && _pdfIndexingState.value[bookId] == null) {
+                indexPdfChaptersAndIllustrations(prepared.book.copy(pagesCount = prepared.actualPageCount))
             }
-
-            val safeChIdx = book.savedChapterIndex.coerceIn(0, (parsedChapters.size - 1).coerceAtLeast(0))
-            val safePgIdx = book.savedPageIndex.coerceIn(0, (parsedChapters.getOrNull(safeChIdx)?.pages?.size ?: 1) - 1)
-
-            val nowMillis = System.currentTimeMillis()
-            dao.updateBook(book.copy(onTheGo = !book.completedAllPages, lastReadAtMillis = nowMillis))
 
             _uiState.update { cur ->
                 cur.copy(
                     previousTab = if (cur.activeTab != MainNavTab.READER) cur.activeTab else cur.previousTab,
                     activeTab = MainNavTab.READER,
                     activeBookId = bookId,
-                    activeChapterIndex = safeChIdx,
-                    activePageIndex = safePgIdx,
-                    activeBookChapters = parsedChapters,
-                    activeBookIllustrations = parsedIllustrations,
+                    activeChapterIndex = prepared.safeChIdx,
+                    activePageIndex = prepared.safePgIdx,
+                    activeBookChapters = prepared.parsedChapters,
+                    activeBookIllustrations = prepared.parsedIllustrations,
                     readerFullView = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD,
                     showReaderTypeSheet = false,
                     showReaderTocDrawer = false,
@@ -1498,31 +1701,77 @@ class LlunevieViewModel(
     }
 
     private fun buildStructuredChaptersFromSynopsis(book: BookEntity): List<BookChapter> {
-        val isId = preferences.value.lang != "en"
-        val syn = book.synopsis.ifBlank { "${book.title} — ${book.author}" }
-        val sentences = syn.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
-        val p1 = sentences.take((sentences.size / 2).coerceAtLeast(1)).joinToString(" ").ifBlank { syn }
-        val p2 = sentences.drop((sentences.size / 2).coerceAtLeast(1)).joinToString(" ").ifBlank { syn }
-        return listOf(
-            BookChapter(
-                index = 0,
-                title = if (isId) "Bab I — ${book.title}" else "Chapter I — ${book.title}",
-                pages = listOf(
-                    if (isId) "$p1\n\n${book.title} ditulis oleh ${book.author} (${book.publisher}, ${book.year})."
-                    else "$p1\n\n${book.title} by ${book.author} (${book.publisher}, ${book.year}).",
-                    p2
-                )
-            ),
-            BookChapter(
-                index = 1,
-                title = if (isId) "Bab II — Perkembangan Naratif" else "Chapter II — Narrative Arc",
-                pages = listOf(
-                    if (isId) "Bagian lanjutan dari ${book.title} karya ${book.author}.\n\n$p1"
-                    else "Continuation of ${book.title} by ${book.author}.\n\n$p1",
-                    p2
+        val syn = book.synopsis.ifBlank { "${book.title} — ${book.author}" }.trim()
+        val idPattern = Regex("\\b(yang|dan|di|ini|itu|aku|tidak|dengan|untuk|dari|dalam|pada|adalah|sebagai|oleh|karena|sebuah|seorang|mereka|dia|kami|kita|bisa|akan|sudah)\\b", RegexOption.IGNORE_CASE)
+        val enPattern = Regex("\\b(the|and|of|to|in|is|for|that|with|on|as|are|this|by|from|they|have|had|was|were|would|could|should)\\b", RegexOption.IGNORE_CASE)
+        val idHits = idPattern.findAll(syn).count()
+        val enHits = enPattern.findAll(syn).count()
+        val isId = when {
+            idHits > enHits && idHits >= 1 -> true
+            enHits > idHits && enHits >= 1 -> false
+            else -> preferences.value.lang != "en"
+        }
+
+        val sentences = syn.split(Regex("(?<=[.!?])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
+        val pubMeta = if (isId) {
+            "${book.title} ditulis oleh ${book.author} (${book.publisher}, ${book.year})."
+        } else {
+            "${book.title} by ${book.author} (${book.publisher}, ${book.year})."
+        }
+        val editionMeta = if (isId) {
+            "Kategori: ${book.category.ifBlank { "Literatur" }} · Edisi: ${book.edition.ifBlank { "Standar" }} · ISBN: ${book.isbn.ifBlank { "—" }}."
+        } else {
+            "Category: ${book.category.ifBlank { "Literature" }} · Edition: ${book.edition.ifBlank { "Standard" }} · ISBN: ${book.isbn.ifBlank { "—" }}."
+        }
+
+        return if (sentences.size >= 4) {
+            val q1 = (sentences.size / 4).coerceAtLeast(1)
+            val q2 = (sentences.size * 2 / 4).coerceAtLeast(q1 + 1)
+            val q3 = (sentences.size * 3 / 4).coerceAtLeast(q2 + 1)
+            val page1 = sentences.subList(0, q1).joinToString(" ")
+            val page2 = sentences.subList(q1, q2).joinToString(" ")
+            val page3 = sentences.subList(q2, q3).joinToString(" ")
+            val page4 = sentences.subList(q3, sentences.size).joinToString(" ")
+            listOf(
+                BookChapter(
+                    index = 0,
+                    title = if (isId) "Bab I — ${book.title}" else "Chapter I — ${book.title}",
+                    pages = listOf("$page1\n\n$pubMeta", page2)
+                ),
+                BookChapter(
+                    index = 1,
+                    title = if (isId) "Bab II — Perkembangan Naratif" else "Chapter II — Narrative Arc",
+                    pages = listOf(page3, "$page4\n\n$editionMeta")
                 )
             )
-        )
+        } else {
+            val half = ((sentences.size + 1) / 2).coerceAtLeast(1)
+            val p1 = sentences.take(half).joinToString(" ").ifBlank { syn }
+            val p2 = sentences.drop(half).joinToString(" ")
+            val ch1Pages = if (p2.isNotBlank() && p2 != p1) {
+                listOf("$p1\n\n$pubMeta", p2)
+            } else {
+                listOf(p1, "$pubMeta\n\n$editionMeta")
+            }
+            val ch2Page1 = if (isId) {
+                "Catatan Katalog — ${book.title}\n\n$pubMeta"
+            } else {
+                "Catalog Notes — ${book.title}\n\n$pubMeta"
+            }
+            val ch2Page2 = editionMeta
+            listOf(
+                BookChapter(
+                    index = 0,
+                    title = if (isId) "Bab I — ${book.title}" else "Chapter I — ${book.title}",
+                    pages = ch1Pages
+                ),
+                BookChapter(
+                    index = 1,
+                    title = if (isId) "Bab II — Informasi Edisi" else "Chapter II — Edition Details",
+                    pages = listOf(ch2Page1, ch2Page2)
+                )
+            )
+        }
     }
 
     fun computeGlobalPageMetrics(
@@ -1587,30 +1836,107 @@ class LlunevieViewModel(
         return sum + 1
     }
 
+    private suspend fun loadCurrentBookChapters(bookId: String): List<BookChapter> {
+        return if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
+            _uiState.value.activeBookChapters
+        } else {
+            dao.getChaptersForBook(bookId).map { ce ->
+                val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
+                val pList = (0 until pArr.length()).map { pArr.optString(it) }
+                BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
+            }
+        }
+    }
+
+    private fun extractPdfBookmarks(chapters: List<BookChapter>): MutableList<PdfNativeRenderer.PdfBookmark> {
+        var cumZero = 0
+        return chapters.map { ch ->
+            val firstP = ch.pages.firstOrNull().orEmpty()
+            val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
+            val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
+            cumZero += ch.pages.size.coerceAtLeast(1)
+            PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
+        }.toMutableList()
+    }
+
+    private suspend fun loadBookIllustrations(bookId: String): List<BookIllustration> {
+        return if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
+            _uiState.value.activeBookIllustrations
+        } else {
+            dao.getChaptersForBook(bookId).flatMap { ce ->
+                val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
+                (0 until arr.length()).mapNotNull { i ->
+                    val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                    BookIllustration(
+                        uriOrPath = obj.optString("uriOrPath"),
+                        caption = obj.optString("caption"),
+                        pageIndexInBook = obj.optInt("pageIndexInBook")
+                    )
+                }
+            }.distinctBy { it.pageIndexInBook }
+        }
+    }
+
+    private suspend fun saveAndApplyPdfChapters(
+        bookId: String,
+        book: BookEntity,
+        bookmarks: List<PdfNativeRenderer.PdfBookmark>,
+        totalPages: Int
+    ) {
+        val illustrations = loadBookIllustrations(bookId)
+        val isEn = preferences.value.lang == "en"
+        val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
+            bookId = bookId,
+            bookmarks = bookmarks,
+            totalPages = totalPages,
+            illustrations = illustrations,
+            defaultTitle = book.title,
+            isEn = isEn
+        )
+        val updatedBook = book.copy(
+            tocIndexed = true,
+            tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
+        )
+        dao.saveBookWithChapters(updatedBook, updatedEntities)
+        applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+    }
+
+    private fun buildNonPdfChapterEntities(
+        bookId: String,
+        bookmarks: List<Pair<String, Int>>,
+        allPages: List<String>,
+        totalPages: Int
+    ): List<BookChapterEntity> {
+        val updatedEntities = mutableListOf<BookChapterEntity>()
+        for (i in bookmarks.indices) {
+            val bm = bookmarks[i]
+            val sIdx = bm.second.coerceIn(0, totalPages)
+            val eIdx = if (i + 1 < bookmarks.size) bookmarks[i + 1].second.coerceIn(sIdx, totalPages) else totalPages
+            val pagesSlice = if (sIdx < eIdx) allPages.subList(sIdx, eIdx) else listOf("")
+            val pagesArr = JSONArray()
+            pagesSlice.forEach { pagesArr.put(it) }
+            updatedEntities.add(
+                BookChapterEntity(
+                    bookId = bookId,
+                    chapterIndex = i,
+                    title = bm.first,
+                    pagesJson = pagesArr.toString(),
+                    illustrationsJson = "[]"
+                )
+            )
+        }
+        return updatedEntities
+    }
+
     fun addManualChapter(bookId: String, title: String, startPageOneBased: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             val book = dao.getBookById(bookId) ?: return@launch
             val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
-            val currentChapters = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
-                _uiState.value.activeBookChapters
-            } else {
-                dao.getChaptersForBook(bookId).map { ce ->
-                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
-                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
-                }
-            }
+            val currentChapters = loadCurrentBookChapters(bookId)
 
             if (isPdf) {
                 val totalPages = book.pagesCount.coerceAtLeast(1)
-                var cumZero = 0
-                val bookmarks = currentChapters.map { ch ->
-                    val firstP = ch.pages.firstOrNull().orEmpty()
-                    val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
-                    val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
-                    cumZero += ch.pages.size.coerceAtLeast(1)
-                    PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
-                }.toMutableList()
+                val bookmarks = extractPdfBookmarks(currentChapters)
                 if (bookmarks.isEmpty()) {
                     bookmarks.add(PdfNativeRenderer.PdfBookmark(book.title, 0))
                 }
@@ -1630,37 +1956,7 @@ class LlunevieViewModel(
                     bookmarks.add(0, PdfNativeRenderer.PdfBookmark(book.title, 0))
                 }
 
-                val illustrations = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
-                    _uiState.value.activeBookIllustrations
-                } else {
-                    dao.getChaptersForBook(bookId).flatMap { ce ->
-                        val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
-                        (0 until arr.length()).mapNotNull { i ->
-                            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
-                            BookIllustration(
-                                uriOrPath = obj.optString("uriOrPath"),
-                                caption = obj.optString("caption"),
-                                pageIndexInBook = obj.optInt("pageIndexInBook")
-                            )
-                        }
-                    }.distinctBy { it.pageIndexInBook }
-                }
-
-                val isEn = preferences.value.lang == "en"
-                val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
-                    bookId = bookId,
-                    bookmarks = bookmarks,
-                    totalPages = totalPages,
-                    illustrations = illustrations,
-                    defaultTitle = book.title,
-                    isEn = isEn
-                )
-                val updatedBook = book.copy(
-                    tocIndexed = true,
-                    tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
-                )
-                dao.saveBookWithChapters(updatedBook, updatedEntities)
-                applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+                saveAndApplyPdfChapters(bookId, book, bookmarks, totalPages)
             } else {
                 val allPages = currentChapters.flatMap { it.pages }
                 val totalPages = allPages.size.coerceAtLeast(1)
@@ -1689,24 +1985,7 @@ class LlunevieViewModel(
                     bookmarks.add(0, Pair(book.title, 0))
                 }
 
-                val updatedEntities = mutableListOf<BookChapterEntity>()
-                for (i in bookmarks.indices) {
-                    val bm = bookmarks[i]
-                    val sIdx = bm.second.coerceIn(0, totalPages)
-                    val eIdx = if (i + 1 < bookmarks.size) bookmarks[i + 1].second.coerceIn(sIdx, totalPages) else totalPages
-                    val pagesSlice = if (sIdx < eIdx) allPages.subList(sIdx, eIdx) else listOf("")
-                    val pagesArr = JSONArray()
-                    pagesSlice.forEach { pagesArr.put(it) }
-                    updatedEntities.add(
-                        BookChapterEntity(
-                            bookId = bookId,
-                            chapterIndex = i,
-                            title = bm.first,
-                            pagesJson = pagesArr.toString(),
-                            illustrationsJson = "[]"
-                        )
-                    )
-                }
+                val updatedEntities = buildNonPdfChapterEntities(bookId, bookmarks, allPages, totalPages)
                 dao.saveBookWithChapters(book, updatedEntities)
                 applyUpdatedChaptersToState(bookId, book, updatedEntities)
             }
@@ -1717,27 +1996,12 @@ class LlunevieViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val book = dao.getBookById(bookId) ?: return@launch
             val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
-            val currentChapters = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
-                _uiState.value.activeBookChapters
-            } else {
-                dao.getChaptersForBook(bookId).map { ce ->
-                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
-                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
-                }
-            }
+            val currentChapters = loadCurrentBookChapters(bookId)
             if (chapterIndex !in currentChapters.indices) return@launch
 
             if (isPdf) {
                 val totalPages = book.pagesCount.coerceAtLeast(1)
-                var cumZero = 0
-                val bookmarks = currentChapters.map { ch ->
-                    val firstP = ch.pages.firstOrNull().orEmpty()
-                    val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
-                    val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
-                    cumZero += ch.pages.size.coerceAtLeast(1)
-                    PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
-                }.toMutableList()
+                val bookmarks = extractPdfBookmarks(currentChapters)
 
                 val targetStartZero = (newStartPageOneBased - 1).coerceIn(0, totalPages - 1)
                 val cleanTitle = sanitizeBookOrChapterText(newTitle.trim()).ifBlank { bookmarks[chapterIndex].title }
@@ -1747,37 +2011,7 @@ class LlunevieViewModel(
                     bookmarks.add(0, PdfNativeRenderer.PdfBookmark(book.title, 0))
                 }
 
-                val illustrations = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
-                    _uiState.value.activeBookIllustrations
-                } else {
-                    dao.getChaptersForBook(bookId).flatMap { ce ->
-                        val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
-                        (0 until arr.length()).mapNotNull { i ->
-                            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
-                            BookIllustration(
-                                uriOrPath = obj.optString("uriOrPath"),
-                                caption = obj.optString("caption"),
-                                pageIndexInBook = obj.optInt("pageIndexInBook")
-                            )
-                        }
-                    }.distinctBy { it.pageIndexInBook }
-                }
-
-                val isEn = preferences.value.lang == "en"
-                val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
-                    bookId = bookId,
-                    bookmarks = bookmarks,
-                    totalPages = totalPages,
-                    illustrations = illustrations,
-                    defaultTitle = book.title,
-                    isEn = isEn
-                )
-                val updatedBook = book.copy(
-                    tocIndexed = true,
-                    tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
-                )
-                dao.saveBookWithChapters(updatedBook, updatedEntities)
-                applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+                saveAndApplyPdfChapters(bookId, book, bookmarks, totalPages)
             } else {
                 val allPages = currentChapters.flatMap { it.pages }
                 val totalPages = allPages.size.coerceAtLeast(1)
@@ -1814,24 +2048,7 @@ class LlunevieViewModel(
                         bookmarks.add(0, Pair(book.title, 0))
                     }
 
-                    val updatedEntities = mutableListOf<BookChapterEntity>()
-                    for (i in bookmarks.indices) {
-                        val bm = bookmarks[i]
-                        val sIdx = bm.second.coerceIn(0, totalPages)
-                        val eIdx = if (i + 1 < bookmarks.size) bookmarks[i + 1].second.coerceIn(sIdx, totalPages) else totalPages
-                        val pagesSlice = if (sIdx < eIdx) allPages.subList(sIdx, eIdx) else listOf("")
-                        val pagesArr = JSONArray()
-                        pagesSlice.forEach { pagesArr.put(it) }
-                        updatedEntities.add(
-                            BookChapterEntity(
-                                bookId = bookId,
-                                chapterIndex = i,
-                                title = bm.first,
-                                pagesJson = pagesArr.toString(),
-                                illustrationsJson = "[]"
-                            )
-                        )
-                    }
+                    val updatedEntities = buildNonPdfChapterEntities(bookId, bookmarks, allPages, totalPages)
                     dao.saveBookWithChapters(book, updatedEntities)
                     applyUpdatedChaptersToState(bookId, book, updatedEntities)
                 }
@@ -1843,64 +2060,18 @@ class LlunevieViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val book = dao.getBookById(bookId) ?: return@launch
             val isPdf = book.format.equals("PDF", true) || book.localFilePath?.endsWith(".pdf", ignoreCase = true) == true
-            val currentChapters = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookChapters.isNotEmpty()) {
-                _uiState.value.activeBookChapters
-            } else {
-                dao.getChaptersForBook(bookId).map { ce ->
-                    val pArr = runCatching { JSONArray(ce.pagesJson) }.getOrNull() ?: JSONArray()
-                    val pList = (0 until pArr.length()).map { pArr.optString(it) }
-                    BookChapter(index = ce.chapterIndex, title = ce.title, pages = pList)
-                }
-            }
+            val currentChapters = loadCurrentBookChapters(bookId)
             if (currentChapters.size <= 1 || chapterIndex !in currentChapters.indices) return@launch
 
             if (isPdf) {
                 val totalPages = book.pagesCount.coerceAtLeast(1)
-                var cumZero = 0
-                val bookmarks = currentChapters.map { ch ->
-                    val firstP = ch.pages.firstOrNull().orEmpty()
-                    val match = Regex("""\[PDF_PAGE:(\d+)\]""").find(firstP)
-                    val sZero = match?.groupValues?.get(1)?.toIntOrNull() ?: cumZero
-                    cumZero += ch.pages.size.coerceAtLeast(1)
-                    PdfNativeRenderer.PdfBookmark(title = ch.title, startPageZero = sZero)
-                }.toMutableList()
-
+                val bookmarks = extractPdfBookmarks(currentChapters)
                 bookmarks.removeAt(chapterIndex)
                 if (bookmarks.isNotEmpty() && bookmarks.first().startPageZero > 0) {
                     bookmarks[0] = bookmarks[0].copy(startPageZero = 0)
                 }
 
-                val illustrations = if (_uiState.value.activeBookId == bookId && _uiState.value.activeBookIllustrations.isNotEmpty()) {
-                    _uiState.value.activeBookIllustrations
-                } else {
-                    dao.getChaptersForBook(bookId).flatMap { ce ->
-                        val arr = runCatching { JSONArray(ce.illustrationsJson) }.getOrNull() ?: JSONArray()
-                        (0 until arr.length()).mapNotNull { i ->
-                            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
-                            BookIllustration(
-                                uriOrPath = obj.optString("uriOrPath"),
-                                caption = obj.optString("caption"),
-                                pageIndexInBook = obj.optInt("pageIndexInBook")
-                            )
-                        }
-                    }.distinctBy { it.pageIndexInBook }
-                }
-
-                val isEn = preferences.value.lang == "en"
-                val updatedEntities = PdfNativeRenderer.buildBookChaptersFromBookmarks(
-                    bookId = bookId,
-                    bookmarks = bookmarks,
-                    totalPages = totalPages,
-                    illustrations = illustrations,
-                    defaultTitle = book.title,
-                    isEn = isEn
-                )
-                val updatedBook = book.copy(
-                    tocIndexed = true,
-                    tocIndexVersion = PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
-                )
-                dao.saveBookWithChapters(updatedBook, updatedEntities)
-                applyUpdatedChaptersToState(bookId, updatedBook, updatedEntities)
+                saveAndApplyPdfChapters(bookId, book, bookmarks, totalPages)
             } else {
                 val newChapters = currentChapters.toMutableList()
                 if (chapterIndex > 0) {
@@ -1968,11 +2139,12 @@ class LlunevieViewModel(
         val chapters = st.activeBookChapters
         if (chapters.isEmpty()) return
         val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
+        val isBilingualSpread = isSpread && st.isTranslationActive && st.translationMode.equals("bilingual", ignoreCase = true)
         val metrics = computeGlobalPageMetrics(chapters, st.activeChapterIndex, st.activePageIndex)
         val currentZero = metrics.currentGlobalPage - 1
-        val spreadStart = if (isSpread) (currentZero / 2) * 2 else currentZero
-        val maxSpread = if (isSpread) (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0) else (metrics.totalBookPages - 1).coerceAtLeast(0)
-        val targetZero = if (isSpread) {
+        val spreadStart = if (isSpread && !isBilingualSpread) (currentZero / 2) * 2 else currentZero
+        val maxSpread = if (isSpread && !isBilingualSpread) (((metrics.totalBookPages - 1) / 2) * 2).coerceAtLeast(0) else (metrics.totalBookPages - 1).coerceAtLeast(0)
+        val targetZero = if (isSpread && !isBilingualSpread) {
             if (deltaSteps > 0) (spreadStart + 2 * deltaSteps).coerceAtMost(maxSpread)
             else (spreadStart + 2 * deltaSteps).coerceAtLeast(0)
         } else {
@@ -2240,7 +2412,7 @@ class LlunevieViewModel(
     }
 
     fun importLocalBookOrBackupFile(uri: Uri) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val fileName = queryFileName(uri)
             val ext = fileName.substringAfterLast('.', "").lowercase()
             val isId = preferences.value.lang != "en"
@@ -2379,18 +2551,24 @@ class LlunevieViewModel(
         }
     }
 
+    private var lastAutoImportScanAtMillis = 0L
+
     fun scanAutoImportFolder(force: Boolean = false) {
         val prefs = preferences.value
         if (!prefs.autoImportFolderEnabled && !force) return
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastAutoImportScanAtMillis) < 60_000L) return
         if (!isFolderScanning.compareAndSet(false, true)) {
             if (force) {
                 pendingRescanForce.set(true)
             }
             return
         }
+        lastAutoImportScanAtMillis = now
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                orphanSweepDone.await()
                 val currentPrefs = prefsRepo.preferencesFlow.first()
                 val isEn = currentPrefs.lang == "en"
                 val existingBooks = dao.getAllBooks()
@@ -2908,7 +3086,8 @@ class LlunevieViewModel(
                     }
                 }
                 finalConn.disconnect()
-                val bmp = BitmapFactory.decodeFile(targetFile.absolutePath)
+                val decodeOpts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                val bmp = BitmapFactory.decodeFile(targetFile.absolutePath, decodeOpts)
                 if (bmp != null) {
                     val spineColor = SpineColorExtractor.extractDominantSpineHex(bmp)
                     bmp.recycle()
@@ -3154,10 +3333,19 @@ class LlunevieViewModel(
     // -------------------------------------------------------------------------
     // BACKUP EXPORT & RESTORE (JSON)
     // -------------------------------------------------------------------------
-    fun buildBackupJsonString(): String {
+    suspend fun buildBackupJsonString(): String = withContext(Dispatchers.IO) {
+        val snapshotBooks = dao.getAllBooks().ifEmpty { books.value }
+        val snapshotShelves = dao.getAllShelvesOnce().ifEmpty { shelves.value }
+        val snapshotDailyLogs = dao.getAllDailyLogsOnce().ifEmpty { dailyLogs.value }
+        val snapshotHighlights = dao.getAllHighlightsOnce().ifEmpty { allHighlights.value }
+        val snapshotBookmarks = dao.getAllBookmarksOnce().ifEmpty { allBookmarks.value }
+
         val root = JSONObject()
+        root.put("version", 2)
+        root.put("exportedAtMillis", System.currentTimeMillis())
+
         val booksArr = JSONArray()
-        for (b in books.value) {
+        for (b in snapshotBooks) {
             booksArr.put(JSONObject().apply {
                 put("id", b.id)
                 put("title", b.title)
@@ -3173,62 +3361,315 @@ class LlunevieViewModel(
                 put("addedDate", b.addedDate)
                 put("progress", b.progress)
                 put("completedAllPages", b.completedAllPages)
+                put("onTheGo", b.onTheGo)
                 put("timeMinutes", b.timeMinutes)
+                put("readingSeconds", b.readingSeconds)
+                put("savedChapterIndex", b.savedChapterIndex)
+                put("savedPageIndex", b.savedPageIndex)
+                put("bookmarked", b.bookmarked)
+                put("localFilePath", b.localFilePath ?: "")
                 put("coverImagePath", b.coverImagePath ?: "")
                 put("spineColorHex", b.spineColorHex)
+                put("spineTextColorHex", b.spineTextColorHex)
                 put("synopsis", b.synopsis)
+                put("dimensionsText", b.dimensionsText)
+                put("heightCm", b.heightCm.toDouble())
+                put("widthCm", b.widthCm.toDouble())
+                put("lengthCm", b.lengthCm.toDouble())
+                put("weightGrams", b.weightGrams.toDouble())
+                put("createdAtMillis", b.createdAtMillis)
+                put("lastReadAtMillis", b.lastReadAtMillis)
+                put("tocIndexed", b.tocIndexed)
+                put("tocIndexVersion", b.tocIndexVersion)
                 put("genres", b.genres)
             })
         }
         root.put("books", booksArr)
-        return root.toString(2)
+
+        val shelvesArr = JSONArray()
+        for (s in snapshotShelves) {
+            shelvesArr.put(JSONObject().apply {
+                put("name", s.name)
+                put("sortOrder", s.sortOrder)
+                put("isDefault", s.isDefault)
+            })
+        }
+        root.put("shelves", shelvesArr)
+
+        val dailyLogsArr = JSONArray()
+        for (log in snapshotDailyLogs) {
+            dailyLogsArr.put(JSONObject().apply {
+                put("dateKey", log.dateKey)
+                put("minutesRead", log.minutesRead)
+                put("pagesTurned", log.pagesTurned)
+            })
+        }
+        root.put("daily_reading_logs", dailyLogsArr)
+
+        val highlightsArr = JSONArray()
+        for (hl in snapshotHighlights) {
+            highlightsArr.put(JSONObject().apply {
+                put("id", hl.id)
+                put("bookId", hl.bookId)
+                put("chapterIndex", hl.chapterIndex)
+                put("pageIndex", hl.pageIndex)
+                put("chapterTitle", hl.chapterTitle)
+                put("quoteText", hl.quoteText)
+                put("noteText", hl.noteText)
+                put("colorKey", hl.colorKey)
+                put("createdAtMillis", hl.createdAtMillis)
+                put("startCharIndex", hl.startCharIndex)
+                put("endCharIndex", hl.endCharIndex)
+            })
+        }
+        root.put("highlight_notes", highlightsArr)
+
+        val bookmarksArr = JSONArray()
+        for (bm in snapshotBookmarks) {
+            bookmarksArr.put(JSONObject().apply {
+                put("id", bm.id)
+                put("bookId", bm.bookId)
+                put("pageNumber", bm.pageNumber)
+                put("chapterIndex", bm.chapterIndex)
+                put("chapterTitle", bm.chapterTitle)
+                put("snippetText", bm.snippetText)
+                put("createdAtMillis", bm.createdAtMillis)
+            })
+        }
+        root.put("page_bookmarks", bookmarksArr)
+
+        root.toString(2)
     }
 
-    private suspend fun restoreBackupFromJsonString(rawJson: String) {
+    fun exportBackupJson(onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            val json = buildBackupJsonString()
+            onReady(json)
+        }
+    }
+
+    fun exportBackupToUri(uri: Uri) {
+        viewModelScope.launch {
+            val isId = preferences.value.lang != "en"
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val json = buildBackupJsonString()
+                    appContext.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                        writer.write(json)
+                    } ?: error("Cannot open output stream")
+                }.isSuccess
+            }
+            if (ok) {
+                showToast(if (isId) "Cadangan berhasil disimpan" else "Backup saved successfully")
+            } else {
+                showToast(if (isId) "Gagal menyimpan cadangan" else "Failed to save backup")
+            }
+        }
+    }
+
+    private suspend fun restoreBackupFromJsonString(rawJson: String) = withContext(Dispatchers.IO) {
         runCatching {
             val obj = JSONObject(rawJson)
-            val arr = obj.optJSONArray("books") ?: return@runCatching
             val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-            for (i in 0 until arr.length()) {
-                val b = arr.optJSONObject(i) ?: continue
-                val entity = BookEntity(
-                    id = b.optString("id", "restored-$i-${System.currentTimeMillis()}"),
-                    title = b.optString("title", "Book Title"),
-                    author = b.optString("author", "Author"),
-                    year = b.optString("year", "2023"),
-                    publisher = b.optString("publisher", "Publisher"),
-                    edition = b.optString("edition", "1st Edition"),
-                    isbn = b.optString("isbn", "—"),
-                    category = b.optString("category", "Novel"),
-                    shelf = canonicalShelfKey(b.optString("shelf", "eReader")),
-                    format = b.optString("format", "PHYSICAL"),
-                    pagesCount = b.optInt("pagesCount", b.optInt("pages", 320)),
-                    addedDate = b.optString("addedDate", todayKey),
-                    progress = b.optInt("progress", 0),
-                    completedAllPages = b.optBoolean("completedAllPages", b.optInt("progress", 0) >= 100),
-                    onTheGo = b.optInt("progress", 0) in 1..99,
-                    timeMinutes = b.optInt("timeMinutes", 0),
-                    readingSeconds = b.optInt("timeMinutes", 0) * 60,
-                    savedChapterIndex = 0,
-                    savedPageIndex = 0,
-                    bookmarked = false,
-                    localFilePath = null,
-                    coverImagePath = b.optString("coverImagePath").ifBlank { b.optString("coverUrl").ifBlank { null } },
-                    spineColorHex = b.optLong("spineColorHex", 0xFF2B3A4AL),
-                    spineTextColorHex = 0xFFFAF6EBL,
-                    synopsis = b.optString("synopsis", ""),
-                    genres = b.optString("genres", "")
-                )
-                val chapters = buildStructuredChaptersFromSynopsis(entity).map {
-                    BookChapterEntity(
-                        bookId = entity.id,
-                        chapterIndex = it.index,
-                        title = it.title,
-                        pagesJson = JSONArray(it.pages).toString(),
-                        illustrationsJson = "[]"
-                    )
+
+            val shelvesArr = obj.optJSONArray("shelves")
+            if (shelvesArr != null) {
+                for (i in 0 until shelvesArr.length()) {
+                    val s = shelvesArr.optJSONObject(i) ?: continue
+                    val name = s.optString("name").trim()
+                    if (name.isNotBlank()) {
+                        dao.upsertShelf(
+                            ShelfEntity(
+                                name = name,
+                                sortOrder = s.optInt("sortOrder", i),
+                                isDefault = s.optBoolean("isDefault", name == "eReader" || name == "Koleksi Fisik")
+                            )
+                        )
+                    }
                 }
-                dao.saveBookWithChapters(entity, chapters)
+            }
+
+            val booksRoot = File(appContext.filesDir, "books")
+            val coversRoot = File(appContext.filesDir, "covers")
+            val arr = obj.optJSONArray("books")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val b = arr.optJSONObject(i) ?: continue
+                    val rawBookId = b.optString("id", "restored-$i-${System.currentTimeMillis()}")
+                    val bookId = sanitizeBookId(rawBookId)
+                    val existingBook = dao.getBookById(bookId)
+                    val existingChapters = dao.getChaptersForBook(bookId)
+
+                    val restoredProgress = b.optInt("progress", existingBook?.progress ?: 0)
+                    val restoredMins = b.optInt("timeMinutes", existingBook?.timeMinutes ?: 0)
+                    val restoredSecs = b.optInt("readingSeconds", maxOf(existingBook?.readingSeconds ?: 0, restoredMins * 60))
+
+                    val backupLocalPath = b.optString("localFilePath").takeIf {
+                        it.isNotBlank() &&
+                            (isCanonicalPathInsideDir(it, booksRoot) || isCanonicalPathInsideDir(it, coversRoot)) &&
+                            File(it).exists()
+                    }
+                    val existingLocalPath = existingBook?.localFilePath?.takeIf {
+                        it.isNotBlank() &&
+                            (isCanonicalPathInsideDir(it, booksRoot) || isCanonicalPathInsideDir(it, coversRoot)) &&
+                            File(it).exists()
+                    }
+                    val effectiveLocalPath = existingLocalPath ?: backupLocalPath
+
+                    val backupCoverPath = b.optString("coverImagePath").ifBlank { b.optString("coverUrl") }.takeIf {
+                        it.isNotBlank() && (
+                            it.startsWith("http://", ignoreCase = true) ||
+                                it.startsWith("https://", ignoreCase = true) ||
+                                ((isCanonicalPathInsideDir(it, coversRoot) || isCanonicalPathInsideDir(it, booksRoot)) && File(it).exists())
+                            )
+                    }
+                    val existingCoverPath = existingBook?.coverImagePath?.takeIf {
+                        it.isNotBlank() && (
+                            it.startsWith("http://", ignoreCase = true) ||
+                                it.startsWith("https://", ignoreCase = true) ||
+                                ((isCanonicalPathInsideDir(it, coversRoot) || isCanonicalPathInsideDir(it, booksRoot)) && File(it).exists())
+                            )
+                    }
+                    val effectiveCoverPath = existingCoverPath ?: backupCoverPath
+
+                    val entity = BookEntity(
+                        id = bookId,
+                        title = b.optString("title", existingBook?.title ?: "Book Title"),
+                        author = b.optString("author", existingBook?.author ?: "Author"),
+                        year = b.optString("year", existingBook?.year ?: "2023"),
+                        publisher = b.optString("publisher", existingBook?.publisher ?: "Publisher"),
+                        edition = b.optString("edition", existingBook?.edition ?: "1st Edition"),
+                        isbn = b.optString("isbn", existingBook?.isbn ?: "—"),
+                        category = b.optString("category", existingBook?.category ?: "Novel"),
+                        shelf = canonicalShelfKey(b.optString("shelf", existingBook?.shelf ?: "eReader")),
+                        format = b.optString("format", existingBook?.format ?: "PHYSICAL"),
+                        pagesCount = b.optInt("pagesCount", b.optInt("pages", existingBook?.pagesCount ?: 320)),
+                        addedDate = b.optString("addedDate", existingBook?.addedDate ?: todayKey),
+                        progress = restoredProgress,
+                        completedAllPages = b.optBoolean("completedAllPages", restoredProgress >= 100),
+                        onTheGo = b.optBoolean("onTheGo", restoredProgress in 1..99),
+                        timeMinutes = maxOf(restoredMins, restoredSecs / 60),
+                        readingSeconds = restoredSecs,
+                        savedChapterIndex = b.optInt("savedChapterIndex", existingBook?.savedChapterIndex ?: 0),
+                        savedPageIndex = b.optInt("savedPageIndex", existingBook?.savedPageIndex ?: 0),
+                        bookmarked = b.optBoolean("bookmarked", existingBook?.bookmarked ?: false),
+                        localFilePath = effectiveLocalPath,
+                        coverImagePath = effectiveCoverPath,
+                        spineColorHex = b.optLong("spineColorHex", existingBook?.spineColorHex ?: 0xFF2B3A4AL),
+                        spineTextColorHex = b.optLong("spineTextColorHex", existingBook?.spineTextColorHex ?: 0xFFFAF6EBL),
+                        synopsis = b.optString("synopsis", existingBook?.synopsis ?: ""),
+                        dimensionsText = b.optString("dimensionsText", existingBook?.dimensionsText ?: ""),
+                        heightCm = b.optDouble("heightCm", (existingBook?.heightCm ?: 20f).toDouble()).toFloat(),
+                        widthCm = b.optDouble("widthCm", (existingBook?.widthCm ?: 14f).toDouble()).toFloat(),
+                        lengthCm = b.optDouble("lengthCm", (existingBook?.lengthCm ?: 20f).toDouble()).toFloat(),
+                        weightGrams = b.optDouble("weightGrams", (existingBook?.weightGrams ?: 300f).toDouble()).toFloat(),
+                        createdAtMillis = b.optLong("createdAtMillis", existingBook?.createdAtMillis ?: System.currentTimeMillis()),
+                        lastReadAtMillis = b.optLong("lastReadAtMillis", existingBook?.lastReadAtMillis ?: 0L),
+                        tocIndexed = existingBook?.tocIndexed ?: b.optBoolean("tocIndexed", false),
+                        tocIndexVersion = existingBook?.tocIndexVersion ?: b.optInt("tocIndexVersion", 0),
+                        genres = b.optString("genres", existingBook?.genres ?: "")
+                    )
+
+                    if (existingBook != null) {
+                        // Update in place so ForeignKey.CASCADE does NOT wipe existing EPUB/PDF chapters, highlights, or bookmarks
+                        dao.updateBook(entity)
+                        if (existingChapters.isEmpty()) {
+                            val fallbackChapters = buildStructuredChaptersFromSynopsis(entity).map {
+                                BookChapterEntity(
+                                    bookId = entity.id,
+                                    chapterIndex = it.index,
+                                    title = it.title,
+                                    pagesJson = JSONArray(it.pages).toString(),
+                                    illustrationsJson = "[]"
+                                )
+                            }
+                            if (fallbackChapters.isNotEmpty()) {
+                                dao.insertChapters(fallbackChapters)
+                            }
+                        }
+                    } else {
+                        val chapters = buildStructuredChaptersFromSynopsis(entity).map {
+                            BookChapterEntity(
+                                bookId = entity.id,
+                                chapterIndex = it.index,
+                                title = it.title,
+                                pagesJson = JSONArray(it.pages).toString(),
+                                illustrationsJson = "[]"
+                            )
+                        }
+                        dao.saveBookWithChapters(entity, chapters)
+                    }
+                }
+            }
+
+            val dailyLogsArr = obj.optJSONArray("daily_reading_logs") ?: obj.optJSONArray("dailyLogs")
+            if (dailyLogsArr != null) {
+                for (i in 0 until dailyLogsArr.length()) {
+                    val l = dailyLogsArr.optJSONObject(i) ?: continue
+                    val dateKey = l.optString("dateKey").trim()
+                    if (dateKey.isNotBlank()) {
+                        val existingLog = dao.getDailyLog(dateKey)
+                        val mins = maxOf(existingLog?.minutesRead ?: 0, l.optInt("minutesRead", 0))
+                        val pages = maxOf(existingLog?.pagesTurned ?: 0, l.optInt("pagesTurned", 0))
+                        dao.upsertDailyLog(
+                            DailyReadingLogEntity(
+                                dateKey = dateKey,
+                                minutesRead = mins,
+                                pagesTurned = pages
+                            )
+                        )
+                    }
+                }
+            }
+
+            val existingBookIds = dao.getAllBooks().map { it.id }.toHashSet()
+
+            val highlightsArr = obj.optJSONArray("highlight_notes") ?: obj.optJSONArray("highlights")
+            if (highlightsArr != null) {
+                for (i in 0 until highlightsArr.length()) {
+                    val hl = highlightsArr.optJSONObject(i) ?: continue
+                    val bId = sanitizeBookId(hl.optString("bookId"))
+                    val hlId = hl.optString("id").trim()
+                    if (hlId.isNotBlank() && bId in existingBookIds) {
+                        dao.upsertHighlight(
+                            HighlightNoteEntity(
+                                id = hlId,
+                                bookId = bId,
+                                chapterIndex = hl.optInt("chapterIndex", 0),
+                                pageIndex = hl.optInt("pageIndex", 0),
+                                chapterTitle = hl.optString("chapterTitle", ""),
+                                quoteText = hl.optString("quoteText", ""),
+                                noteText = hl.optString("noteText", ""),
+                                colorKey = hl.optString("colorKey", "amber"),
+                                createdAtMillis = hl.optLong("createdAtMillis", System.currentTimeMillis()),
+                                startCharIndex = hl.optInt("startCharIndex", -1),
+                                endCharIndex = hl.optInt("endCharIndex", -1)
+                            )
+                        )
+                    }
+                }
+            }
+
+            val bookmarksArr = obj.optJSONArray("page_bookmarks") ?: obj.optJSONArray("bookmarks")
+            if (bookmarksArr != null) {
+                for (i in 0 until bookmarksArr.length()) {
+                    val bm = bookmarksArr.optJSONObject(i) ?: continue
+                    val bId = sanitizeBookId(bm.optString("bookId"))
+                    val bmId = bm.optString("id").trim()
+                    if (bmId.isNotBlank() && bId in existingBookIds) {
+                        dao.upsertBookmark(
+                            PageBookmarkEntity(
+                                id = bmId,
+                                bookId = bId,
+                                pageNumber = bm.optInt("pageNumber", 1),
+                                chapterIndex = bm.optInt("chapterIndex", 0),
+                                chapterTitle = bm.optString("chapterTitle", ""),
+                                snippetText = bm.optString("snippetText", ""),
+                                createdAtMillis = bm.optLong("createdAtMillis", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                }
             }
         }
     }

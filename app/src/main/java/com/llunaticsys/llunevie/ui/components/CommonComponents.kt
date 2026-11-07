@@ -54,7 +54,14 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import java.util.EnumMap
+import java.util.concurrent.ConcurrentHashMap
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -114,42 +121,6 @@ import com.llunaticsys.llunevie.ui.theme.LlunevieStrings
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import coil.compose.AsyncImage
 import java.io.File
-
-/**
- * Lightweight in-memory LRU cache for local cover bitmaps (ImageBitmap).
- * Pre-warmed on cold start to eliminate the 1–3 frame monogram flash before Coil decodes covers.
- */
-object LocalCoverBitmapCache {
-    private val cache = object : LruCache<String, ImageBitmap>(64) {
-        override fun sizeOf(key: String, value: ImageBitmap): Int = 1
-    }
-
-    fun get(path: String): ImageBitmap? = cache.get(path)
-
-    fun put(path: String, bitmap: ImageBitmap) {
-        cache.put(path, bitmap)
-    }
-
-    fun loadOrDecode(path: String, maxDimPx: Int = 540): ImageBitmap? {
-        cache.get(path)?.let { return it }
-        val file = File(path)
-        if (!file.exists() || file.length() == 0L) return null
-        return try {
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(path, opts)
-            val rawW = opts.outWidth.coerceAtLeast(1)
-            val rawH = opts.outHeight.coerceAtLeast(1)
-            val sampleSize = maxOf(1, maxOf(rawW, rawH) / maxDimPx)
-            val decOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-            val bmp = BitmapFactory.decodeFile(path, decOpts) ?: return null
-            val imageBitmap = bmp.asImageBitmap()
-            cache.put(path, imageBitmap)
-            imageBitmap
-        } catch (_: Throwable) {
-            null
-        }
-    }
-}
 
 /**
  * 1:1 Vector Renderer for the official Llunevie Monogram SVG (`llunevie-icon.svg`)
@@ -221,15 +192,157 @@ enum class PrototypeIconType {
     TRANSLATE
 }
 
+private val parsedSvgPathCache = ConcurrentHashMap<String, Path>()
+private val cachedIconPathsByType = EnumMap<PrototypeIconType, List<Path>>(PrototypeIconType::class.java)
+
+private fun getCachedSvgPath(pathData: String): Path {
+    return parsedSvgPathCache.getOrPut(pathData) {
+        PathParser().parsePathString(pathData).toPath()
+    }
+}
+
+private fun getCachedPathsForIcon(type: PrototypeIconType): List<Path> {
+    synchronized(cachedIconPathsByType) {
+        cachedIconPathsByType[type]?.let { return it }
+        val built = when (type) {
+            PrototypeIconType.NAV_HOME -> listOf(
+                getCachedSvgPath("M3 10.5L12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-9z"),
+                getCachedSvgPath("M9.5 21v-6h5v6")
+            )
+            PrototypeIconType.NAV_LIBRARY -> listOf(
+                getCachedSvgPath("M2 4.5C2 3.67 2.67 3 3.5 3H8.5C10.43 3 12 4.57 12 6.5V20C12 18.62 10.88 17.5 9.5 17.5H3.5C2.67 17.5 2 16.83 2 16V4.5Z"),
+                getCachedSvgPath("M22 4.5C22 3.67 21.33 3 20.5 3H15.5C13.57 3 12 4.57 12 6.5V20C12 18.62 13.12 17.5 14.5 17.5H20.5C21.33 17.5 22 16.83 22 16V4.5Z")
+            )
+            PrototypeIconType.SPINE_SHELF -> listOf(
+                getCachedSvgPath("M15.5 5.2l3.3 0.9-2.2 13-3.3-0.9z")
+            )
+            PrototypeIconType.FULL_COVER -> listOf(
+                getCachedSvgPath("M5 16l4-3.5 3 2.5 4-4 3 3")
+            )
+            PrototypeIconType.SORT_DESC -> listOf(
+                getCachedSvgPath("M4 7h10M4 12h7M4 17h4M17 6v12m0 0l-3-3m3 3l3-3")
+            )
+            PrototypeIconType.FILTER_FUNNEL -> listOf(
+                getCachedSvgPath("M22 3L2 3L10 12.46L10 19L14 21L14 12.46Z")
+            )
+            PrototypeIconType.EDIT_PEN -> listOf(
+                getCachedSvgPath("M12 20h9"),
+                getCachedSvgPath("M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z")
+            )
+            PrototypeIconType.TRASH_CAN -> listOf(
+                getCachedSvgPath("M3 6h18"),
+                getCachedSvgPath("M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2")
+            )
+            PrototypeIconType.ARROW_LEFT -> listOf(
+                getCachedSvgPath("M19 12H5M12 19l-7-7 7-7")
+            )
+            PrototypeIconType.CHEVRON_RIGHT -> listOf(
+                getCachedSvgPath("M9 18l6-6-6-6")
+            )
+            PrototypeIconType.CHEVRON_DOWN -> listOf(
+                getCachedSvgPath("M6 9l6 6 6-6")
+            )
+            PrototypeIconType.CHEVRON_UP -> listOf(
+                getCachedSvgPath("M18 15l-6-6-6 6")
+            )
+            PrototypeIconType.CHECK -> listOf(
+                getCachedSvgPath("M20 6L9 17l-5-5")
+            )
+            PrototypeIconType.BOOKMARK_OUTLINE, PrototypeIconType.BOOKMARK_FILLED -> listOf(
+                getCachedSvgPath("M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z")
+            )
+            PrototypeIconType.EXPAND_FULL -> listOf(
+                getCachedSvgPath("M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7")
+            )
+            PrototypeIconType.COLLAPSE_FULL -> listOf(
+                getCachedSvgPath("M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7")
+            )
+            PrototypeIconType.TORCH_BOLT -> listOf(
+                getCachedSvgPath("M13 2L3 14h9l-1 8 10-12h-9l1-8z")
+            )
+            PrototypeIconType.DOWNLOAD_TRAY -> listOf(
+                getCachedSvgPath("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"),
+                getCachedSvgPath("M7 10l5 5 5-5")
+            )
+            PrototypeIconType.UPLOAD_TRAY -> listOf(
+                getCachedSvgPath("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"),
+                getCachedSvgPath("M17 8l-5-5-5 5")
+            )
+            PrototypeIconType.TRANSLATE -> listOf(
+                getCachedSvgPath("m5 8 6 6"),
+                getCachedSvgPath("m4 14 6-6 2-3"),
+                getCachedSvgPath("M2 5h12"),
+                getCachedSvgPath("M7 2h1v3"),
+                getCachedSvgPath("m22 22-5-10-5 10"),
+                getCachedSvgPath("M14 18h6")
+            )
+            else -> emptyList()
+        }
+        cachedIconPathsByType[type] = built
+        return built
+    }
+}
+
+fun defaultPrototypeIconDescription(type: PrototypeIconType): String = when (type) {
+    PrototypeIconType.NAV_HOME -> "Home"
+    PrototypeIconType.NAV_LIBRARY -> "Library"
+    PrototypeIconType.NAV_STATS -> "Statistics"
+    PrototypeIconType.NAV_SETTINGS -> "Settings"
+    PrototypeIconType.PLUS -> "Add"
+    PrototypeIconType.SPINE_SHELF -> "Spine view"
+    PrototypeIconType.GRID_2X2 -> "Grid view"
+    PrototypeIconType.FULL_COVER -> "Cover view"
+    PrototypeIconType.LIST_BULLETS -> "List view"
+    PrototypeIconType.SEARCH -> "Search"
+    PrototypeIconType.SORT_DESC -> "Sort"
+    PrototypeIconType.FILTER_FUNNEL -> "Filter"
+    PrototypeIconType.EDIT_PEN -> "Edit"
+    PrototypeIconType.TRASH_CAN -> "Delete"
+    PrototypeIconType.ARROW_LEFT -> "Back"
+    PrototypeIconType.CHEVRON_RIGHT -> "Next"
+    PrototypeIconType.CHEVRON_DOWN -> "Expand"
+    PrototypeIconType.CHEVRON_UP -> "Collapse"
+    PrototypeIconType.CLOSE_X -> "Close"
+    PrototypeIconType.CHECK -> "Selected"
+    PrototypeIconType.BOOKMARK_OUTLINE -> "Add bookmark"
+    PrototypeIconType.BOOKMARK_FILLED -> "Bookmarked"
+    PrototypeIconType.EXPAND_FULL -> "Full screen"
+    PrototypeIconType.COLLAPSE_FULL -> "Exit full screen"
+    PrototypeIconType.TOC_LIST -> "Contents"
+    PrototypeIconType.TORCH_BOLT -> "Toggle flashlight"
+    PrototypeIconType.DOWNLOAD_TRAY -> "Export"
+    PrototypeIconType.UPLOAD_TRAY -> "Import"
+    PrototypeIconType.TRANSLATE -> "Translate"
+}
+
 @Composable
 fun PrototypeSvgIcon(
     type: PrototypeIconType,
     tint: Color,
     modifier: Modifier = Modifier.size(18.dp),
     strokeWidthDp: Float = 1.6f,
-    badgeFillColor: Color = Color.Transparent
+    badgeFillColor: Color = Color.Transparent,
+    contentDescription: String? = defaultPrototypeIconDescription(type),
+    onClick: (() -> Unit)? = null
 ) {
-    Canvas(modifier = modifier) {
+    val paths = remember(type) { getCachedPathsForIcon(type) }
+    val semanticsModifier = if (!contentDescription.isNullOrBlank()) {
+        Modifier.semantics {
+            this.contentDescription = contentDescription
+            this.role = if (onClick != null) Role.Button else Role.Image
+        }
+    } else {
+        Modifier
+    }
+    val clickModifier = if (onClick != null) {
+        Modifier
+            .minimumInteractiveComponentSize()
+            .clickable(onClick = onClick)
+    } else {
+        Modifier
+    }
+
+    Canvas(modifier = clickModifier.then(modifier).then(semanticsModifier)) {
         val sx = size.width / 24f
         val sy = size.height / 24f
         val stroke = Stroke(
@@ -238,17 +351,13 @@ fun PrototypeSvgIcon(
             join = StrokeJoin.Round
         )
 
-        fun p(pathData: String): Path = PathParser().parsePathString(pathData).toPath()
-
         scale(scaleX = sx, scaleY = sy, pivot = Offset.Zero) {
             when (type) {
                 PrototypeIconType.NAV_HOME -> {
-                    drawPath(p("M3 10.5L12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-9z"), tint, style = stroke)
-                    drawPath(p("M9.5 21v-6h5v6"), tint, style = stroke)
+                    paths.forEach { drawPath(it, tint, style = stroke) }
                 }
                 PrototypeIconType.NAV_LIBRARY -> {
-                    drawPath(p("M2 4.5C2 3.67 2.67 3 3.5 3H8.5C10.43 3 12 4.57 12 6.5V20C12 18.62 10.88 17.5 9.5 17.5H3.5C2.67 17.5 2 16.83 2 16V4.5Z"), tint, style = stroke)
-                    drawPath(p("M22 4.5C22 3.67 21.33 3 20.5 3H15.5C13.57 3 12 4.57 12 6.5V20C12 18.62 13.12 17.5 14.5 17.5H20.5C21.33 17.5 22 16.83 22 16V4.5Z"), tint, style = stroke)
+                    paths.forEach { drawPath(it, tint, style = stroke) }
                 }
                 PrototypeIconType.NAV_STATS -> {
                     drawLine(tint, Offset(7f, 17f), Offset(7f, 11f), strokeWidth = stroke.width, cap = StrokeCap.Round)
@@ -273,7 +382,7 @@ fun PrototypeSvgIcon(
                 PrototypeIconType.SPINE_SHELF -> {
                     drawRoundRect(tint, Offset(4f, 5f), Size(3.5f, 14f), CornerRadius(1f, 1f), style = stroke)
                     drawRoundRect(tint, Offset(9.5f, 5f), Size(3.5f, 14f), CornerRadius(1f, 1f), style = stroke)
-                    drawPath(p("M15.5 5.2l3.3 0.9-2.2 13-3.3-0.9z"), tint, style = stroke)
+                    paths.firstOrNull()?.let { drawPath(it, tint, style = stroke) }
                 }
                 PrototypeIconType.GRID_2X2 -> {
                     drawRoundRect(tint, Offset(4f, 4f), Size(6.5f, 6.5f), CornerRadius(1.5f, 1.5f), style = stroke)
@@ -284,7 +393,7 @@ fun PrototypeSvgIcon(
                 PrototypeIconType.FULL_COVER -> {
                     drawRoundRect(tint, Offset(5f, 3.5f), Size(14f, 17f), CornerRadius(2f, 2f), style = stroke)
                     drawCircle(tint, radius = 1.5f, center = Offset(9.5f, 8.5f), style = stroke)
-                    drawPath(p("M5 16l4-3.5 3 2.5 4-4 3 3"), tint, style = stroke)
+                    paths.firstOrNull()?.let { drawPath(it, tint, style = stroke) }
                 }
                 PrototypeIconType.LIST_BULLETS -> {
                     drawCircle(tint, radius = 1.4f, center = Offset(6f, 7f), style = stroke)
@@ -298,54 +407,35 @@ fun PrototypeSvgIcon(
                     drawCircle(tint, radius = 8f, center = Offset(11f, 11f), style = stroke)
                     drawLine(tint, Offset(21f, 21f), Offset(16.65f, 16.65f), strokeWidth = stroke.width, cap = StrokeCap.Round)
                 }
-                PrototypeIconType.SORT_DESC -> {
-                    drawPath(p("M4 7h10M4 12h7M4 17h4M17 6v12m0 0l-3-3m3 3l3-3"), tint, style = stroke)
-                }
-                PrototypeIconType.FILTER_FUNNEL -> {
-                    drawPath(p("M22 3L2 3L10 12.46L10 19L14 21L14 12.46Z"), tint, style = stroke)
-                }
-                PrototypeIconType.EDIT_PEN -> {
-                    drawPath(p("M12 20h9"), tint, style = stroke)
-                    drawPath(p("M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"), tint, style = stroke)
+                PrototypeIconType.SORT_DESC,
+                PrototypeIconType.FILTER_FUNNEL,
+                PrototypeIconType.EDIT_PEN,
+                PrototypeIconType.ARROW_LEFT,
+                PrototypeIconType.CHEVRON_RIGHT,
+                PrototypeIconType.CHEVRON_DOWN,
+                PrototypeIconType.CHEVRON_UP,
+                PrototypeIconType.CHECK,
+                PrototypeIconType.BOOKMARK_OUTLINE,
+                PrototypeIconType.EXPAND_FULL,
+                PrototypeIconType.COLLAPSE_FULL,
+                PrototypeIconType.TORCH_BOLT,
+                PrototypeIconType.TRANSLATE -> {
+                    paths.forEach { drawPath(it, tint, style = stroke) }
                 }
                 PrototypeIconType.TRASH_CAN -> {
-                    drawPath(p("M3 6h18"), tint, style = stroke)
-                    drawPath(p("M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"), tint, style = stroke)
+                    paths.forEach { drawPath(it, tint, style = stroke) }
                     drawLine(tint, Offset(10f, 11f), Offset(10f, 17f), strokeWidth = stroke.width, cap = StrokeCap.Round)
                     drawLine(tint, Offset(14f, 11f), Offset(14f, 17f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-                }
-                PrototypeIconType.ARROW_LEFT -> {
-                    drawPath(p("M19 12H5M12 19l-7-7 7-7"), tint, style = stroke)
-                }
-                PrototypeIconType.CHEVRON_RIGHT -> {
-                    drawPath(p("M9 18l6-6-6-6"), tint, style = stroke)
-                }
-                PrototypeIconType.CHEVRON_DOWN -> {
-                    drawPath(p("M6 9l6 6 6-6"), tint, style = stroke)
-                }
-                PrototypeIconType.CHEVRON_UP -> {
-                    drawPath(p("M18 15l-6-6-6 6"), tint, style = stroke)
                 }
                 PrototypeIconType.CLOSE_X -> {
                     drawLine(tint, Offset(18f, 6f), Offset(6f, 18f), strokeWidth = stroke.width, cap = StrokeCap.Round)
                     drawLine(tint, Offset(6f, 6f), Offset(18f, 18f), strokeWidth = stroke.width, cap = StrokeCap.Round)
                 }
-                PrototypeIconType.CHECK -> {
-                    drawPath(p("M20 6L9 17l-5-5"), tint, style = stroke)
-                }
-                PrototypeIconType.BOOKMARK_OUTLINE -> {
-                    drawPath(p("M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"), tint, style = stroke)
-                }
                 PrototypeIconType.BOOKMARK_FILLED -> {
-                    val bm = p("M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z")
-                    drawPath(bm, tint, style = Fill)
-                    drawPath(bm, tint, style = stroke)
-                }
-                PrototypeIconType.EXPAND_FULL -> {
-                    drawPath(p("M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"), tint, style = stroke)
-                }
-                PrototypeIconType.COLLAPSE_FULL -> {
-                    drawPath(p("M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"), tint, style = stroke)
+                    paths.firstOrNull()?.let { bm ->
+                        drawPath(bm, tint, style = Fill)
+                        drawPath(bm, tint, style = stroke)
+                    }
                 }
                 PrototypeIconType.TOC_LIST -> {
                     drawLine(tint, Offset(8f, 6f), Offset(21f, 6f), strokeWidth = stroke.width, cap = StrokeCap.Round)
@@ -355,26 +445,13 @@ fun PrototypeSvgIcon(
                     drawCircle(tint, radius = 1.2f, center = Offset(3.5f, 12f), style = Fill)
                     drawCircle(tint, radius = 1.2f, center = Offset(3.5f, 18f), style = Fill)
                 }
-                PrototypeIconType.TORCH_BOLT -> {
-                    drawPath(p("M13 2L3 14h9l-1 8 10-12h-9l1-8z"), tint, style = stroke)
-                }
                 PrototypeIconType.DOWNLOAD_TRAY -> {
-                    drawPath(p("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"), tint, style = stroke)
-                    drawPath(p("M7 10l5 5 5-5"), tint, style = stroke)
+                    paths.forEach { drawPath(it, tint, style = stroke) }
                     drawLine(tint, Offset(12f, 15f), Offset(12f, 3f), strokeWidth = stroke.width, cap = StrokeCap.Round)
                 }
                 PrototypeIconType.UPLOAD_TRAY -> {
-                    drawPath(p("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"), tint, style = stroke)
-                    drawPath(p("M17 8l-5-5-5 5"), tint, style = stroke)
+                    paths.forEach { drawPath(it, tint, style = stroke) }
                     drawLine(tint, Offset(12f, 3f), Offset(12f, 15f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-                }
-                PrototypeIconType.TRANSLATE -> {
-                    drawPath(p("m5 8 6 6"), tint, style = stroke)
-                    drawPath(p("m4 14 6-6 2-3"), tint, style = stroke)
-                    drawPath(p("M2 5h12"), tint, style = stroke)
-                    drawPath(p("M7 2h1v3"), tint, style = stroke)
-                    drawPath(p("m22 22-5-10-5 10"), tint, style = stroke)
-                    drawPath(p("M14 18h6"), tint, style = stroke)
                 }
             }
         }
@@ -421,26 +498,33 @@ fun ModernSwitch(
 
     Box(
         modifier = modifier
-            .width(46.dp)
-            .height(26.dp)
-            .clip(CircleShape)
-            .background(trackColor)
-            .border(1.dp, palette.borderSoft, CircleShape)
+            .minimumInteractiveComponentSize()
+            .semantics { role = Role.Switch }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
-            ) { onCheckedChange(!checked) }
-            .padding(2.dp),
-        contentAlignment = Alignment.CenterStart
+            ) { onCheckedChange(!checked) },
+        contentAlignment = Alignment.Center
     ) {
         Box(
             modifier = Modifier
-                .offset(x = thumbOffset)
-                .size(20.dp)
-                .shadow(2.dp, CircleShape)
+                .width(46.dp)
+                .height(26.dp)
                 .clip(CircleShape)
-                .background(thumbColor)
-        )
+                .background(trackColor)
+                .border(1.dp, palette.borderSoft, CircleShape)
+                .padding(2.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Box(
+                modifier = Modifier
+                    .offset(x = thumbOffset)
+                    .size(20.dp)
+                    .shadow(2.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(thumbColor)
+            )
+        }
     }
 }
 
@@ -515,8 +599,13 @@ fun <T> CustomThemeDropdown(
                         )
                         Box(
                             modifier = Modifier
+                                .minimumInteractiveComponentSize()
                                 .size(24.dp)
                                 .clip(CircleShape)
+                                .semantics {
+                                    contentDescription = "Close"
+                                    role = Role.Button
+                                }
                                 .clickable { expanded = false },
                             contentAlignment = Alignment.Center
                         ) {
@@ -725,20 +814,62 @@ fun BookCoverCard(
                             )
 
                             onDrawBehind {
-                                // 1. Soft Ground Cast Shadow under bottom-right corner & page block
-                                val shadowLeft = coverW * 0.12f
-                                val shadowTop = coverH - bottomTilt * 1.1f
-                                drawOval(
+                                // 1. Soft Ground Cast Shadow hugging the sloped book base & page block
+                                val nc = drawContext.canvas.nativeCanvas
+                                val mainCx = coverW * 0.56f
+                                val mainCy = (coverH - bottomTilt) + (bottomTilt * 0.56f) + 0.5.dp.toPx()
+                                val mainRx = (coverW * 0.50f).coerceAtLeast(1f)
+                                val mainRy = (bottomShadowSpace * 0.95f).coerceAtLeast(3.5.dp.toPx())
+                                val coverSlopeDeg = Math.toDegrees(
+                                    kotlin.math.atan2(bottomTilt.toDouble(), coverW.coerceAtLeast(1f).toDouble())
+                                ).toFloat()
+
+                                val s1 = nc.save()
+                                nc.translate(mainCx, mainCy)
+                                nc.rotate(coverSlopeDeg)
+                                nc.scale(1f, mainRy / mainRx)
+                                drawCircle(
                                     brush = Brush.radialGradient(
-                                        0.0f to Color.Black.copy(alpha = 0.36f),
-                                        0.55f to Color.Black.copy(alpha = 0.16f),
-                                        1.0f to Color.Transparent,
-                                        center = Offset(coverW * 0.88f, coverH - 1.dp.toPx()),
-                                        radius = (totalW - shadowLeft) * 0.62f
+                                        0.00f to Color.Black.copy(alpha = 0.28f),
+                                        0.38f to Color.Black.copy(alpha = 0.15f),
+                                        0.72f to Color.Black.copy(alpha = 0.04f),
+                                        1.00f to Color.Transparent,
+                                        center = Offset.Zero,
+                                        radius = mainRx
                                     ),
-                                    topLeft = Offset(shadowLeft, shadowTop),
-                                    size = androidx.compose.ui.geometry.Size(totalW - shadowLeft, totalH - shadowTop)
+                                    radius = mainRx,
+                                    center = Offset.Zero
                                 )
+                                nc.restoreToCount(s1)
+
+                                val pageCx = (coverW + pageRightX) * 0.5f
+                                val pageCy = (coverH + pageBottomRightY) * 0.5f + 0.5.dp.toPx()
+                                val pageRx = ((pageRightX - coverW) * 0.95f).coerceAtLeast(1f)
+                                val pageRy = (bottomShadowSpace * 0.82f).coerceAtLeast(3.dp.toPx())
+                                val pageSlopeDeg = Math.toDegrees(
+                                    kotlin.math.atan2(
+                                        (pageBottomRightY - coverH).toDouble(),
+                                        (pageRightX - coverW).coerceAtLeast(1f).toDouble()
+                                    )
+                                ).toFloat()
+
+                                val s2 = nc.save()
+                                nc.translate(pageCx, pageCy)
+                                nc.rotate(pageSlopeDeg)
+                                nc.scale(1f, pageRy / pageRx)
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        0.00f to Color.Black.copy(alpha = 0.24f),
+                                        0.45f to Color.Black.copy(alpha = 0.10f),
+                                        0.78f to Color.Black.copy(alpha = 0.02f),
+                                        1.00f to Color.Transparent,
+                                        center = Offset.Zero,
+                                        radius = pageRx
+                                    ),
+                                    radius = pageRx,
+                                    center = Offset.Zero
+                                )
+                                nc.restoreToCount(s2)
 
                                 // 2. Back cover board subtle rim behind paper block
                                 val darkenedSpine = Color(
@@ -812,6 +943,13 @@ fun BookCoverCard(
                                 val nativeCanvas = drawContext.canvas.nativeCanvas
                                 val saveCount = nativeCanvas.save()
                                 nativeCanvas.concat(perspectiveMatrix)
+
+                                // Fill opaque cover base color before drawing cover content so shadow never bleeds through
+                                drawRect(
+                                    color = bgColor,
+                                    topLeft = Offset.Zero,
+                                    size = androidx.compose.ui.geometry.Size(totalW, totalH)
+                                )
 
                                 // Draw 100% uncropped cover content inside the perspective quad
                                 drawContent()
@@ -906,64 +1044,68 @@ private fun BoxScope.BookCoverInnerContent(
     imageRequest: coil.request.ImageRequest?,
     contentScale: ContentScale
 ) {
-    if (showTitleInsideFallback) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp)
-                .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-            Text(
-                text = book.title,
-                color = textColor,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
-        }
-    } else {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = book.category.uppercase(),
-                color = textColor.copy(alpha = 0.7f),
-                fontSize = 7.5.sp,
-                fontFamily = FontFamily.Monospace,
-                maxLines = 1
-            )
-            Box(
+    var imageLoaded by remember(imageRequest) { mutableStateOf(false) }
+
+    if (imageRequest == null || !imageLoaded) {
+        if (showTitleInsideFallback) {
+            Column(
                 modifier = Modifier
-                    .size(34.dp)
-                    .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
-                contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .padding(10.dp)
+                    .border(1.dp, textColor.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+                Text(
+                    text = book.title,
+                    color = textColor,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(text = "✦", color = textColor.copy(alpha = 0.6f), fontSize = 9.sp)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = initials,
-                    color = textColor,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.SemiBold
+                    text = book.category.uppercase(),
+                    color = textColor.copy(alpha = 0.7f),
+                    fontSize = 7.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = initials,
+                        color = textColor,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Text(
+                    text = book.year,
+                    color = textColor.copy(alpha = 0.7f),
+                    fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace
                 )
             }
-            Text(
-                text = book.year,
-                color = textColor.copy(alpha = 0.7f),
-                fontSize = 8.sp,
-                fontFamily = FontFamily.Monospace
-            )
         }
     }
 
@@ -972,6 +1114,7 @@ private fun BoxScope.BookCoverInnerContent(
             model = imageRequest,
             contentDescription = book.title,
             contentScale = contentScale,
+            onSuccess = { imageLoaded = true },
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -1036,82 +1179,14 @@ fun <T> ClassicGlassSegmentedControl(
     }
 }
 
-fun Modifier.llunevieSurface(
-    palette: LluneviePalette,
-    isGlass: Boolean = palette.isGlass,
-    shape: Shape = RoundedCornerShape(16.dp),
-    shadowElevation: androidx.compose.ui.unit.Dp = if (isGlass) 10.dp else 4.dp
-): Modifier {
-    return if (isGlass) {
-        val glassBg = if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface
-        val glassBorderBrush = if (palette.isDark) {
-            Brush.linearGradient(
-                colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        } else {
-            Brush.linearGradient(
-                colors = listOf(palette.textMain.copy(alpha = 0.12f), palette.textMain.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        }
-        this
-            .shadow(shadowElevation, shape)
-            .clip(shape)
-            .background(glassBg)
-            .border(BorderStroke(1.dp, glassBorderBrush), shape)
-    } else {
-        this
-            .shadow(shadowElevation, shape)
-            .clip(shape)
-            .background(palette.bgCard)
-            .border(BorderStroke(1.dp, palette.borderSoft), shape)
-    }
-}
-
-@Composable
-fun GlassSurface(
-    modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(16.dp),
-    shadowElevation: androidx.compose.ui.unit.Dp = 8.dp,
-    content: @Composable () -> Unit
-) {
-    val palette = LocalLluneviePalette.current
-    val isGlass = palette.isGlass
-    val glassBg = if (isGlass) {
-        if (palette.isDark) Color(0xFF1E2128).copy(alpha = 0.68f) else palette.bgSurface
-    } else {
-        palette.bgCard
-    }
-    val borderStroke = if (isGlass) {
-        val brush = if (palette.isDark) {
-            Brush.linearGradient(
-                colors = listOf(Color.White.copy(alpha = 0.28f), Color.White.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        } else {
-            Brush.linearGradient(
-                colors = listOf(palette.textMain.copy(alpha = 0.12f), palette.textMain.copy(alpha = 0.04f)),
-                start = Offset.Zero,
-                end = Offset.Infinite
-            )
-        }
-        BorderStroke(1.dp, brush)
-    } else {
-        BorderStroke(1.dp, palette.borderSoft)
-    }
-
-    Surface(
-        shape = shape,
-        color = glassBg,
-        border = borderStroke,
-        shadowElevation = if (isGlass) (shadowElevation * 1.4f) else shadowElevation,
-        modifier = modifier
-    ) {
-        content()
+fun resolveDisplayFolderPath(uri: android.net.Uri): String {
+    val path = uri.path.orEmpty()
+    val decoded = android.net.Uri.decode(path)
+    return when {
+        decoded.startsWith("/tree/primary:") -> "/sdcard/" + decoded.removePrefix("/tree/primary:")
+        decoded.startsWith("primary:") -> "/sdcard/" + decoded.removePrefix("primary:")
+        decoded.contains(":") -> "/sdcard/" + decoded.substringAfterLast(":")
+        else -> "/sdcard/Llunevie/Books"
     }
 }
 
@@ -1137,18 +1212,8 @@ fun BottomFloatingNavDock(
         Triple(MainNavTab.SETTINGS, strings.navSettings, PrototypeIconType.NAV_SETTINGS)
     )
 
-    val dockBg = if (palette.isGlass) {
-        if (palette.isDark) Color(0xFF1C1F26).copy(alpha = 0.88f)
-        else palette.dockBg
-    } else {
-        palette.dockBg
-    }
-    val dockBorder = if (palette.isGlass) {
-        if (palette.isDark) Color.White.copy(alpha = 0.14f)
-        else palette.dockBorder
-    } else {
-        palette.dockBorder
-    }
+    val dockBg = palette.dockBg
+    val dockBorder = palette.dockBorder
 
     Row(
         modifier = modifier
@@ -1166,7 +1231,7 @@ fun BottomFloatingNavDock(
             shape = CircleShape,
             color = dockBg,
             border = BorderStroke(1.dp, dockBorder),
-            shadowElevation = if (palette.isGlass) 12.dp else 8.dp
+            shadowElevation = 8.dp
         ) {
             Row(
                 modifier = Modifier
@@ -1177,16 +1242,8 @@ fun BottomFloatingNavDock(
             ) {
                 items.forEach { (tab, label, iconType) ->
                     val isSelected = activeTab == tab
-                    val activePillBg = if (palette.isGlass) {
-                        if (palette.isDark) Color.White.copy(alpha = 0.14f) else palette.pillActiveBg
-                    } else {
-                        palette.pillActiveBg
-                    }
-                    val activePillBorder = if (palette.isGlass) {
-                        if (palette.isDark) Color.White.copy(alpha = 0.18f) else palette.pillActiveBorder
-                    } else {
-                        palette.pillActiveBorder
-                    }
+                    val activePillBg = palette.pillActiveBg
+                    val activePillBorder = palette.pillActiveBorder
 
                     val iconScale by animateFloatAsState(
                         targetValue = if (isSelected) 1.08f else 1f,
@@ -1234,7 +1291,7 @@ fun BottomFloatingNavDock(
                                     .size(20.dp)
                                     .scale(iconScale),
                                 strokeWidthDp = if (isSelected) 1.8f else 1.6f,
-                                badgeFillColor = if (isSelected) (if (palette.isGlass) Color.White.copy(alpha = 0.5f) else palette.pillActiveBg) else palette.dockBg
+                                badgeFillColor = if (isSelected) palette.pillActiveBg else palette.dockBg
                             )
                             AnimatedVisibility(
                                 visible = isSelected,
@@ -1278,31 +1335,60 @@ fun BottomFloatingNavDock(
     }
 }
 
+private val BROKEN_APOSTROPHE_REGEX =
+    Regex("([A-Za-z])[\\uFFFD\\u0080-\\u009F\\u00D5\\uF000-\\uFFFF]+([sStTdDmMrRvVeE]\\b)")
+private val CONTROL_CHARS_REGEX = Regex("[\\u0000-\\u001F\\u007F-\\u009F]")
+private val MULTI_WHITESPACE_REGEX = Regex("\\s+")
+private val NUMERIC_HTML_ENTITY_REGEX = Regex("&#(x?[0-9a-fA-F]+);")
+
 fun sanitizeBookOrChapterText(raw: String): String {
     if (raw.isBlank()) return raw
-    val pre = raw
-        .replace("&apos;", "'", ignoreCase = true)
-        .replace("&quot;", "\"", ignoreCase = true)
-        .replace("&nbsp;", " ", ignoreCase = true)
-        .replace("&amp;", "&", ignoreCase = true)
-        .replace("&#39;", "'")
-        .replace("&rsquo;", "'")
-        .replace("&lsquo;", "'")
-        .replace("&ldquo;", "\"")
-        .replace("&rdquo;", "\"")
-        .replace("&ndash;", "–")
-        .replace("&mdash;", "—")
+    val hasAmp = raw.contains('&')
+    val pre = if (hasAmp) {
+        val named = raw
+            .replace("&apos;", "'", ignoreCase = true)
+            .replace("&quot;", "\"", ignoreCase = true)
+            .replace("&nbsp;", " ", ignoreCase = true)
+            .replace("&lt;", "<", ignoreCase = true)
+            .replace("&gt;", ">", ignoreCase = true)
+            .replace("&hellip;", "…", ignoreCase = true)
+            .replace("&#39;", "'")
+            .replace("&#039;", "'")
+            .replace("&#34;", "\"")
+            .replace("&#160;", " ")
+            .replace("&rsquo;", "'")
+            .replace("&lsquo;", "'")
+            .replace("&ldquo;", "\"")
+            .replace("&rdquo;", "\"")
+            .replace("&ndash;", "–")
+            .replace("&mdash;", "—")
+        val numDecoded = if (named.contains("&#")) {
+            NUMERIC_HTML_ENTITY_REGEX.replace(named) { match ->
+                val token = match.groupValues[1]
+                val codePoint = runCatching {
+                    if (token.startsWith("x", ignoreCase = true)) {
+                        token.substring(1).toInt(16)
+                    } else {
+                        token.toInt(10)
+                    }
+                }.getOrNull()
+                if (codePoint != null && codePoint in 0x20..0x10FFFF) {
+                    String(Character.toChars(codePoint))
+                } else {
+                    match.value
+                }
+            }
+        } else {
+            named
+        }
+        numDecoded.replace("&amp;", "&", ignoreCase = true)
+    } else {
+        raw
+    }
 
-    val htmlDecoded = runCatching {
-        android.text.Html.fromHtml(pre, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
-    }.getOrDefault(pre)
-
-    return htmlDecoded
-        .replace("&apos;", "'", ignoreCase = true)
-        .replace("&quot;", "\"", ignoreCase = true)
-        .replace("&nbsp;", " ", ignoreCase = true)
+    return pre
         // Windows-1252 / MacRoman / Private Use / Replacement char apostrophes between letters (e.g., Storm▯s End -> Storm's End)
-        .replace(Regex("([A-Za-z])[\\uFFFD\\u0080-\\u009F\\u00D5\\uF000-\\uFFFF]+([sStTdDmMrRvVeE]\\b)"), "$1'$2")
+        .replace(BROKEN_APOSTROPHE_REGEX, "$1'$2")
         .replace('\u0091', '\'')
         .replace('\u0092', '\'')
         .replace('\u2018', '\'')
@@ -1312,8 +1398,8 @@ fun sanitizeBookOrChapterText(raw: String): String {
         .replace('\u0096', '–')
         .replace('\u0097', '—')
         .replace('\uFFFD', '\'')
-        .replace(Regex("[\\u0000-\\u001F\\u007F-\\u009F]"), "")
-        .replace(Regex("\\s+"), " ")
+        .replace(CONTROL_CHARS_REGEX, "")
+        .replace(MULTI_WHITESPACE_REGEX, " ")
         .replace(" Amp ", " & ")
         .trim()
 }
@@ -1321,12 +1407,7 @@ fun sanitizeBookOrChapterText(raw: String): String {
 fun normalizeBookTitle(fileName: String): String {
     val sanitized = sanitizeBookOrChapterText(fileName)
     var s = sanitized.replace(Regex("""\.(epub|pdf|txt|json|mobi|azw3|cbz|cbr|fb2|djvu)$""", RegexOption.IGNORE_CASE), "")
-    // Decode common HTML entities and URL encoding first
-    s = sanitizeBookOrChapterText(s)
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    // Decode URL encoding and sanitize entities
     s = runCatching { java.net.URLDecoder.decode(s, "UTF-8") }.getOrDefault(s)
     s = sanitizeBookOrChapterText(s)
     // Replace " - " or " _ " or " -- " with ": "

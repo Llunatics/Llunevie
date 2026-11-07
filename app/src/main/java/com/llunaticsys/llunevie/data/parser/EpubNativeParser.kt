@@ -31,9 +31,17 @@ data class ParsedBookBundle(
 
 object EpubNativeParser {
 
-    // In-memory LRU Cache for uncompressed full-resolution EPUB illustration images
-    private val fullResImageCache = object : LruCache<String, Bitmap>(8) {
-        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    private const val MAX_SINGLE_ENTRY_BYTES = 16L * 1024L * 1024L // 16 MB per entry cap
+    private const val MAX_CUMULATIVE_EPUB_BYTES = 64L * 1024L * 1024L // 64 MB cumulative budget
+
+    // Byte-bounded in-memory LRU Cache for EPUB illustration images (24 MB max, size in KB)
+    private val fullResImageCache = object : LruCache<String, Bitmap>(24 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
+    }
+
+    fun clearMemoryCaches() {
+        fullResImageCache.evictAll()
     }
 
     fun getCachedFullResImage(imagePath: String): Bitmap? {
@@ -41,7 +49,7 @@ object EpubNativeParser {
         return if (cached != null && !cached.isRecycled) cached else null
     }
 
-    fun decodeFullResImage(imagePath: String): Bitmap? {
+    fun decodeFullResImage(imagePath: String, maxDimPx: Int = 2048): Bitmap? {
         if (imagePath.isBlank()) return null
         fullResImageCache.get(imagePath)?.let {
             if (!it.isRecycled) return it
@@ -50,8 +58,16 @@ object EpubNativeParser {
         val file = File(cleanPath)
         if (!file.exists()) return null
         return runCatching {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(cleanPath, boundsOpts)
+            val rawW = boundsOpts.outWidth.coerceAtLeast(1)
+            val rawH = boundsOpts.outHeight.coerceAtLeast(1)
+            var sampleSize = 1
+            while ((rawW / sampleSize) > maxDimPx || (rawH / sampleSize) > maxDimPx) {
+                sampleSize *= 2
+            }
             val options = BitmapFactory.Options().apply {
-                inSampleSize = 1
+                inSampleSize = sampleSize
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
             val bmp = BitmapFactory.decodeFile(cleanPath, options)
@@ -74,6 +90,54 @@ object EpubNativeParser {
             }
         }
         return stack.joinToString("/")
+    }
+
+    private fun streamZipEntryToFileBounded(
+        zip: ZipFile,
+        entry: java.util.zip.ZipEntry,
+        destFile: File,
+        maxBytes: Long
+    ): Long {
+        if (maxBytes <= 0L) return -1L
+        var totalWritten = 0L
+        val buffer = ByteArray(8192)
+        zip.getInputStream(entry).use { input ->
+            FileOutputStream(destFile).use { output ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    totalWritten += read
+                    if (totalWritten > maxBytes) {
+                        return -1L
+                    }
+                    output.write(buffer, 0, read)
+                }
+            }
+        }
+        return totalWritten
+    }
+
+    private fun readZipEntryTextBounded(
+        zip: ZipFile,
+        entry: java.util.zip.ZipEntry,
+        maxBytes: Long
+    ): Pair<String, Long>? {
+        if (maxBytes <= 0L) return null
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        var totalRead = 0L
+        zip.getInputStream(entry).use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                totalRead += read
+                if (totalRead > maxBytes) {
+                    return null
+                }
+                out.write(buffer, 0, read)
+            }
+        }
+        return out.toString(Charsets.UTF_8.name()) to totalRead
     }
 
     suspend fun importAndParseEpubWithProgress(
@@ -152,23 +216,34 @@ object EpubNativeParser {
 
         try {
             zipFile.use { zip ->
-            // 1. Extract images to internal storage so covers & chapter illustrations persist
+            var cumulativeExtractedBytes = 0L
+            // 1. Stream images directly to internal storage with a 64 MB cumulative budget (no full ByteArray buffering in RAM)
             val entries = zip.entries()
             var imgCounter = 0
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
                 if (!entry.isDirectory && entry.name.matches(Regex(""".*\.(jpe?g|png|webp|gif)$""", RegexOption.IGNORE_CASE))) {
+                    val remainingBudget = (MAX_CUMULATIVE_EPUB_BYTES - cumulativeExtractedBytes).coerceAtMost(MAX_SINGLE_ENTRY_BYTES)
+                    if (remainingBudget <= 0L) break
+
                     val normPath = entry.name.trimStart('/')
                     val baseName = normPath.substringAfterLast('/')
                     val ext = normPath.substringAfterLast('.', "jpg").lowercase()
 
                     runCatching {
-                        val rawBytes = zip.getInputStream(entry).use { it.readBytes() }
+                        val streamedFile = File(coversDir, "raw_${imgCounter}.$ext")
+                        val writtenBytes = streamZipEntryToFileBounded(zip, entry, streamedFile, remainingBudget)
+                        if (writtenBytes <= 0L) {
+                            streamedFile.delete()
+                            return@runCatching
+                        }
+                        cumulativeExtractedBytes += writtenBytes
+
                         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOpts)
+                        BitmapFactory.decodeFile(streamedFile.absolutePath, boundsOpts)
                         val w = boundsOpts.outWidth
                         val h = boundsOpts.outHeight
-                        val compressedSize = entry.compressedSize.takeIf { it > 0 } ?: rawBytes.size.toLong()
+                        val compressedSize = entry.compressedSize.takeIf { it > 0 } ?: writtenBytes
                         val shouldCompress = (w > 1600 || h > 1600 || compressedSize > 350 * 1024)
 
                         val outImgFile: File
@@ -180,7 +255,7 @@ object EpubNativeParser {
                             val decodeOpts = BitmapFactory.Options().apply {
                                 inSampleSize = sampleSize
                             }
-                            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOpts)
+                            val decoded = BitmapFactory.decodeFile(streamedFile.absolutePath, decodeOpts)
                             if (decoded != null) {
                                 val maxDim = maxOf(decoded.width, decoded.height)
                                 val finalBmp = if (maxDim > 1600) {
@@ -198,13 +273,20 @@ object EpubNativeParser {
                                     finalBmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
                                 }
                                 finalBmp.recycle()
+                                streamedFile.delete()
                             } else {
                                 outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
-                                FileOutputStream(outImgFile).use { it.write(rawBytes) }
+                                if (!streamedFile.renameTo(outImgFile)) {
+                                    streamedFile.copyTo(outImgFile, overwrite = true)
+                                    streamedFile.delete()
+                                }
                             }
                         } else {
                             outImgFile = File(coversDir, "img_${imgCounter++}.$ext")
-                            FileOutputStream(outImgFile).use { it.write(rawBytes) }
+                            if (!streamedFile.renameTo(outImgFile)) {
+                                streamedFile.copyTo(outImgFile, overwrite = true)
+                                streamedFile.delete()
+                            }
                         }
 
                         extractedImagesByZipPath[normPath] = outImgFile.absolutePath
@@ -215,15 +297,24 @@ object EpubNativeParser {
                 }
             }
 
+            var cumulativeTextBytes = 0L
+
             // 2. Locate OPF package via META-INF/container.xml
             var opfPath: String? = null
             val containerEntry = zip.getEntry("META-INF/container.xml")
             if (containerEntry != null) {
-                val xml = zip.getInputStream(containerEntry).bufferedReader().use { it.readText() }
-                val doc = Jsoup.parse(xml, "", Parser.xmlParser())
-                val rootFile = doc.selectFirst("rootfile[full-path]")
-                if (rootFile != null) {
-                    opfPath = rootFile.attr("full-path").trimStart('/')
+                val pair = readZipEntryTextBounded(
+                    zip,
+                    containerEntry,
+                    (MAX_CUMULATIVE_EPUB_BYTES - cumulativeTextBytes).coerceAtMost(MAX_SINGLE_ENTRY_BYTES)
+                )
+                if (pair != null) {
+                    cumulativeTextBytes += pair.second
+                    val doc = Jsoup.parse(pair.first, "", Parser.xmlParser())
+                    val rootFile = doc.selectFirst("rootfile[full-path]")
+                    if (rootFile != null) {
+                        opfPath = rootFile.attr("full-path").trimStart('/')
+                    }
                 }
             }
             if (opfPath == null) {
@@ -387,7 +478,11 @@ object EpubNativeParser {
             // 3. Parse every chapter in Spine using Jsoup across <p>, headings, blockquote, li, and general div/text structures
             for ((idx, href) in spineHrefs.withIndex()) {
                 val entry = zip.getEntry(href) ?: continue
-                val rawHtml = zip.getInputStream(entry).bufferedReader().use { it.readText() }
+                val remainingTextBudget = (MAX_CUMULATIVE_EPUB_BYTES - cumulativeTextBytes).coerceAtMost(MAX_SINGLE_ENTRY_BYTES)
+                if (remainingTextBudget <= 0L) break
+                val htmlPair = readZipEntryTextBounded(zip, entry, remainingTextBudget) ?: continue
+                cumulativeTextBytes += htmlPair.second
+                val rawHtml = htmlPair.first
                 val doc = Jsoup.parse(rawHtml)
                 val chDir = if (href.contains("/")) href.substringBeforeLast("/") else ""
                 val baseName = href.substringAfterLast('/').lowercase()
@@ -412,40 +507,43 @@ object EpubNativeParser {
                 val chapterParagraphs = mutableListOf<String>()
                 val chapterIllustrations = JSONArray()
                 val seenImages = mutableSetOf<String>()
-                // Collect images inside this chapter
-                for (imgEl in body.select("img, image")) {
-                    val rawSrc = imgEl.attr("src").ifBlank { imgEl.attr("xlink:href") }.ifBlank { imgEl.attr("href") }
-                    if (rawSrc.isNotBlank()) {
-                        val dec = runCatching { URLDecoder.decode(rawSrc.substringBefore("#"), "UTF-8") }.getOrDefault(rawSrc)
-                        val resolved = resolveRelativeZipPath(chDir, dec)
-                        val localImgPath = extractedImagesByZipPath[resolved]
-                            ?: extractedImagesByZipPath[resolved.lowercase()]
-                            ?: extractedImagesByFileName[dec.substringAfterLast('/')]
-                            ?: extractedImagesByFileName[dec.substringAfterLast('/').lowercase()]
 
-                        if (localImgPath != null && seenImages.add(localImgPath)) {
-                            if (coverFilePath == null) coverFilePath = localImgPath
-                            val alt = imgEl.attr("alt").trim()
-                            val caption = if (alt.length > 2) "$chTitle — $alt" else "$chTitle · Ilustrasi #${chapterIllustrations.length() + 1}"
-                            chapterIllustrations.put(JSONObject().apply {
-                                put("uriOrPath", localImgPath)
-                                put("caption", caption)
-                            })
-                            chapterParagraphs.add("[ILLUST:$localImgPath|$caption]")
+                // Traverse paragraphs, headings, blockquotes, list items, and images in document order
+                val orderedElements: List<Element> = body.select("p, h1, h2, h3, h4, blockquote, li, img, image")
+                var hasStructuredTextBlocks = false
+                for (el in orderedElements) {
+                    val tag = el.tagName()
+                    if (tag.equals("img", ignoreCase = true) || tag.equals("image", ignoreCase = true)) {
+                        val rawSrc = el.attr("src").ifBlank { el.attr("xlink:href") }.ifBlank { el.attr("href") }
+                        if (rawSrc.isNotBlank()) {
+                            val dec = runCatching { URLDecoder.decode(rawSrc.substringBefore("#"), "UTF-8") }.getOrDefault(rawSrc)
+                            val resolved = resolveRelativeZipPath(chDir, dec)
+                            val localImgPath = extractedImagesByZipPath[resolved]
+                                ?: extractedImagesByZipPath[resolved.lowercase()]
+                                ?: extractedImagesByFileName[dec.substringAfterLast('/')]
+                                ?: extractedImagesByFileName[dec.substringAfterLast('/').lowercase()]
+
+                            if (localImgPath != null && seenImages.add(localImgPath)) {
+                                if (coverFilePath == null) coverFilePath = localImgPath
+                                val alt = el.attr("alt").trim()
+                                val caption = if (alt.length > 2) "$chTitle — $alt" else "$chTitle · Ilustrasi #${chapterIllustrations.length() + 1}"
+                                chapterIllustrations.put(JSONObject().apply {
+                                    put("uriOrPath", localImgPath)
+                                    put("caption", caption)
+                                })
+                                chapterParagraphs.add("[ILLUST:$localImgPath|$caption]")
+                            }
                         }
-                    }
-                }
-
-                // Extract structured paragraphs from <p>, <h1>..<h6>, <blockquote>, <li>, or fallback leaf blocks
-                val blockElements: List<Element> = body.select("p, h1, h2, h3, h4, blockquote, li")
-                if (blockElements.isNotEmpty()) {
-                    for (el in blockElements) {
+                    } else {
+                        hasStructuredTextBlocks = true
                         val txt = sanitizeBookOrChapterText(el.text()).replace(Regex("""\s+"""), " ").trim()
                         if (txt.isNotBlank() && !txt.equals(chTitle, ignoreCase = true)) {
                             chapterParagraphs.add(txt)
                         }
                     }
-                } else {
+                }
+
+                if (!hasStructuredTextBlocks) {
                     // Fallback for EPUBs that use <div> or <br>-separated text directly inside <body>
                     val cleanedBody = body.wholeText().lines().map { sanitizeBookOrChapterText(it).replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
                     for (line in cleanedBody) {

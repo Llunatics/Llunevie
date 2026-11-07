@@ -28,6 +28,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -133,435 +134,6 @@ object PageSnapshotBitmapRenderer {
         typefaceCache[key] = finalTf
         return finalTf
     }
-
-    suspend fun renderSingleTextPageBitmapAsync(
-        widthPx: Int,
-        heightPx: Int,
-        density: Float = 1f,
-        scaledDensity: Float = 1f,
-        chapterTitle: String,
-        pageText: String,
-        pageNumberLabel: String = "",
-        bgColor: Color,
-        textColor: Color,
-        mutedColor: Color,
-        fontSizePx: Float,
-        lineSpacingMultiplier: Float,
-        marginPx: Int = 0,
-        fontFamily: String = "Literata",
-        fontWeight: Int = 400,
-        textAlign: String = "left",
-        paraSpacingEm: Float = 1.1f,
-        letterSpacingEm: Float = 0f,
-        wordSpacingPx: Int = 0,
-        paraIndent: Boolean = false,
-        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
-        highlightBgMap: Map<String, Int> = emptyMap()
-    ): ImageBitmap = withContext(Dispatchers.Default) {
-        renderSingleTextPageBitmap(
-            widthPx = widthPx,
-            heightPx = heightPx,
-            density = density,
-            scaledDensity = scaledDensity,
-            chapterTitle = chapterTitle,
-            pageText = pageText,
-            pageNumberLabel = pageNumberLabel,
-            bgColor = bgColor,
-            textColor = textColor,
-            mutedColor = mutedColor,
-            fontSizePx = fontSizePx,
-            lineSpacingMultiplier = lineSpacingMultiplier,
-            marginPx = marginPx,
-            fontFamily = fontFamily,
-            fontWeight = fontWeight,
-            textAlign = textAlign,
-            paraSpacingEm = paraSpacingEm,
-            letterSpacingEm = letterSpacingEm,
-            wordSpacingPx = wordSpacingPx,
-            paraIndent = paraIndent,
-            highlights = highlights,
-            highlightBgMap = highlightBgMap
-        )
-    }
-
-    fun renderSingleTextPageBitmap(
-        widthPx: Int,
-        heightPx: Int,
-        density: Float = 1f,
-        scaledDensity: Float = 1f,
-        chapterTitle: String,
-        pageText: String,
-        pageNumberLabel: String = "",
-        bgColor: Color,
-        textColor: Color,
-        mutedColor: Color,
-        fontSizePx: Float,
-        lineSpacingMultiplier: Float,
-        marginPx: Int = 0,
-        fontFamily: String = "Literata",
-        fontWeight: Int = 400,
-        textAlign: String = "left",
-        paraSpacingEm: Float = 1.1f,
-        letterSpacingEm: Float = 0f,
-        wordSpacingPx: Int = 0,
-        paraIndent: Boolean = false,
-        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
-        highlightBgMap: Map<String, Int> = emptyMap()
-    ): ImageBitmap {
-        val w = widthPx.coerceIn(320, 1920)
-        val h = heightPx.coerceIn(420, 2560)
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = AndroidCanvas(bmp)
-        canvas.drawColor(bgColor.toArgb())
-
-        val illustMatch = Regex("""^\[ILLUST:([^|\]]+)""").find(pageText.trim())
-        if (illustMatch != null && (chapterTitle.equals("Sampul", true) || chapterTitle.equals("Cover", true) || !pageText.contains("\n\n"))) {
-            val imgPath = illustMatch.groupValues[1]
-            val imgFile = File(imgPath)
-            if (imgFile.exists()) {
-                val coverBmp = runCatching { BitmapFactory.decodeFile(imgFile.absolutePath) }.getOrNull()
-                if (coverBmp != null) {
-                    val scale = minOf(w.toFloat() / coverBmp.width.toFloat(), h.toFloat() / coverBmp.height.toFloat())
-                    val dstW = (coverBmp.width * scale).toInt().coerceAtLeast(1)
-                    val dstH = (coverBmp.height * scale).toInt().coerceAtLeast(1)
-                    val dstX = (w - dstW) / 2
-                    val dstY = (h - dstH) / 2
-                    val dst = Rect(dstX, dstY, dstX + dstW, dstY + dstH)
-                    canvas.drawBitmap(coverBmp, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
-                    return bmp.asImageBitmap()
-                }
-            }
-        }
-
-        val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = textColor.toArgb()
-            textSize = fontSizePx.coerceIn(12f, 120f)
-            typeface = getSystemTypeface(fontFamily, fontWeight)
-            letterSpacing = letterSpacingEm
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && wordSpacingPx > 0) {
-                wordSpacing = wordSpacingPx.toFloat()
-            }
-            if (fontWeight == 500) {
-                style = Paint.Style.FILL_AND_STROKE
-                strokeWidth = 0.45f * density
-            }
-        }
-
-        // Exact horizontal padding (22.dp * density) and vertical padding (20.dp * density top, 24.dp * density bottom)
-        val padX = (22f * density).toInt().coerceIn(16, w / 4)
-        val padTop = (20f * density).toInt().coerceIn(16, h / 4)
-        val padBottom = (24f * density).toInt().coerceIn(16, h / 4)
-        val contentW = (w - padX * 2).coerceAtLeast(120)
-        val availableBodyH = (h - padTop - padBottom).toFloat().coerceAtLeast(100f)
-
-        val rawClean = pageText
-            .replace(Regex("\\[ILLUST:[^]]+]"), "")
-            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-            .trim()
-        val cleanText = if (paraIndent) {
-            rawClean.split("\n\n").joinToString("\n\n") { "\u2003\u2003$it" }
-        } else rawClean
-
-        val spannable = SpannableString(cleanText)
-        highlights.forEach { hl ->
-            val quote = hl.quoteText.trim()
-            if (quote.isNotBlank() && cleanText.contains(quote, ignoreCase = true)) {
-                val colorArgb = highlightBgMap[hl.colorKey] ?: 0x55D4A74A
-                var startIndex = 0
-                while (startIndex < cleanText.length) {
-                    val found = cleanText.indexOf(quote, startIndex, ignoreCase = true)
-                    if (found < 0) break
-                    spannable.setSpan(
-                        BackgroundColorSpan(colorArgb),
-                        found,
-                        found + quote.length,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                    startIndex = found + quote.length
-                }
-            }
-        }
-
-        val align = when (textAlign.lowercase()) {
-            "center" -> Layout.Alignment.ALIGN_CENTER
-            else -> Layout.Alignment.ALIGN_NORMAL
-        }
-
-        val bodyLayoutBuilder = StaticLayout.Builder
-            .obtain(spannable, 0, spannable.length, bodyPaint, contentW)
-            .setAlignment(align)
-            .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
-            .setIncludePad(false)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
-            bodyLayoutBuilder.setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
-        }
-
-        val bodyLayout = bodyLayoutBuilder.build()
-        var fittedLines = bodyLayout.lineCount
-        for (line in 0 until bodyLayout.lineCount) {
-            if (bodyLayout.getLineBottom(line) > availableBodyH) {
-                fittedLines = line
-                break
-            }
-        }
-
-        canvas.save()
-        canvas.translate(padX.toFloat(), padTop.toFloat())
-        canvas.clipRect(0f, 0f, contentW.toFloat(), availableBodyH)
-
-        if (fittedLines in 1 until bodyLayout.lineCount) {
-            val endOffset = bodyLayout.getLineEnd(fittedLines - 1)
-            val subSpannable = spannable.subSequence(0, endOffset)
-            val fittedLayout = StaticLayout.Builder
-                .obtain(subSpannable, 0, subSpannable.length, bodyPaint, contentW)
-                .setAlignment(align)
-                .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
-                .setIncludePad(false)
-                .apply {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
-                        setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
-                    }
-                }
-                .build()
-            fittedLayout.draw(canvas)
-        } else {
-            bodyLayout.draw(canvas)
-        }
-        canvas.restore()
-
-        return bmp.asImageBitmap()
-    }
-
-    suspend fun renderTwoPageSpreadBitmapAsync(
-        widthPx: Int,
-        heightPx: Int,
-        leftTitle: String,
-        leftText: String,
-        leftPageNum: String,
-        rightTitle: String,
-        rightText: String,
-        rightPageNum: String,
-        leftPdfBitmap: Bitmap?,
-        rightPdfBitmap: Bitmap?,
-        bgColor: Color,
-        textColor: Color,
-        mutedColor: Color,
-        fontSizePx: Float,
-        lineSpacingMultiplier: Float,
-        fontFamily: String = "Literata",
-        fontWeight: Int = 400,
-        textAlign: String = "left",
-        paraSpacingEm: Float = 1.1f,
-        letterSpacingEm: Float = 0f,
-        wordSpacingPx: Int = 0,
-        paraIndent: Boolean = false,
-        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
-        highlightBgMap: Map<String, Int> = emptyMap()
-    ): ImageBitmap = withContext(Dispatchers.Default) {
-        renderTwoPageSpreadBitmap(
-            widthPx = widthPx,
-            heightPx = heightPx,
-            leftTitle = leftTitle,
-            leftText = leftText,
-            leftPageNum = leftPageNum,
-            rightTitle = rightTitle,
-            rightText = rightText,
-            rightPageNum = rightPageNum,
-            leftPdfBitmap = leftPdfBitmap,
-            rightPdfBitmap = rightPdfBitmap,
-            bgColor = bgColor,
-            textColor = textColor,
-            mutedColor = mutedColor,
-            fontSizePx = fontSizePx,
-            lineSpacingMultiplier = lineSpacingMultiplier,
-            fontFamily = fontFamily,
-            fontWeight = fontWeight,
-            textAlign = textAlign,
-            paraSpacingEm = paraSpacingEm,
-            letterSpacingEm = letterSpacingEm,
-            wordSpacingPx = wordSpacingPx,
-            paraIndent = paraIndent,
-            highlights = highlights,
-            highlightBgMap = highlightBgMap
-        )
-    }
-
-    fun renderTwoPageSpreadBitmap(
-        widthPx: Int,
-        heightPx: Int,
-        leftTitle: String,
-        leftText: String,
-        leftPageNum: String,
-        rightTitle: String,
-        rightText: String,
-        rightPageNum: String,
-        leftPdfBitmap: Bitmap?,
-        rightPdfBitmap: Bitmap?,
-        bgColor: Color,
-        textColor: Color,
-        mutedColor: Color,
-        fontSizePx: Float,
-        lineSpacingMultiplier: Float,
-        fontFamily: String = "Literata",
-        fontWeight: Int = 400,
-        textAlign: String = "left",
-        paraSpacingEm: Float = 1.1f,
-        letterSpacingEm: Float = 0f,
-        wordSpacingPx: Int = 0,
-        paraIndent: Boolean = false,
-        highlights: List<com.llunaticsys.llunevie.data.local.HighlightNoteEntity> = emptyList(),
-        highlightBgMap: Map<String, Int> = emptyMap()
-    ): ImageBitmap {
-        val w = widthPx.coerceIn(640, 1920)
-        val h = heightPx.coerceIn(400, 1440)
-        val halfW = w / 2
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = AndroidCanvas(bmp)
-        val isPdf = leftPdfBitmap != null || rightPdfBitmap != null
-        canvas.drawColor(if (isPdf) android.graphics.Color.WHITE else bgColor.toArgb())
-
-        fun drawLeaf(
-            offsetX: Int,
-            title: String,
-            text: String,
-            pageNum: String,
-            pdfBmp: Bitmap?
-        ) {
-            if (pdfBmp != null && !pdfBmp.isRecycled) {
-                val dst = Rect(offsetX, 0, offsetX + halfW, h)
-                canvas.drawBitmap(pdfBmp, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
-                return
-            }
-
-            val illustMatch = Regex("""^\[ILLUST:([^|\]]+)""").find(text.trim())
-            if (illustMatch != null && (title.equals("Sampul", true) || title.equals("Cover", true) || !text.contains("\n\n"))) {
-                val imgPath = illustMatch.groupValues[1]
-                val imgFile = File(imgPath)
-                if (imgFile.exists()) {
-                    val coverBmp = runCatching { BitmapFactory.decodeFile(imgFile.absolutePath) }.getOrNull()
-                    if (coverBmp != null) {
-                        val scale = minOf(halfW.toFloat() / coverBmp.width.toFloat(), h.toFloat() / coverBmp.height.toFloat())
-                        val dstW = (coverBmp.width * scale).toInt().coerceAtLeast(1)
-                        val dstH = (coverBmp.height * scale).toInt().coerceAtLeast(1)
-                        val dstX = offsetX + (halfW - dstW) / 2
-                        val dstY = (h - dstH) / 2
-                        val dst = Rect(dstX, dstY, dstX + dstW, dstY + dstH)
-                        canvas.drawBitmap(coverBmp, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
-                        return
-                    }
-                }
-            }
-            val pad = 32
-            val padTop = 20
-            val padBottom = 24
-            val leafW = (halfW - pad * 2).coerceAtLeast(100)
-            val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = textColor.toArgb()
-                textSize = (fontSizePx * 0.84f).coerceIn(12f, 80f)
-                typeface = getSystemTypeface(fontFamily, fontWeight)
-                letterSpacing = letterSpacingEm
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && wordSpacingPx > 0) {
-                    wordSpacing = wordSpacingPx.toFloat()
-                }
-                if (fontWeight == 500) {
-                    style = Paint.Style.FILL_AND_STROKE
-                    strokeWidth = 0.45f * density
-                }
-            }
-
-            val rawClean = text
-                .replace(Regex("\\[ILLUST:[^]]+]"), "")
-                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                .trim()
-            val clean = if (paraIndent) {
-                rawClean.split("\n\n").joinToString("\n\n") { "\u2003\u2003$it" }
-            } else rawClean
-                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                .trim()
-
-            val spannable = SpannableString(clean)
-            highlights.forEach { hl ->
-                val quote = hl.quoteText.trim()
-                if (quote.isNotBlank() && clean.contains(quote, ignoreCase = true)) {
-                    val colorArgb = highlightBgMap[hl.colorKey] ?: 0x55D4A74A
-                    var startIndex = 0
-                    while (startIndex < clean.length) {
-                        val found = clean.indexOf(quote, startIndex, ignoreCase = true)
-                        if (found < 0) break
-                        spannable.setSpan(
-                            BackgroundColorSpan(colorArgb),
-                            found,
-                            found + quote.length,
-                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                        )
-                        startIndex = found + quote.length
-                    }
-                }
-            }
-
-            val align = when (textAlign.lowercase()) {
-                "center" -> Layout.Alignment.ALIGN_CENTER
-                else -> Layout.Alignment.ALIGN_NORMAL
-            }
-
-            val builder = StaticLayout.Builder
-                .obtain(spannable, 0, spannable.length, bodyPaint, leafW)
-                .setAlignment(align)
-                .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
-                .setIncludePad(false)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
-                builder.setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
-            }
-
-            val fullLayout = builder.build()
-            val availableBodyH = (h - padTop - padBottom).toFloat().coerceAtLeast(100f)
-
-            var fittedLines = fullLayout.lineCount
-            for (line in 0 until fullLayout.lineCount) {
-                if (fullLayout.getLineBottom(line) > availableBodyH) {
-                    fittedLines = line
-                    break
-                }
-            }
-
-            canvas.save()
-            canvas.translate((offsetX + pad).toFloat(), padTop.toFloat())
-            canvas.clipRect(0f, 0f, leafW.toFloat(), availableBodyH)
-
-            if (fittedLines in 1 until fullLayout.lineCount) {
-                val endOffset = fullLayout.getLineEnd(fittedLines - 1)
-                val subSpannable = spannable.subSequence(0, endOffset)
-                val fittedLayout = StaticLayout.Builder
-                    .obtain(subSpannable, 0, subSpannable.length, bodyPaint, leafW)
-                    .setAlignment(align)
-                    .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(1.1f, 2.5f))
-                    .setIncludePad(false)
-                    .apply {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && textAlign.equals("justify", ignoreCase = true)) {
-                            setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
-                        }
-                    }
-                    .build()
-                fittedLayout.draw(canvas)
-            } else {
-                fullLayout.draw(canvas)
-            }
-            canvas.restore()
-        }
-
-        drawLeaf(0, leftTitle, leftText, leftPageNum, leftPdfBitmap)
-        drawLeaf(halfW, rightTitle, rightText, rightPageNum, rightPdfBitmap)
-
-        val spinePaint = Paint().apply {
-            color = android.graphics.Color.argb(45, 0, 0, 0)
-            strokeWidth = 3f
-        }
-        canvas.drawLine(halfW.toFloat(), 0f, halfW.toFloat(), h.toFloat(), spinePaint)
-
-        return bmp.asImageBitmap()
-    }
 }
 
 fun reflectPointAcrossLine(pt: Offset, a: Offset, b: Offset): Offset {
@@ -664,8 +236,8 @@ fun CylindricalFlipbookCanvas(
     pdfTintedPaperColor: Color? = null,
     externalTriggerDir: Int = 0,
     onExternalTriggerConsumed: () -> Unit = {},
-    manualProgress: Float? = null,
-    manualCornerYNorm: Float? = null,
+    manualProgress: () -> Float? = { null },
+    manualCornerYNorm: () -> Float? = { null },
     manualTurnDir: Int? = null,
     onPageTurnCommitted: (direction: Int) -> Unit,
     onCenterTap: () -> Unit = {},
@@ -680,7 +252,14 @@ fun CylindricalFlipbookCanvas(
     var isDragging by remember { mutableStateOf(false) }
 
     val effectiveTurnDir = manualTurnDir ?: turnDir
-    val effectiveCornerYNorm = manualCornerYNorm ?: cornerYNorm
+
+    // Reusable draw-phase geometry & native paint instances (zero per-frame Path/Paint/RectF allocations)
+    val uncoveredPoly = remember { Path() }
+    val currPoly = remember { Path() }
+    val backPoly = remember { Path() }
+    val shadowPath = remember { Path() }
+    val flapPaint = remember { android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG) }
+    val flapDstRect = remember { android.graphics.RectF() }
 
     // Internal MutableState bitmap references preventing 1-frame flashes on page completion
     var displayedCurrentBmp by remember { mutableStateOf(currentPageBitmap) }
@@ -693,7 +272,12 @@ fun CylindricalFlipbookCanvas(
     var displayedNextFilter by remember { mutableStateOf(nextPageColorFilter) }
     var displayedPrevFilter by remember { mutableStateOf(prevPageColorFilter) }
 
-    val isFlipActive = (manualProgress != null && manualProgress > 0.001f) || isDragging || progressAnim.value > 0.001f || isWaitingForParentPageSync
+    val isFlipActive by remember(manualProgress) {
+        derivedStateOf {
+            val mp = manualProgress()
+            (mp != null && mp > 0.001f) || isDragging || progressAnim.value > 0.001f || isWaitingForParentPageSync
+        }
+    }
     LaunchedEffect(isFlipActive) {
         onFlipStateChanged(isFlipActive)
     }
@@ -731,8 +315,14 @@ fun CylindricalFlipbookCanvas(
         displayedPrevFilter = prevPageColorFilter
     }
 
-    LaunchedEffect(manualProgress) {
-        if (manualProgress != null && manualProgress >= 0.999f) {
+    val manualFlipReachedCommit by remember(manualProgress) {
+        derivedStateOf {
+            val mp = manualProgress()
+            mp != null && mp >= 0.999f
+        }
+    }
+    LaunchedEffect(manualFlipReachedCommit) {
+        if (manualFlipReachedCommit) {
             val dir = effectiveTurnDir
             val targetFilter = if (dir > 0) (displayedNextFilter ?: nextPageColorFilter) else (displayedPrevFilter ?: prevPageColorFilter)
             if (dir > 0 && (displayedNextBmp ?: nextPageBitmap) != null) {
@@ -913,21 +503,42 @@ fun CylindricalFlipbookCanvas(
         val h = size.height
 
         val curBmp = displayedCurrentBmp
-        val p = manualProgress?.coerceIn(0f, 1f) ?: progressAnim.value.coerceIn(0f, 1f)
+        val p = manualProgress()?.coerceIn(0f, 1f) ?: progressAnim.value.coerceIn(0f, 1f)
+        val effectiveCornerYNorm = manualCornerYNorm() ?: cornerYNorm
         val pageRect = computePageRect(curBmp, isPdfBook, isTwoPageSpread, w, h)
 
         val destBitmap = if (effectiveTurnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
         val destColorFilter = if (effectiveTurnDir > 0) (displayedNextFilter ?: nextPageColorFilter) else (displayedPrevFilter ?: prevPageColorFilter)
 
-        val curPagePaperColor = if (isPdfBook && displayedCurrFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
-        val destPagePaperColor = if (isPdfBook && destColorFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
-        val curBackFlapColor = if (isPdfBook && displayedCurrFilter == null) Color(0xFFFAF8F4) else backPaperColor
+        val curPagePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else displayedCurrFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+        val destPagePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else destColorFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+        val curBackFlapColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else displayedCurrFilter == null)) Color(0xFFFAF8F4) else backPaperColor
         val displayedCurrAndroidColorFilter = displayedCurrFilter?.asAndroidColorFilter()
 
         if (p <= 0.002f) {
-            val activeIdleFilter = if (isWaitingForParentPageSync) displayedCurrFilter else curPageColorFilter
-            val idlePaperColor = if (isPdfBook && activeIdleFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+            val activeIdleFilter = if (isTwoPageSpread) null else if (isWaitingForParentPageSync) displayedCurrFilter else curPageColorFilter
+            val idlePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else activeIdleFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
             drawRect(color = themeBgColor, size = size)
+            if (isPdfBook && !isTwoPageSpread) {
+                val isDarkBg = themeBgColor.red < 0.25f
+                val baseMaxAlpha = if (isDarkBg) 0.32f else 0.13f
+                val spreadPx = 15.dp.toPx()
+                val cornerPx = 4.dp.toPx()
+                val dyPx = 2.dp.toPx()
+                val steps = 14
+                for (i in steps downTo 1) {
+                    val t = i.toFloat() / steps.toFloat()
+                    val expand = spreadPx * t
+                    val r = cornerPx + expand * 0.7f
+                    val stepAlpha = (baseMaxAlpha / steps.toFloat()) * (1.4f * (1f - t * 0.65f))
+                    drawRoundRect(
+                        color = Color.Black.copy(alpha = stepAlpha.coerceIn(0.002f, 0.045f)),
+                        topLeft = Offset(pageRect.left - expand, pageRect.top - expand * 0.85f + dyPx * t),
+                        size = Size(pageRect.width + expand * 2f, pageRect.height + expand * 1.85f),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r)
+                    )
+                }
+            }
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
                 drawRect(
                     color = idlePaperColor,
@@ -937,19 +548,21 @@ fun CylindricalFlipbookCanvas(
                 drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread, activeIdleFilter)
                 if (isTwoPageSpread) {
                     val spineX = (pageRect.left + pageRect.right) / 2f
+                    val spineHalfW = 26.dp.toPx()
                     drawRect(
                         brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.10f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 24f,
-                            endX = spineX + 24f
+                            0.00f to Color.Transparent,
+                            0.25f to Color.Black.copy(alpha = 0.022f),
+                            0.44f to Color.Black.copy(alpha = 0.075f),
+                            0.50f to Color.Black.copy(alpha = 0.125f),
+                            0.56f to Color.Black.copy(alpha = 0.068f),
+                            0.75f to Color.Black.copy(alpha = 0.018f),
+                            1.00f to Color.Transparent,
+                            startX = spineX - spineHalfW,
+                            endX = spineX + spineHalfW
                         ),
-                        topLeft = Offset(spineX - 24f, pageRect.top),
-                        size = Size(48f, pageRect.height)
+                        topLeft = Offset(spineX - spineHalfW, pageRect.top),
+                        size = Size(spineHalfW * 2f, pageRect.height)
                     )
                 }
             }
@@ -1021,19 +634,21 @@ fun CylindricalFlipbookCanvas(
                     }
 
                     // Static spine shadow on underlying spread
+                    val spineHalfW = 26.dp.toPx()
                     drawRect(
                         brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.08f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 22f,
-                            endX = spineX + 22f
+                            0.00f to Color.Transparent,
+                            0.25f to Color.Black.copy(alpha = 0.022f),
+                            0.44f to Color.Black.copy(alpha = 0.075f),
+                            0.50f to Color.Black.copy(alpha = 0.125f),
+                            0.56f to Color.Black.copy(alpha = 0.068f),
+                            0.75f to Color.Black.copy(alpha = 0.018f),
+                            1.00f to Color.Transparent,
+                            startX = spineX - spineHalfW,
+                            endX = spineX + spineHalfW
                         ),
-                        topLeft = Offset(spineX - 22f, pageRect.top),
-                        size = Size(44f, pageH)
+                        topLeft = Offset(spineX - spineHalfW, pageRect.top),
+                        size = Size(spineHalfW * 2f, pageH)
                     )
 
                     // 3. Region 3 (leadX .. foldX — The Turning Sheet Back / New Left Page):
@@ -1141,19 +756,21 @@ fun CylindricalFlipbookCanvas(
                     }
 
                     // Static spine shadow on underlying spread
+                    val spineHalfW = 26.dp.toPx()
                     drawRect(
                         brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.08f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 22f,
-                            endX = spineX + 22f
+                            0.00f to Color.Transparent,
+                            0.25f to Color.Black.copy(alpha = 0.022f),
+                            0.44f to Color.Black.copy(alpha = 0.075f),
+                            0.50f to Color.Black.copy(alpha = 0.125f),
+                            0.56f to Color.Black.copy(alpha = 0.068f),
+                            0.75f to Color.Black.copy(alpha = 0.018f),
+                            1.00f to Color.Transparent,
+                            startX = spineX - spineHalfW,
+                            endX = spineX + spineHalfW
                         ),
-                        topLeft = Offset(spineX - 22f, pageRect.top),
-                        size = Size(44f, pageH)
+                        topLeft = Offset(spineX - spineHalfW, pageRect.top),
+                        size = Size(spineHalfW * 2f, pageH)
                     )
 
                     // 3. Region 3 (foldX .. leadX — The Turning Sheet Back / New Right Page):
@@ -1236,7 +853,8 @@ fun CylindricalFlipbookCanvas(
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
 
                     // 1. Right of crease line (nextPoly): uncovered next page
-                    val nextPoly = Path().apply {
+                    val nextPoly = uncoveredPoly.apply {
+                        rewind()
                         moveTo(foldTopX, pageRect.top)
                         lineTo(pageRect.right, pageRect.top)
                         lineTo(pageRect.right, pageRect.bottom)
@@ -1251,14 +869,16 @@ fun CylindricalFlipbookCanvas(
                     }
 
                     // 2. Left of crease line (currPoly): unpeeled current page + shadow + folded paper flap (backPoly)
-                    val currPoly = Path().apply {
+                    currPoly.apply {
+                        rewind()
                         moveTo(pageRect.left, pageRect.top)
                         lineTo(foldTopX, pageRect.top)
                         lineTo(foldBotX, pageRect.bottom)
                         lineTo(pageRect.left, pageRect.bottom)
                         close()
                     }
-                    val backPoly = Path().apply {
+                    backPoly.apply {
+                        rewind()
                         moveTo(foldTopX, pageRect.top)
                         lineTo(leadTopX, pageRect.top)
                         lineTo(leadBotX, pageRect.bottom)
@@ -1287,7 +907,8 @@ fun CylindricalFlipbookCanvas(
                             val pB = Offset(leadBot.x + ux * ext, leadBot.y + uy * ext)
                             val pC = Offset(pB.x + nx * shadowW, pB.y + ny * shadowW)
                             val pD = Offset(pA.x + nx * shadowW, pA.y + ny * shadowW)
-                            val shadowPath = Path().apply {
+                            shadowPath.apply {
+                                rewind()
                                 moveTo(pA.x, pA.y)
                                 lineTo(pB.x, pB.y)
                                 lineTo(pC.x, pC.y)
@@ -1317,13 +938,13 @@ fun CylindricalFlipbookCanvas(
                                 nc.scale(-1f, 1f)
                                 nc.translate(-fTop.x, -fTop.y)
 
-                                val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                                val paint = flapPaint.apply {
                                     alpha = (0.09f * 255).roundToInt()
-                                    if (displayedCurrAndroidColorFilter != null) {
-                                        colorFilter = displayedCurrAndroidColorFilter
-                                    }
+                                    colorFilter = displayedCurrAndroidColorFilter
                                 }
-                                val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                                val dstRect = flapDstRect.apply {
+                                    set(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                                }
                                 nc.drawBitmap(curBmp.asAndroidBitmap(), null, dstRect, paint)
                                 nc.restore()
                             }
@@ -1369,7 +990,8 @@ fun CylindricalFlipbookCanvas(
                     val thetaDeg = Math.toDegrees(thetaRad.toDouble()).toFloat()
 
                     // 1. Left of crease line (prevPoly): uncovered prev page
-                    val prevPoly = Path().apply {
+                    val prevPoly = uncoveredPoly.apply {
+                        rewind()
                         moveTo(pageRect.left, pageRect.top)
                         lineTo(foldTopX, pageRect.top)
                         lineTo(foldBotX, pageRect.bottom)
@@ -1384,14 +1006,16 @@ fun CylindricalFlipbookCanvas(
                     }
 
                     // 2. Right of crease line (currPoly): unpeeled current page + shadow + folded paper flap (backPoly)
-                    val currPoly = Path().apply {
+                    currPoly.apply {
+                        rewind()
                         moveTo(foldTopX, pageRect.top)
                         lineTo(pageRect.right, pageRect.top)
                         lineTo(pageRect.right, pageRect.bottom)
                         lineTo(foldBotX, pageRect.bottom)
                         close()
                     }
-                    val backPoly = Path().apply {
+                    backPoly.apply {
+                        rewind()
                         moveTo(foldTopX, pageRect.top)
                         lineTo(leadTopX, pageRect.top)
                         lineTo(leadBotX, pageRect.bottom)
@@ -1420,7 +1044,8 @@ fun CylindricalFlipbookCanvas(
                             val pB = Offset(leadBot.x + ux * ext, leadBot.y + uy * ext)
                             val pC = Offset(pB.x + nx * shadowW, pB.y + ny * shadowW)
                             val pD = Offset(pA.x + nx * shadowW, pA.y + ny * shadowW)
-                            val shadowPath = Path().apply {
+                            shadowPath.apply {
+                                rewind()
                                 moveTo(pA.x, pA.y)
                                 lineTo(pB.x, pB.y)
                                 lineTo(pC.x, pC.y)
@@ -1450,13 +1075,13 @@ fun CylindricalFlipbookCanvas(
                                 nc.scale(-1f, 1f)
                                 nc.translate(-fTop.x, -fTop.y)
 
-                                val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                                val paint = flapPaint.apply {
                                     alpha = (0.09f * 255).roundToInt()
-                                    if (displayedCurrAndroidColorFilter != null) {
-                                        colorFilter = displayedCurrAndroidColorFilter
-                                    }
+                                    colorFilter = displayedCurrAndroidColorFilter
                                 }
-                                val dstRect = android.graphics.RectF(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                                val dstRect = flapDstRect.apply {
+                                    set(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom)
+                                }
                                 nc.drawBitmap(curBmp.asAndroidBitmap(), null, dstRect, paint)
                                 nc.restore()
                             }

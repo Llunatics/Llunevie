@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ShelfEntity::class,
         PageBookmarkEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class LlunevieDatabase : RoomDatabase() {
@@ -68,6 +68,13 @@ abstract class LlunevieDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_books_createdAtMillis ON books (createdAtMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_books_shelf ON books (shelf)")
+            }
+        }
+
         fun getInstance(context: Context): LlunevieDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -75,7 +82,7 @@ abstract class LlunevieDatabase : RoomDatabase() {
                     LlunevieDatabase::class.java,
                     "llunevie_native_v02.db"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
