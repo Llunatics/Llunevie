@@ -814,20 +814,62 @@ fun BookCoverCard(
                             )
 
                             onDrawBehind {
-                                // 1. Soft Ground Cast Shadow under bottom-right corner & page block
-                                val shadowLeft = coverW * 0.12f
-                                val shadowTop = coverH - bottomTilt * 1.1f
-                                drawOval(
+                                // 1. Soft Ground Cast Shadow hugging the sloped book base & page block
+                                val nc = drawContext.canvas.nativeCanvas
+                                val mainCx = coverW * 0.56f
+                                val mainCy = (coverH - bottomTilt) + (bottomTilt * 0.56f) + 0.5.dp.toPx()
+                                val mainRx = (coverW * 0.50f).coerceAtLeast(1f)
+                                val mainRy = (bottomShadowSpace * 0.95f).coerceAtLeast(3.5.dp.toPx())
+                                val coverSlopeDeg = Math.toDegrees(
+                                    kotlin.math.atan2(bottomTilt.toDouble(), coverW.coerceAtLeast(1f).toDouble())
+                                ).toFloat()
+
+                                val s1 = nc.save()
+                                nc.translate(mainCx, mainCy)
+                                nc.rotate(coverSlopeDeg)
+                                nc.scale(1f, mainRy / mainRx)
+                                drawCircle(
                                     brush = Brush.radialGradient(
-                                        0.0f to Color.Black.copy(alpha = 0.36f),
-                                        0.55f to Color.Black.copy(alpha = 0.16f),
-                                        1.0f to Color.Transparent,
-                                        center = Offset(coverW * 0.88f, coverH - 1.dp.toPx()),
-                                        radius = (totalW - shadowLeft) * 0.62f
+                                        0.00f to Color.Black.copy(alpha = 0.28f),
+                                        0.38f to Color.Black.copy(alpha = 0.15f),
+                                        0.72f to Color.Black.copy(alpha = 0.04f),
+                                        1.00f to Color.Transparent,
+                                        center = Offset.Zero,
+                                        radius = mainRx
                                     ),
-                                    topLeft = Offset(shadowLeft, shadowTop),
-                                    size = androidx.compose.ui.geometry.Size(totalW - shadowLeft, totalH - shadowTop)
+                                    radius = mainRx,
+                                    center = Offset.Zero
                                 )
+                                nc.restoreToCount(s1)
+
+                                val pageCx = (coverW + pageRightX) * 0.5f
+                                val pageCy = (coverH + pageBottomRightY) * 0.5f + 0.5.dp.toPx()
+                                val pageRx = ((pageRightX - coverW) * 0.95f).coerceAtLeast(1f)
+                                val pageRy = (bottomShadowSpace * 0.82f).coerceAtLeast(3.dp.toPx())
+                                val pageSlopeDeg = Math.toDegrees(
+                                    kotlin.math.atan2(
+                                        (pageBottomRightY - coverH).toDouble(),
+                                        (pageRightX - coverW).coerceAtLeast(1f).toDouble()
+                                    )
+                                ).toFloat()
+
+                                val s2 = nc.save()
+                                nc.translate(pageCx, pageCy)
+                                nc.rotate(pageSlopeDeg)
+                                nc.scale(1f, pageRy / pageRx)
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        0.00f to Color.Black.copy(alpha = 0.24f),
+                                        0.45f to Color.Black.copy(alpha = 0.10f),
+                                        0.78f to Color.Black.copy(alpha = 0.02f),
+                                        1.00f to Color.Transparent,
+                                        center = Offset.Zero,
+                                        radius = pageRx
+                                    ),
+                                    radius = pageRx,
+                                    center = Offset.Zero
+                                )
+                                nc.restoreToCount(s2)
 
                                 // 2. Back cover board subtle rim behind paper block
                                 val darkenedSpine = Color(
@@ -901,6 +943,13 @@ fun BookCoverCard(
                                 val nativeCanvas = drawContext.canvas.nativeCanvas
                                 val saveCount = nativeCanvas.save()
                                 nativeCanvas.concat(perspectiveMatrix)
+
+                                // Fill opaque cover base color before drawing cover content so shadow never bleeds through
+                                drawRect(
+                                    color = bgColor,
+                                    topLeft = Offset.Zero,
+                                    size = androidx.compose.ui.geometry.Size(totalW, totalH)
+                                )
 
                                 // Draw 100% uncropped cover content inside the perspective quad
                                 drawContent()
