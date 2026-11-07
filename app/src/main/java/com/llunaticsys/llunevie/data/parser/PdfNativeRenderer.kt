@@ -17,6 +17,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
@@ -597,12 +598,14 @@ object PdfNativeRenderer {
             ?: renderPage(pdfFilePath, pageIndex, targetWidthPx)
             ?: return null
 
+        val effectiveIsIllust = isIllustrationPage || isIllustrationOrArtworkPage(origBmp, pageIndex)
+
         val rendered = renderTranslatedPdfPageBitmap(
             origBmp = origBmp,
             blocks = blocks,
             translatedTexts = translatedTexts,
             displayMode = displayMode,
-            isIllustrationPage = isIllustrationPage
+            isIllustrationPage = effectiveIsIllust
         )
         translatedPdfBitmapCache.put(cacheKey, rendered)
         return rendered
@@ -1281,8 +1284,8 @@ object PdfNativeRenderer {
                     }
                 }
 
-                // Bottom footer zone: yTop > pageH * 0.885f
-                if (vl.yTop > pageH * 0.885f) {
+                // Bottom footer zone: yTop > pageH * 0.875f
+                if (vl.yTop > pageH * 0.875f) {
                     if (txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))) return@filter false
                     if (lower.contains("chapter") || lower.contains("bab") || lower.contains("pusat perhatian") || txt.matches(Regex(""".*\b\d+\s*$"""))) return@filter false
                 }
@@ -1525,82 +1528,142 @@ object PdfNativeRenderer {
             layoutWidths.add(layoutWidthPx)
         }
 
+        // Safe maximum bottom boundary above the footer zone (never intrudes into page footer / separator line)
+        val footerGuardBottomPx = outBmp.height * 0.872f
+        val lastOrigBottomPx = (blocks.maxOf { it.pdfBottom } * scaleY + 4f)
+            .coerceAtMost(footerGuardBottomPx)
+            .coerceAtLeast(16f)
+
+        fun buildFittedBlockLayout(
+            b: PdfParagraphBlock,
+            spannable: SpannableString,
+            widthPx: Int,
+            availHeightPx: Float,
+            inkColor: Int
+        ): StaticLayout {
+            val baseFontPx = (b.avgFontSizePt * scaleY).coerceAtLeast(8f)
+            val align = if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL
+            val tf = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
+
+            fun createLayout(scale: Float, lineMult: Float, maxLines: Int = Int.MAX_VALUE): StaticLayout {
+                val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+                    color = inkColor
+                    typeface = tf
+                    textSize = (baseFontPx * scale).coerceAtLeast(6.5f)
+                }
+                val builder = StaticLayout.Builder.obtain(spannable, 0, spannable.length, paint, widthPx)
+                    .setAlignment(align)
+                    .setLineSpacing(0f, lineMult)
+                    .setIncludePad(false)
+                if (maxLines < Int.MAX_VALUE) {
+                    builder.setMaxLines(maxLines.coerceAtLeast(1))
+                    builder.setEllipsize(TextUtils.TruncateAt.END)
+                }
+                return builder.build()
+            }
+
+            var bestLayout = createLayout(1.0f, lineSpacingMultiplier)
+            if (bestLayout.height <= availHeightPx) {
+                return bestLayout
+            }
+
+            // Try progressively smaller font scales and tighter line spacing so translated text fits inside its original block box
+            var scale = 0.96f
+            while (scale >= 0.46f) {
+                val mult = if (scale <= 0.88f || isBilingual) 1.0f else 1.05f
+                val candidate = createLayout(scale, mult)
+                bestLayout = candidate
+                if (candidate.height <= availHeightPx) {
+                    return candidate
+                }
+                scale -= 0.04f
+            }
+
+            // If still taller than availHeightPx at minimum readable scale, cap maxLines to strictly fit inside availHeightPx
+            if (bestLayout.height > availHeightPx && bestLayout.lineCount > 1) {
+                var fittingLines = bestLayout.lineCount
+                for (lineIdx in 0 until bestLayout.lineCount) {
+                    if (bestLayout.getLineBottom(lineIdx) > availHeightPx) {
+                        fittingLines = lineIdx.coerceAtLeast(1)
+                        break
+                    }
+                }
+                bestLayout = createLayout(0.46f, 1.0f, maxLines = fittingLines)
+            }
+            return bestLayout
+        }
+
         if (!isIllustrationPage) {
             // Case A — Normal Text Page (!isIllustrationPage)
-            val minBlockLeftPx = (blocks.minOf { it.pdfLeft } * scaleX - 6f).coerceAtLeast(4f)
-            val maxBlockRightPx = (blocks.maxOf { maxOf(it.pdfRight, it.colRight) } * scaleX + 6f).coerceAtMost(outBmp.width - 4f)
-            val firstBlockTopPx = (blocks.minOf { it.pdfTop } * scaleY - 4f).coerceAtLeast(4f)
-            val lastBlockBottomPx = (blocks.maxOf { it.pdfBottom } * scaleY + 6f).coerceAtMost(outBmp.height - 4f)
-
-            // Erase the entire body text column zone cleanly in ONE single rectangle
-            canvas.drawRect(RectF(minBlockLeftPx, firstBlockTopPx, maxBlockRightPx, lastBlockBottomPx), erasePaint)
-
-            val totalAvailH = lastBlockBottomPx - firstBlockTopPx
-
-            fun buildLayoutsForScale(scale: Float): Pair<List<StaticLayout>, Float> {
-                var curH = 0f
-                val layouts = ArrayList<StaticLayout>(blocks.size)
-                for (i in blocks.indices) {
-                    val b = blocks[i]
-                    val spannable = spannables[i]
-                    val widthPx = layoutWidths[i]
-                    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-                        color = darkInkColor
-                        typeface = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
-                        textSize = b.avgFontSizePt * scaleY * scale
-                    }
-                    val sl = StaticLayout.Builder.obtain(spannable, 0, spannable.length, paint, widthPx)
-                        .setAlignment(if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
-                        .setLineSpacing(0f, lineSpacingMultiplier)
-                        .setIncludePad(false)
-                        .build()
-                    layouts.add(sl)
-                    val paraGapPx = (b.avgFontSizePt * scaleY * 0.55f).coerceAtLeast(8f)
-                    curH += sl.height + if (i < blocks.size - 1) paraGapPx else 0f
-                }
-                return Pair(layouts, curH)
-            }
-
-            var (layouts, totalH) = buildLayoutsForScale(1.0f)
-            var fontScale = 1.0f
-
-            if (totalH > totalAvailH) {
-                val candidateScales = listOf(0.96f, 0.92f, 0.88f, 0.84f, 0.80f, 0.76f)
-                for (cand in candidateScales) {
-                    val (candLayouts, candH) = buildLayoutsForScale(cand)
-                    layouts = candLayouts
-                    totalH = candH
-                    fontScale = cand
-                    if (candH <= totalAvailH) break
-                }
-            }
-
-            var cursorY = firstBlockTopPx
+            // First pass: erase each paragraph block strictly within its own original bounding box
+            // so headers, footers, separator lines, and inline artwork outside the blocks are never erased.
             for (i in blocks.indices) {
                 val b = blocks[i]
-                val sl = layouts[i]
-                val leftPx = leftPxs[i]
-                val idealTopPx = b.pdfTop * scaleY
-                val drawTopPx = if (fontScale < 0.96f) cursorY else maxOf(cursorY, idealTopPx)
+                val eraseLeft = (b.pdfLeft * scaleX - 4f).coerceAtLeast(2f)
+                val eraseRight = (maxOf(b.pdfRight, b.colRight) * scaleX + 4f).coerceAtMost(outBmp.width - 2f)
+                val eraseTop = (b.pdfTop * scaleY - 2f).coerceAtLeast(2f)
+                val eraseBottom = (b.pdfBottom * scaleY + 4f).coerceAtMost(lastOrigBottomPx + 2f)
+                if (eraseRight > eraseLeft && eraseBottom > eraseTop) {
+                    canvas.drawRect(RectF(eraseLeft, eraseTop, eraseRight, eraseBottom), erasePaint)
+                }
+            }
 
-                val bottomAfterDraw = drawTopPx + sl.height
-                if (bottomAfterDraw > lastBlockBottomPx) {
-                    val extraBottom = minOf(bottomAfterDraw + 4f, outBmp.height * 0.91f)
-                    if (extraBottom > lastBlockBottomPx) {
-                        canvas.drawRect(
-                            RectF(minBlockLeftPx, lastBlockBottomPx, maxBlockRightPx, extraBottom),
-                            erasePaint
-                        )
-                    }
+            // Second pass: render each translated block strictly inside its original block bounds & scale
+            for (i in blocks.indices) {
+                val b = blocks[i]
+                val spannable = spannables[i]
+                val widthPx = layoutWidths[i]
+                val leftPx = leftPxs[i]
+                val blockTopPx = (b.pdfTop * scaleY).coerceAtLeast(4f)
+                val origBottomPx = (b.pdfBottom * scaleY + 4f).coerceAtMost(lastOrigBottomPx)
+
+                // Allowed bottom for block i: can use up to its original bottom (plus small part of inter-paragraph gap),
+                // but NEVER overlaps block i+1 and NEVER crosses lastOrigBottomPx (footer boundary).
+                val nextBlockTopPx = if (i + 1 < blocks.size && blocks[i + 1].pdfTop > b.pdfTop) {
+                    (blocks[i + 1].pdfTop * scaleY - 3f).coerceAtLeast(blockTopPx + 10f)
+                } else {
+                    lastOrigBottomPx
+                }
+                val allowedBottomPx = minOf(
+                    maxOf(origBottomPx, minOf(origBottomPx + (nextBlockTopPx - origBottomPx).coerceAtLeast(0f) * 0.65f, nextBlockTopPx)),
+                    nextBlockTopPx,
+                    lastOrigBottomPx
+                ).coerceAtLeast(blockTopPx + 10f)
+                val availBlockH = (allowedBottomPx - blockTopPx).coerceAtLeast(10f)
+
+                val sl = buildFittedBlockLayout(
+                    b = b,
+                    spannable = spannable,
+                    widthPx = widthPx,
+                    availHeightPx = availBlockH,
+                    inkColor = darkInkColor
+                )
+
+                val clipRightPx = (leftPx + widthPx + 2f).coerceAtMost(outBmp.width - 2f)
+                val clipBottomPx = minOf(blockTopPx + sl.height + 2f, allowedBottomPx + 2f, lastOrigBottomPx + 2f)
+
+                if (clipBottomPx > origBottomPx) {
+                    canvas.drawRect(
+                        RectF(
+                            (leftPx - 3f).coerceAtLeast(2f),
+                            origBottomPx,
+                            clipRightPx,
+                            clipBottomPx
+                        ),
+                        erasePaint
+                    )
                 }
 
                 canvas.save()
-                canvas.translate(leftPx, drawTopPx)
+                canvas.clipRect(
+                    (leftPx - 2f).coerceAtLeast(0f),
+                    (blockTopPx - 2f).coerceAtLeast(0f),
+                    clipRightPx,
+                    clipBottomPx
+                )
+                canvas.translate(leftPx, blockTopPx)
                 sl.draw(canvas)
                 canvas.restore()
-
-                val paraGapPx = (b.avgFontSizePt * scaleY * 0.55f).coerceAtLeast(8f)
-                cursorY = drawTopPx + sl.height + paraGapPx
             }
         } else {
             // Case B — Illustration Page with Text Overlay (isIllustrationPage == true)
@@ -1614,28 +1677,35 @@ object PdfNativeRenderer {
                 val widthPx = layoutWidths[i]
                 val leftPx = leftPxs[i]
                 val topPx = (b.pdfTop * scaleY).coerceAtLeast(4f)
-
-                val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-                    color = Color.rgb(24, 24, 26)
-                    typeface = if (b.isBold) Typeface.create(Typeface.SERIF, Typeface.BOLD) else Typeface.SERIF
-                    textSize = b.avgFontSizePt * scaleY
+                val origBottomPx = (b.pdfBottom * scaleY + 4f).coerceAtMost(outBmp.height - 4f)
+                val nextBlockTopPx = if (i + 1 < blocks.size && blocks[i + 1].pdfTop > b.pdfTop) {
+                    (blocks[i + 1].pdfTop * scaleY - 4f).coerceAtLeast(topPx + 12f)
+                } else {
+                    (outBmp.height - 6f).coerceAtLeast(topPx + 12f)
                 }
+                val allowedBottomPx = minOf(maxOf(origBottomPx, nextBlockTopPx), nextBlockTopPx, outBmp.height - 4f)
+                    .coerceAtLeast(topPx + 12f)
+                val availBlockH = (allowedBottomPx - topPx).coerceAtLeast(12f)
 
-                val sl = StaticLayout.Builder.obtain(spannable, 0, spannable.length, textPaint, widthPx)
-                    .setAlignment(if (b.isCentered) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
-                    .setLineSpacing(0f, lineSpacingMultiplier)
-                    .setIncludePad(false)
-                    .build()
+                val sl = buildFittedBlockLayout(
+                    b = b,
+                    spannable = spannable,
+                    widthPx = widthPx,
+                    availHeightPx = availBlockH,
+                    inkColor = Color.rgb(24, 24, 26)
+                )
 
+                val drawnH = minOf(sl.height.toFloat(), availBlockH)
                 val pillRect = RectF(
-                    leftPx - 6f,
-                    topPx - 3f,
-                    leftPx + widthPx + 6f,
-                    topPx + sl.height + 3f
+                    (leftPx - 6f).coerceAtLeast(2f),
+                    (topPx - 3f).coerceAtLeast(2f),
+                    (leftPx + widthPx + 6f).coerceAtMost(outBmp.width - 2f),
+                    (topPx + drawnH + 3f).coerceAtMost(outBmp.height - 2f)
                 )
                 canvas.drawRoundRect(pillRect, 8f, 8f, pillPaint)
 
                 canvas.save()
+                canvas.clipRect(pillRect)
                 canvas.translate(leftPx, topPx)
                 sl.draw(canvas)
                 canvas.restore()
