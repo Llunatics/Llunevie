@@ -1256,18 +1256,18 @@ object PdfNativeRenderer {
             } else 14f
 
             val titleClean = bookTitle.trim().lowercase()
-            val bodyLines = allLines.filter { vl ->
+            val bodyLines = allLines.filterIndexed { lineIdx, vl ->
                 val txt = vl.text.trim()
-                if (txt.isEmpty()) return@filter false
+                if (txt.isEmpty()) return@filterIndexed false
                 val lower = txt.lowercase()
 
-                val isHeaderOrFooterMargin = vl.yTop < pageH * 0.088f || vl.yTop > pageH * 0.885f
+                val isHeaderOrFooterMargin = vl.yTop < pageH * 0.088f || vl.yTop > pageH * 0.90f
                 if (isHeaderOrFooterMargin && (
                         lower.contains("http://") || lower.contains("https://") || lower.contains("www.") ||
                         lower.contains("arakiyota") || lower.contains("youzitsu") || lower.contains("bulan kabur")
                     )
                 ) {
-                    return@filter false
+                    return@filterIndexed false
                 }
 
                 // Top header zone: yTop < pageH * 0.088f
@@ -1275,19 +1275,34 @@ object PdfNativeRenderer {
                     val isTitleMatch = titleClean.length >= 3 && (lower == titleClean || lower.contains(titleClean))
                     val isPageNum = txt.matches(Regex("""^(?:[\-–—#\s]*\d+[\-–—#\s]*|page\s*\d+|\d+\s*\|\s*\d+)$""", RegexOption.IGNORE_CASE))
                     val isVolumeOrTrans = lower.contains("translation") || (lower.contains("volume") && (lower.contains("|") || lower.contains("vol")))
-                    val isDistantSmallFirstLine = allLines.indexOf(vl) == 0 && allLines.size >= 2 &&
+                    val isDistantSmallFirstLine = lineIdx == 0 && allLines.size >= 2 &&
                         vl.maxFontSize < bodyMedianFontSize - 0.6f &&
                         (allLines[1].yTop - vl.yTop) > normalLineStep * 1.65f
 
                     if (isTitleMatch || isPageNum || isVolumeOrTrans || isDistantSmallFirstLine) {
-                        return@filter false
+                        return@filterIndexed false
                     }
                 }
 
-                // Bottom footer zone: yTop > pageH * 0.875f
-                if (vl.yTop > pageH * 0.875f) {
-                    if (txt.matches(Regex("""^(?:[-—–~#\s]*\d+[-—–~#\s]*|page\s*\d+|\d+\s*/\s*\d+)$""", RegexOption.IGNORE_CASE))) return@filter false
-                    if (lower.contains("chapter") || lower.contains("bab") || lower.contains("pusat perhatian") || txt.matches(Regex(""".*\b\d+\s*$"""))) return@filter false
+                // Bottom footer zone: only filter out true standalone page numbers or separated running footers
+                if (vl.yTop > pageH * 0.885f) {
+                    val isPurePageNumber = txt.matches(
+                        Regex("""^(?:[-—–~#|•\s]*\d+[-—–~#|•\s]*|page\s*\d+|hal(?:aman)?\.?\s*\d+|\d+\s*[/|]\s*\d+)$""", RegexOption.IGNORE_CASE)
+                    )
+                    if (isPurePageNumber) return@filterIndexed false
+
+                    val isVeryBottomLine = lineIdx == allLines.lastIndex || vl.yTop > pageH * 0.915f
+                    val gapFromPrev = if (lineIdx > 0) (vl.yTop - allLines[lineIdx - 1].yTop) else Float.MAX_VALUE
+                    val isSeparatedFooter = vl.yTop > pageH * 0.915f ||
+                        gapFromPrev > normalLineStep * 1.38f ||
+                        vl.maxFontSize < bodyMedianFontSize - 0.5f
+                    val hasRunningFooterPattern = Regex("""(?i)^(?:chapter|bab|bagian|part|volume|vol\.?)\b.*""").matches(txt) ||
+                        Regex("""(?i).*\b(?:chapter|bab)\s+\d+.*""").matches(txt) ||
+                        lower.contains("pusat perhatian") ||
+                        txt.matches(Regex("""^.+?\s+\d{1,4}\s*$"""))
+                    if (isVeryBottomLine && isSeparatedFooter && hasRunningFooterPattern) {
+                        return@filterIndexed false
+                    }
                 }
 
                 true
@@ -1528,11 +1543,17 @@ object PdfNativeRenderer {
             layoutWidths.add(layoutWidthPx)
         }
 
-        // Safe maximum bottom boundary above the footer zone (never intrudes into page footer / separator line)
-        val footerGuardBottomPx = outBmp.height * 0.872f
-        val lastOrigBottomPx = (blocks.maxOf { it.pdfBottom } * scaleY + 4f)
-            .coerceAtMost(footerGuardBottomPx)
+        // Safe maximum bottom boundary above the footer zone:
+        // Never clamp above the actual bottom of the extracted body blocks (rawMaxBlockBottomPx),
+        // while allowing the final block a small safe breathing margin above the footer zone (~92.2% page height).
+        val rawMaxBlockBottomPx = (blocks.maxOf { it.pdfBottom } * scaleY + 4f)
+            .coerceAtMost(outBmp.height - 4f)
             .coerceAtLeast(16f)
+        val lastBlockFontPx = (blocks.last().avgFontSizePt * scaleY).coerceAtLeast(10f)
+        val lastOrigBottomPx = maxOf(
+            rawMaxBlockBottomPx,
+            minOf(rawMaxBlockBottomPx + lastBlockFontPx * 0.45f, outBmp.height * 0.922f)
+        ).coerceAtMost(outBmp.height - 4f)
 
         fun buildFittedBlockLayout(
             b: PdfParagraphBlock,

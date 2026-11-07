@@ -483,7 +483,7 @@ class TranslationRepository private constructor() {
 
         // For uncached paragraphs: translate them (NEVER fall back to source text on failure)
         val uncachedTexts = uncachedIndices.map { rawParagraphs[it] }
-        val paraSplitRegex = Regex("\\s*(?:\\[+\\s*PARA[_\\s-]*SPLIT\\s*]+)\\s*", RegexOption.IGNORE_CASE)
+        val paraSplitRegex = Regex("\\s*(?:[\\[\\uFF3B\\u3010]+\\s*PARA[_\\s\\uFF3F-]*SPLIT\\s*[\\]\\uFF3D\\u3011]+)\\s*", RegexOption.IGNORE_CASE)
 
         val translatedUncached: List<String?> = if (uncachedTexts.size == 1) {
             uncachedTexts.map { text ->
