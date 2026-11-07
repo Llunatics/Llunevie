@@ -256,13 +256,25 @@ internal fun InteractiveTextPageContent(
     val transMode = uiState?.translationMode ?: prefs.translatorDisplayMode
     val transRev = uiState?.translationRevision ?: 0
 
+    fun hasValidTranslatedPairs(pairs: List<Pair<String, String?>>?): Boolean {
+        if (pairs.isNullOrEmpty()) return false
+        return pairs.any { (orig, trans) ->
+            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+        }
+    }
+
     var currentTranslatedParas by remember(
         bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev, translatedParagraphs
     ) {
         mutableStateOf(
             if (isTrans && displayPageIndex >= 0) {
-                viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-                    ?: translatedParagraphs
+                val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
+                when {
+                    hasValidTranslatedPairs(cached) -> cached
+                    hasValidTranslatedPairs(translatedParagraphs) -> translatedParagraphs
+                    else -> null
+                }
             } else null
         )
     }
@@ -270,7 +282,7 @@ internal fun InteractiveTextPageContent(
     LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev) {
         if (isTrans && displayPageIndex >= 0 && !pageText.startsWith("[PDF_PAGE:")) {
             val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-            if (cached != null) {
+            if (hasValidTranslatedPairs(cached)) {
                 currentTranslatedParas = cached
             } else if (viewModel != null) {
                 val res = viewModel.loadOrTranslatePageParagraphs(
@@ -279,21 +291,37 @@ internal fun InteractiveTextPageContent(
                     pageRaw = pageText,
                     targetLang = targetLang
                 )
-                if (res != null) {
+                if (hasValidTranslatedPairs(res)) {
+                    currentTranslatedParas = res
+                }
+            } else {
+                val res = com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance(context)
+                    .translatePageParagraphs(pageText, prefs, context, targetLang)
+                    .getOrNull()
+                if (hasValidTranslatedPairs(res)) {
                     currentTranslatedParas = res
                 }
             }
         }
     }
 
-    val activeTranslatedParagraphs = currentTranslatedParas ?: translatedParagraphs
-    val isBilingual = isTrans && transMode == "bilingual" && !activeTranslatedParagraphs.isNullOrEmpty()
-    val isReplace = isTrans && transMode == "replace" && !activeTranslatedParagraphs.isNullOrEmpty()
+    val activeTranslatedParagraphs = if (hasValidTranslatedPairs(currentTranslatedParas)) {
+        currentTranslatedParas
+    } else if (hasValidTranslatedPairs(translatedParagraphs)) {
+        translatedParagraphs
+    } else {
+        null
+    }
+    val isBilingual = isTrans && transMode.equals("bilingual", ignoreCase = true) && !transparentTextForFlipbook
+    val isReplace = isTrans && transMode.equals("replace", ignoreCase = true) && !activeTranslatedParagraphs.isNullOrEmpty()
     val effectiveFontScale = if (isBilingual) 1.0f else fontScale
 
     val effectiveParagraphs = remember(textParagraphs, isReplace, activeTranslatedParagraphs) {
         if (isReplace && !activeTranslatedParagraphs.isNullOrEmpty()) {
-            activeTranslatedParagraphs.map { it.second ?: it.first }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
+            activeTranslatedParagraphs.map { (orig, trans) ->
+                val cleanTrans = trans?.trim()
+                if (!cleanTrans.isNullOrBlank()) cleanTrans else orig
+            }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
         } else {
             textParagraphs
         }
@@ -475,11 +503,14 @@ internal fun InteractiveTextPageContent(
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 if (isBilingual) {
+                    val bilingualPairs = activeTranslatedParagraphs ?: textParagraphs.map { it to null }
                     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-                        activeTranslatedParagraphs.orEmpty().forEach { (origPara, transPara) ->
-                            if (origPara.isNotBlank() && !origPara.startsWith("[ILLUST:") && !origPara.startsWith("[PDF_PAGE:")) {
+                        bilingualPairs.forEach { (origPara, transPara) ->
+                            val cleanOrig = sanitizeBookOrChapterText(origPara).trim()
+                            val cleanTrans = transPara?.let { sanitizeBookOrChapterText(it).trim() }
+                            if (cleanOrig.isNotBlank() && !cleanOrig.startsWith("[ILLUST:") && !cleanOrig.startsWith("[PDF_PAGE:")) {
                                 Text(
-                                    text = origPara,
+                                    text = cleanOrig,
                                     fontFamily = resolvedFontFamily,
                                     fontSize = prefs.fontSizeSp.sp,
                                     lineHeight = (prefs.fontSizeSp * prefs.lineHeightMultiplier).sp,
@@ -487,9 +518,11 @@ internal fun InteractiveTextPageContent(
                                     color = palette.textMain,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { onParagraphClicked(origPara, false) }
+                                        .clickable { onParagraphClicked(cleanOrig, false) }
                                 )
-                                if (!transPara.isNullOrBlank()) {
+                                val hasDistinctTranslation = !cleanTrans.isNullOrBlank() &&
+                                    !cleanTrans.equals(cleanOrig, ignoreCase = true)
+                                if (hasDistinctTranslation) {
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Row(
                                         modifier = Modifier
@@ -506,7 +539,7 @@ internal fun InteractiveTextPageContent(
                                         )
                                         Spacer(modifier = Modifier.width(10.dp))
                                         Text(
-                                            text = transPara,
+                                            text = cleanTrans!!,
                                             fontFamily = resolvedFontFamily,
                                             fontSize = (prefs.fontSizeSp - 1).coerceAtLeast(13).sp,
                                             lineHeight = ((prefs.fontSizeSp - 1).coerceAtLeast(13) * prefs.lineHeightMultiplier * 0.95f).sp,

@@ -171,8 +171,33 @@ internal fun buildTranslatedPageRaw(
     displayMode: String
 ): String {
     if (translatedPairs.isNullOrEmpty()) return originalPageRaw
-    val transList = translatedPairs.map { it.second ?: it.first }
-    return buildTranslatedPageRaw(originalPageRaw, transList, displayMode)
+    val modeNorm = displayMode.trim().lowercase()
+    if (modeNorm == "replace") {
+        return translatedPairs.joinToString("\n\n") { (orig, trans) ->
+            val trimmedOrig = orig.trim()
+            if (trimmedOrig.isEmpty() || trimmedOrig.startsWith("[ILLUST:") || trimmedOrig.startsWith("[PDF_PAGE:")) {
+                trimmedOrig
+            } else {
+                val trimmedTrans = trans?.trim()
+                if (!trimmedTrans.isNullOrBlank()) trimmedTrans else trimmedOrig
+            }
+        }
+    } else if (modeNorm == "bilingual") {
+        return translatedPairs.joinToString("\n\n") { (orig, trans) ->
+            val trimmedOrig = orig.trim()
+            if (trimmedOrig.isEmpty() || trimmedOrig.startsWith("[ILLUST:") || trimmedOrig.startsWith("[PDF_PAGE:")) {
+                trimmedOrig
+            } else {
+                val trimmedTrans = trans?.trim()
+                if (!trimmedTrans.isNullOrBlank() && !trimmedTrans.equals(trimmedOrig, ignoreCase = true)) {
+                    "$trimmedOrig\n\n$trimmedTrans"
+                } else {
+                    trimmedOrig
+                }
+            }
+        }
+    }
+    return originalPageRaw
 }
 
 internal fun buildEpubPageAnnotatedString(
@@ -422,7 +447,7 @@ internal fun computeOnePageFitScale(
 ).fitScale
 
 internal suspend fun renderCachedEpubPageSnapshot(
-    cacheKey: String,
+    cacheKey: String?,
     textMeasurer: TextMeasurer,
     widthPx: Int,
     heightPx: Int,
@@ -442,10 +467,14 @@ internal suspend fun renderCachedEpubPageSnapshot(
     palette: LluneviePalette,
     prefs: UserPreferencesState? = null
 ): ImageBitmap {
-    epubSnapshotCache.get(cacheKey)?.let { return it }
+    if (cacheKey != null) {
+        epubSnapshotCache.get(cacheKey)?.let { return it }
+    }
     return withContext(Dispatchers.Default) {
         snapshotRenderMutex.withLock {
-            epubSnapshotCache.get(cacheKey)?.let { return@withLock it }
+            if (cacheKey != null) {
+                epubSnapshotCache.get(cacheKey)?.let { return@withLock it }
+            }
             renderEpubPageSnapshot(
                 textMeasurer = textMeasurer,
                 widthPx = widthPx,
@@ -466,7 +495,9 @@ internal suspend fun renderCachedEpubPageSnapshot(
                 palette = palette,
                 prefs = prefs
             ).also { rendered ->
-                epubSnapshotCache.put(cacheKey, rendered)
+                if (cacheKey != null) {
+                    epubSnapshotCache.put(cacheKey, rendered)
+                }
             }
         }
     }

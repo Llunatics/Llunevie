@@ -277,8 +277,14 @@ fun ReaderScreen(
     val translationRepo = remember { TranslationRepository.getInstance() }
     var isPageTranslationActive by remember { mutableStateOf(false) }
     var peekOriginalPdfPage by remember { mutableStateOf(false) }
-    var pageTranslationMap by remember { mutableStateOf<Map<Int, List<Pair<String, String?>>>>(emptyMap()) }
+    var pageTranslationMap by remember { mutableStateOf<Map<String, List<Pair<String, String?>>>>(emptyMap()) }
     var isTranslatingPage by remember { mutableStateOf(false) }
+
+    fun pageTransMapKey(pageZero: Int, targetLang: String = uiState.translationTargetLang): String =
+        "${normalizeTranslationLangCode(targetLang)}:$pageZero"
+
+    fun pdfTransMapKey(pageZero: Int, targetLang: String = uiState.translationTargetLang, mode: String = uiState.translationMode): String =
+        "pdf:${normalizeTranslationLangCode(targetLang)}:${mode.lowercase()}:$pageZero"
 
     val getEffectivePdfPageBitmap: (Int, Bitmap?) -> Bitmap? = { pageZero, origBmp ->
         val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
@@ -345,11 +351,13 @@ fun ReaderScreen(
 
     LaunchedEffect(
         uiState.translationTargetLang,
+        uiState.translationMode,
+        isSpread,
         prefs.translatorEngine,
         prefs.aiModelName,
         prefs.aiSystemPrompt
     ) {
-        pageTranslationMap = emptyMap()
+        clearEpubSnapshotCache(evictAll = true)
     }
 
     LaunchedEffect(
@@ -357,6 +365,7 @@ fun ReaderScreen(
         uiState.isTranslationActive,
         uiState.translationTargetLang,
         uiState.translationMode,
+        isSpread,
         displayPageIndex,
         prefs.translatorEngine,
         prefs.aiModelName,
@@ -370,11 +379,9 @@ fun ReaderScreen(
         val isBilingualSpreadNow = isSpread && curMode.equals("bilingual", ignoreCase = true)
         val effPdfMode = if (isBilingualSpreadNow) "replace" else curMode
 
-        val pagesToTranslate = if (isBilingualSpreadNow) {
-            listOf(displayPageIndex)
-        } else if (isSpread) {
+        val pagesToTranslate = if (isSpread) {
             val sStart = (displayPageIndex / 2) * 2
-            listOf(sStart, sStart + 1)
+            listOf(displayPageIndex, sStart, sStart + 1).distinct()
         } else {
             listOf(displayPageIndex)
         }
@@ -383,7 +390,8 @@ fun ReaderScreen(
             val path = book.localFilePath
             if (path.isNotBlank()) {
                 for (pZero in pagesToTranslate) {
-                    if (pZero < metrics.totalBookPages && !pageTranslationMap.containsKey(pZero)) {
+                    val pdfKey = pdfTransMapKey(pZero, curTargetLang, effPdfMode)
+                    if (pZero in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(pdfKey)) {
                         isTranslatingPage = true
                         val targetW = if (isSpread) 540 else 1080
                         viewModel?.loadOrTranslatePdfPageBitmap(
@@ -394,7 +402,7 @@ fun ReaderScreen(
                             mode = effPdfMode,
                             targetWidthPx = targetW
                         )
-                        pageTranslationMap = pageTranslationMap + (pZero to emptyList())
+                        pageTranslationMap = pageTranslationMap + (pdfKey to emptyList())
                         isTranslatingPage = false
                     }
                 }
@@ -409,7 +417,8 @@ fun ReaderScreen(
                     listOf(displayPageIndex + 1, displayPageIndex + 2)
                 }
                 for (nextP in nextPages) {
-                    if (nextP < metrics.totalBookPages && !pageTranslationMap.containsKey(nextP)) {
+                    val pdfKey = pdfTransMapKey(nextP, curTargetLang, effPdfMode)
+                    if (nextP in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(pdfKey)) {
                         val targetW = if (isSpread) 540 else 1080
                         viewModel?.loadOrTranslatePdfPageBitmap(
                             bookId = book.id,
@@ -419,19 +428,27 @@ fun ReaderScreen(
                             mode = effPdfMode,
                             targetWidthPx = targetW
                         )
-                        pageTranslationMap = pageTranslationMap + (nextP to emptyList())
+                        pageTranslationMap = pageTranslationMap + (pdfKey to emptyList())
                     }
                 }
             }
         } else {
             for (pZero in pagesToTranslate) {
-                if (pZero < metrics.totalBookPages && !pageTranslationMap.containsKey(pZero)) {
+                val mapKey = pageTransMapKey(pZero, curTargetLang)
+                if (pZero in 0 until metrics.totalBookPages) {
                     val pTriple = getPageAtGlobalZero(pZero)
                     val pRaw = pTriple?.third.orEmpty().ifBlank { if (pZero == displayPageIndex) currentPageRaw else "" }
                     if (pRaw.isNotBlank()) {
                         val cached = viewModel?.getCachedTranslatedParagraphs(book.id, pZero, curTargetLang, pRaw.hashCode())
-                        if (cached != null) {
-                            pageTranslationMap = pageTranslationMap + (pZero to cached)
+                            ?: pageTranslationMap[mapKey]
+                        val hasValidCached = cached != null && cached.any { (orig, trans) ->
+                            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+                        }
+                        if (hasValidCached && cached != null) {
+                            if (!pageTranslationMap.containsKey(mapKey)) {
+                                pageTranslationMap = pageTranslationMap + (mapKey to cached)
+                            }
                         } else {
                             isTranslatingPage = true
                             val res = if (viewModel != null) {
@@ -445,7 +462,7 @@ fun ReaderScreen(
                                 translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
                             }
                             if (res != null) {
-                                pageTranslationMap = pageTranslationMap + (pZero to res)
+                                pageTranslationMap = pageTranslationMap + (mapKey to res)
                             }
                             isTranslatingPage = false
                         }
@@ -453,7 +470,7 @@ fun ReaderScreen(
                 }
             }
 
-            // Pre-fetch next 2 pages in background
+            // Pre-fetch next pages in background
             val nextPages = if (isBilingualSpreadNow) {
                 listOf(displayPageIndex + 1, displayPageIndex + 2)
             } else if (isSpread) {
@@ -463,7 +480,8 @@ fun ReaderScreen(
                 listOf(displayPageIndex + 1, displayPageIndex + 2)
             }
             for (nextP in nextPages) {
-                if (nextP < metrics.totalBookPages && !pageTranslationMap.containsKey(nextP)) {
+                val mapKey = pageTransMapKey(nextP, curTargetLang)
+                if (nextP in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(mapKey)) {
                     val nextTriple = getPageAtGlobalZero(nextP)
                     val nextRaw = nextTriple?.third.orEmpty()
                     if (nextRaw.isNotBlank()) {
@@ -479,7 +497,7 @@ fun ReaderScreen(
                             translationRepo.translatePageParagraphs(nextRaw, prefs, context, curTargetLang).getOrNull()
                         }
                         if (res != null) {
-                            pageTranslationMap = pageTranslationMap + (nextP to res)
+                            pageTranslationMap = pageTranslationMap + (mapKey to res)
                         }
                     }
                 }
@@ -810,16 +828,51 @@ fun ReaderScreen(
                     val isBilingualMode = (isPageTranslationActive || uiState.isTranslationActive) &&
                         uiState.translationMode.equals("bilingual", ignoreCase = true)
 
-                    fun resolveEffectiveEpubText(pageZero: Int, fallbackRaw: String = ""): String {
-                        val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
-                        if (isPdfBook || raw.isBlank()) return raw
-                        if (!isReplaceMode && (!isBilingualMode || isSpread)) return raw
-                        val cachedTrans = viewModel?.getCachedTranslatedParagraphs(
+                    fun getEffectivePageTranslationPairs(pageZero: Int, rawText: String = ""): List<Pair<String, String?>>? {
+                        val raw = rawText.ifBlank { getPageAtGlobalZero(pageZero)?.third.orEmpty() }
+                        if (raw.isBlank()) return null
+                        return viewModel?.getCachedTranslatedParagraphs(
                             book.id,
                             pageZero,
                             uiState.translationTargetLang,
                             raw.hashCode()
-                        ) ?: pageTranslationMap[pageZero]
+                        ) ?: pageTranslationMap[pageTransMapKey(pageZero)]
+                    }
+
+                    fun isEpubPageTranslationReady(pageZero: Int, fallbackRaw: String = ""): Boolean {
+                        val transActive = (isPageTranslationActive || uiState.isTranslationActive) &&
+                            !uiState.translationMode.equals("original", ignoreCase = true)
+                        if (!transActive || isPdfBook) return true
+                        val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
+                        val hasTranslatable = raw.split(Regex("\n\\s*\n")).any {
+                            val t = it.trim()
+                            t.isNotBlank() && !t.startsWith("[ILLUST:") && !t.startsWith("[PDF_PAGE:")
+                        }
+                        if (!hasTranslatable) return true
+                        val pairs = getEffectivePageTranslationPairs(pageZero, raw) ?: return false
+                        return pairs.any { (orig, trans) ->
+                            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+                        }
+                    }
+
+                    fun isSpreadTranslationReady(leftZero: Int, rightZero: Int, fallbackLeftRaw: String = ""): Boolean {
+                        val transActive = (isPageTranslationActive || uiState.isTranslationActive) &&
+                            !uiState.translationMode.equals("original", ignoreCase = true)
+                        if (!transActive || isPdfBook) return true
+                        return when {
+                            isBilingualSpread -> isEpubPageTranslationReady(leftZero, fallbackLeftRaw)
+                            isReplaceMode -> isEpubPageTranslationReady(leftZero, fallbackLeftRaw) &&
+                                (rightZero >= metrics.totalBookPages || isEpubPageTranslationReady(rightZero))
+                            else -> true
+                        }
+                    }
+
+                    fun resolveEffectiveEpubText(pageZero: Int, fallbackRaw: String = ""): String {
+                        val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
+                        if (isPdfBook || raw.isBlank()) return raw
+                        if (!isReplaceMode && (!isBilingualMode || isSpread)) return raw
+                        val cachedTrans = getEffectivePageTranslationPairs(pageZero, raw)
                         val effMode = if (isReplaceMode) "replace" else "bilingual"
                         return if (!cachedTrans.isNullOrEmpty()) {
                             buildTranslatedPageRaw(raw, cachedTrans, effMode)
@@ -831,12 +884,7 @@ fun ReaderScreen(
                     fun resolveTranslatedOnlyEpubText(pageZero: Int, fallbackRaw: String = ""): String {
                         val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
                         if (isPdfBook || raw.isBlank()) return ""
-                        val cachedTrans = viewModel?.getCachedTranslatedParagraphs(
-                            book.id,
-                            pageZero,
-                            uiState.translationTargetLang,
-                            raw.hashCode()
-                        ) ?: pageTranslationMap[pageZero]
+                        val cachedTrans = getEffectivePageTranslationPairs(pageZero, raw)
                         return if (!cachedTrans.isNullOrEmpty()) {
                             buildTranslatedPageRaw(raw, cachedTrans, "replace")
                         } else {
@@ -868,11 +916,17 @@ fun ReaderScreen(
                     }
 
                     fun buildEpubSnapshotKey(pageZero: Int, textHash: Int, spread: Boolean, rightZero: Int = pageZero): String {
-                        val transActive = isPageTranslationActive || uiState.isTranslationActive
-                        val modeTag = if (transActive) "${uiState.translationMode}:${uiState.translationTargetLang}" else "orig"
+                        val transActive = (isPageTranslationActive || uiState.isTranslationActive) &&
+                            !uiState.translationMode.equals("original", ignoreCase = true)
+                        val normLang = normalizeTranslationLangCode(uiState.translationTargetLang)
+                        val normMode = if (transActive) uiState.translationMode.lowercase() else "original"
+                        val leftReady = isEpubPageTranslationReady(pageZero)
+                        val rightReady = if (spread) (rightZero >= metrics.totalBookPages || isEpubPageTranslationReady(rightZero)) else true
+                        val versionTag = if (!transActive) "orig" else if (leftReady && rightReady) "trans" else "partial"
+                        val modeTag = "$versionTag:$normMode:$normLang:$leftReady:$rightReady"
                         val combinedHash = (((bookHighlights.hashCode() * 31 + textHash) * 31 +
-                            (if (transActive) uiState.translationTargetLang.hashCode() else 0)) * 31 +
-                            (if (transActive) uiState.translationMode.hashCode() else 0)) * 31 + rightZero
+                            (if (transActive) normLang.hashCode() else 0)) * 31 +
+                            normMode.hashCode()) * 31 + rightZero
                         return buildSnapshotCacheKey(
                             bookId = book.id,
                             pageZero = pageZero,
@@ -929,7 +983,9 @@ fun ReaderScreen(
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                            pageTranslationMap[curZero], pageTranslationMap[curLeftIdx], pageTranslationMap[curRightIdx],
+                            pageTranslationMap[pageTransMapKey(curZero)],
+                            pageTranslationMap[pageTransMapKey(curLeftIdx)],
+                            pageTranslationMap[pageTransMapKey(curRightIdx)],
                             peekOriginalPdfPage,
                             uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
                         ) {
@@ -941,8 +997,9 @@ fun ReaderScreen(
                                 val leftCh = leftTriple?.let { chapters.getOrNull(it.first) } ?: currentChapter
                                 val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
                                 val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero, if (leftZero == curZero) currentPageRaw else "")
+                                val canCacheSpread = !isPdfBook && isSpreadTranslationReady(leftZero, rightZero, if (leftZero == curZero) currentPageRaw else "")
                                 val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
-                                val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
+                                val cached = if (canCacheSpread) epubSnapshotCache.get(cacheKey) else null
                                 if (cached != null) {
                                     value = cached
                                 } else {
@@ -957,7 +1014,7 @@ fun ReaderScreen(
                                         ))
                                     value = withContext(Dispatchers.Default) {
                                         renderCachedTwoPageSpreadSnapshot(
-                                            cacheKey = if (isPdfBook) null else cacheKey,
+                                            cacheKey = if (canCacheSpread) cacheKey else null,
                                             textMeasurer = textMeasurer,
                                             widthPx = spreadW,
                                             heightPx = spreadStageH,
@@ -987,11 +1044,12 @@ fun ReaderScreen(
                                 val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
                                 val curPInCh = curTriple?.second ?: uiState.activePageIndex
                                 val curText = resolveEffectiveEpubText(curZero, currentPageRaw)
+                                val canCachePage = isEpubPageTranslationReady(curZero, currentPageRaw)
                                 val cacheKey = buildEpubSnapshotKey(curZero, curText.hashCode(), false)
-                                val cached = epubSnapshotCache.get(cacheKey)
+                                val cached = if (canCachePage) epubSnapshotCache.get(cacheKey) else null
                                 value = cached ?: withContext(Dispatchers.Default) {
                                     renderCachedEpubPageSnapshot(
-                                        cacheKey = cacheKey,
+                                        cacheKey = if (canCachePage) cacheKey else null,
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
                                         heightPx = stageH,
@@ -1045,8 +1103,8 @@ fun ReaderScreen(
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
                             activeDraggingSliderKey == null,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                            pageTranslationMap[if (isSpread) nextLeftIdx else curZero + 1],
-                            pageTranslationMap[nextRightIdx],
+                            pageTranslationMap[pageTransMapKey(if (isSpread) nextLeftIdx else curZero + 1)],
+                            pageTranslationMap[pageTransMapKey(nextRightIdx)],
                             peekOriginalPdfPage,
                             uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
                         ) {
@@ -1062,8 +1120,9 @@ fun ReaderScreen(
                                     val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
                                     val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
                                     val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero)
+                                    val canCacheSpread = !isPdfBook && isSpreadTranslationReady(leftZero, rightZero)
                                     val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
-                                    val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
+                                    val cached = if (canCacheSpread) epubSnapshotCache.get(cacheKey) else null
                                     if (cached != null) {
                                         value = cached
                                     } else {
@@ -1078,7 +1137,7 @@ fun ReaderScreen(
                                                 ))
                                         value = withContext(Dispatchers.Default) {
                                             renderCachedTwoPageSpreadSnapshot(
-                                                cacheKey = if (isPdfBook) null else cacheKey,
+                                                cacheKey = if (canCacheSpread) cacheKey else null,
                                                 textMeasurer = textMeasurer,
                                                 widthPx = spreadW,
                                                 heightPx = spreadStageH,
@@ -1111,11 +1170,12 @@ fun ReaderScreen(
                                 val nextPInCh = nextTriple.second
                                 val nextPZero = curZero + 1
                                 val nextText = resolveEffectiveEpubText(nextPZero)
+                                val canCachePage = isEpubPageTranslationReady(nextPZero)
                                 val cacheKey = buildEpubSnapshotKey(nextPZero, nextText.hashCode(), false)
-                                val cached = epubSnapshotCache.get(cacheKey)
+                                val cached = if (canCachePage) epubSnapshotCache.get(cacheKey) else null
                                 value = cached ?: withContext(Dispatchers.Default) {
                                     renderCachedEpubPageSnapshot(
-                                        cacheKey = cacheKey,
+                                        cacheKey = if (canCachePage) cacheKey else null,
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
                                         heightPx = stageH,
@@ -1169,8 +1229,8 @@ fun ReaderScreen(
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
                             activeDraggingSliderKey == null,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
-                            pageTranslationMap[if (isSpread) prevLeftIdx else curZero - 1],
-                            pageTranslationMap[prevRightIdx],
+                            pageTranslationMap[pageTransMapKey(if (isSpread) prevLeftIdx else curZero - 1)],
+                            pageTranslationMap[pageTransMapKey(prevRightIdx)],
                             peekOriginalPdfPage,
                             uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision
                         ) {
@@ -1186,8 +1246,9 @@ fun ReaderScreen(
                                     val leftCh = leftTripleSpread?.let { chapters.getOrNull(it.first) }
                                     val rightCh = rightTripleSpread?.let { chapters.getOrNull(it.first) }
                                     val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero)
+                                    val canCacheSpread = !isPdfBook && isSpreadTranslationReady(leftZero, rightZero)
                                     val cacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
-                                    val cached = if (!isPdfBook) epubSnapshotCache.get(cacheKey) else null
+                                    val cached = if (canCacheSpread) epubSnapshotCache.get(cacheKey) else null
                                     if (cached != null) {
                                         value = cached
                                     } else {
@@ -1202,7 +1263,7 @@ fun ReaderScreen(
                                                 ))
                                         value = withContext(Dispatchers.Default) {
                                             renderCachedTwoPageSpreadSnapshot(
-                                                cacheKey = if (isPdfBook) null else cacheKey,
+                                                cacheKey = if (canCacheSpread) cacheKey else null,
                                                 textMeasurer = textMeasurer,
                                                 widthPx = spreadW,
                                                 heightPx = spreadStageH,
@@ -1235,11 +1296,12 @@ fun ReaderScreen(
                                 val prevPInCh = prevTriple.second
                                 val prevPZero = curZero - 1
                                 val prevText = resolveEffectiveEpubText(prevPZero)
+                                val canCachePage = isEpubPageTranslationReady(prevPZero)
                                 val cacheKey = buildEpubSnapshotKey(prevPZero, prevText.hashCode(), false)
-                                val cached = epubSnapshotCache.get(cacheKey)
+                                val cached = if (canCachePage) epubSnapshotCache.get(cacheKey) else null
                                 value = cached ?: withContext(Dispatchers.Default) {
                                     renderCachedEpubPageSnapshot(
-                                        cacheKey = cacheKey,
+                                        cacheKey = if (canCachePage) cacheKey else null,
                                         textMeasurer = textMeasurer,
                                         widthPx = stageW,
                                         heightPx = stageH,
@@ -1270,13 +1332,13 @@ fun ReaderScreen(
                         }
 
                         LaunchedEffect(
-                            pageTranslationMap[curZero],
-                            pageTranslationMap[curLeftIdx],
-                            pageTranslationMap[curRightIdx],
-                            pageTranslationMap[nextLeftIdx],
-                            pageTranslationMap[nextRightIdx],
-                            pageTranslationMap[prevLeftIdx],
-                            pageTranslationMap[prevRightIdx],
+                            pageTranslationMap[pageTransMapKey(curZero)],
+                            pageTranslationMap[pageTransMapKey(curLeftIdx)],
+                            pageTranslationMap[pageTransMapKey(curRightIdx)],
+                            pageTranslationMap[pageTransMapKey(nextLeftIdx)],
+                            pageTranslationMap[pageTransMapKey(nextRightIdx)],
+                            pageTranslationMap[pageTransMapKey(prevLeftIdx)],
+                            pageTranslationMap[pageTransMapKey(prevRightIdx)],
                             prefs.translatorDisplayMode,
                             prefs.translatorTargetLang,
                             isPageTranslationActive,
@@ -1563,7 +1625,8 @@ fun ReaderScreen(
                                         scaleY = readerZoom
                                         translationX = readerPan.x
                                         translationY = readerPan.y
-                                    }
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
                                 val activeBmp = activeCurrBmp ?: curBitmap
                                 if (activeBmp != null) {
@@ -1675,12 +1738,11 @@ fun ReaderScreen(
                                     val curChIdx = curTriple?.first ?: uiState.activeChapterIndex
                                     val curPInCh = curTriple?.second ?: uiState.activePageIndex
 
-                                    val curCachedTrans = viewModel?.getCachedTranslatedParagraphs(book.id, curZero, uiState.translationTargetLang, curText.hashCode())
-                                        ?: pageTranslationMap[curZero]
-                                    val hasActivePageTranslation = (isPageTranslationActive || uiState.isTranslationActive) &&
-                                        !uiState.translationMode.equals("original", ignoreCase = true) &&
-                                        !curCachedTrans.isNullOrEmpty()
-                                    val isBilingualActive = hasActivePageTranslation && uiState.translationMode.equals("bilingual", ignoreCase = true)
+                                    val curCachedTrans = getEffectivePageTranslationPairs(curZero, curText)
+                                    val isTransActiveNow = (isPageTranslationActive || uiState.isTranslationActive) &&
+                                        !uiState.translationMode.equals("original", ignoreCase = true)
+                                    val isBilingualActive = isTransActiveNow && uiState.translationMode.equals("bilingual", ignoreCase = true)
+                                    val hasActivePageTranslation = isBilingualActive || (isTransActiveNow && !curCachedTrans.isNullOrEmpty())
                                     val effectiveTextForFit = resolveEffectiveEpubText(curZero, curText)
                                     val curFitScale = remember(
                                         curZero, effectiveTextForFit, stageW, stageH, baseTextStyle,
@@ -1817,10 +1879,43 @@ fun ReaderScreen(
                                     }
                                     viewModel?.prefetchPdfNeighbors(book.id, path, leftZero, isTwoPageSpread = true)
                                 }
+                            } else {
+                                LaunchedEffect(
+                                    book.id, leftZero, rightZero, isBilingualSpread,
+                                    isPageTranslationActive, uiState.isTranslationActive,
+                                    uiState.translationTargetLang, uiState.translationMode
+                                ) {
+                                    val isTransActiveSpread = (isPageTranslationActive || uiState.isTranslationActive) &&
+                                        !uiState.translationMode.equals("original", ignoreCase = true)
+                                    if (!isTransActiveSpread) return@LaunchedEffect
+                                    val targetLangNow = uiState.translationTargetLang
+                                    val spreadPages = if (isBilingualSpread) listOf(leftZero) else listOf(leftZero, rightZero)
+                                    for (pZero in spreadPages) {
+                                        if (pZero in 0 until metrics.totalBookPages && !isEpubPageTranslationReady(pZero)) {
+                                            val pRaw = getPageAtGlobalZero(pZero)?.third.orEmpty()
+                                            if (pRaw.isNotBlank()) {
+                                                val res = if (viewModel != null) {
+                                                    viewModel.loadOrTranslatePageParagraphs(
+                                                        bookId = book.id,
+                                                        pageIndex = pZero,
+                                                        pageRaw = pRaw,
+                                                        targetLang = targetLangNow
+                                                    )
+                                                } else {
+                                                    translationRepo.translatePageParagraphs(pRaw, prefs, context, targetLangNow).getOrNull()
+                                                }
+                                                if (res != null) {
+                                                    pageTranslationMap = pageTranslationMap + (pageTransMapKey(pZero, targetLangNow) to res)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             val effLeftBmp = if (isBilingualSpread) leftPdfBmp else getEffectivePdfPageBitmap(leftZero, leftPdfBmp)
                             val effRightBmp = if (isBilingualSpread) rightPdfBmp else getEffectivePdfPageBitmap(rightZero, rightPdfBmp)
+                            val canCacheSpread = !isPdfBook && isSpreadTranslationReady(leftZero, rightZero, if (leftZero == curZero) currentPageRaw else "")
                             val spreadCacheKey = buildEpubSnapshotKey(leftZero, leftText.hashCode() * 31 + rightText.hashCode(), true, rightZero)
                             val shouldTintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
                                 !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(
@@ -1832,8 +1927,8 @@ fun ReaderScreen(
                                     rightZero, indexedIllustrationPages
                                 ))
                             val spreadBmp by produceState<ImageBitmap?>(
-                                initialValue = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null,
-                                spreadCacheKey, leftZero, rightZero, isBilingualSpread, leftText, rightText,
+                                initialValue = if (canCacheSpread) epubSnapshotCache.get(spreadCacheKey) else null,
+                                spreadCacheKey, canCacheSpread, leftZero, rightZero, isBilingualSpread, leftText, rightText,
                                 stageW, stageH, spreadW, spreadStageH,
                                 prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                                 prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
@@ -1842,12 +1937,13 @@ fun ReaderScreen(
                                 prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations, effectiveTheme, prefs.amoledBlack,
                                 isPageTranslationActive, uiState.isTranslationActive, uiState.translationMode,
                                 uiState.translationTargetLang, uiState.translationRevision,
-                                pageTranslationMap[leftZero], pageTranslationMap[rightZero]
+                                pageTranslationMap[pageTransMapKey(leftZero)],
+                                pageTranslationMap[pageTransMapKey(rightZero)]
                             ) {
-                                val cached = if (!isPdfBook) epubSnapshotCache.get(spreadCacheKey) else null
+                                val cached = if (canCacheSpread) epubSnapshotCache.get(spreadCacheKey) else null
                                 value = cached ?: withContext(Dispatchers.Default) {
                                     renderCachedTwoPageSpreadSnapshot(
-                                        cacheKey = if (isPdfBook) null else spreadCacheKey,
+                                        cacheKey = if (canCacheSpread) spreadCacheKey else null,
                                         textMeasurer = textMeasurer,
                                         widthPx = spreadW,
                                         heightPx = spreadStageH,
@@ -1966,8 +2062,7 @@ fun ReaderScreen(
                                 val pText = pageTriple?.third.orEmpty().ifBlank { if (pageZero == curZero) currentPageRaw else "" }
                                 val chIdx = pageTriple?.first ?: uiState.activeChapterIndex
                                 val pInCh = pageTriple?.second ?: uiState.activePageIndex
-                                val curCachedTrans = viewModel?.getCachedTranslatedParagraphs(book.id, pageZero, uiState.translationTargetLang, pText.hashCode())
-                                    ?: pageTranslationMap[pageZero]
+                                val curCachedTrans = getEffectivePageTranslationPairs(pageZero, pText)
                                 InteractiveTextPageContent(
                                     bookId = book.id,
                                     displayPageIndex = pageZero,
@@ -2117,7 +2212,8 @@ fun ReaderScreen(
                                     scaleY = nonFlipZoomScale
                                     translationX = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.x else 0f
                                     translationY = if (nonFlipZoomScale > 1.01f) nonFlipZoomOffset.y else 0f
-                                }
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
                             if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.SLIDE) {
                                 if (isSpread) {
@@ -2276,7 +2372,8 @@ fun ReaderScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .background(palette.bgApp)
+                                            .background(palette.bgApp),
+                                        contentAlignment = Alignment.Center
                                     ) {
                                         RenderPageForNonFlipbook(pIdx)
                                     }
@@ -2618,7 +2715,7 @@ fun ReaderScreen(
                                             globalPageZero,
                                             uiState.translationTargetLang,
                                             pgRaw.hashCode()
-                                        ) ?: pageTranslationMap[globalPageZero]
+                                        ) ?: pageTranslationMap[pageTransMapKey(globalPageZero)]
                                         InteractiveTextPageContent(
                                             bookId = book.id,
                                             displayPageIndex = globalPageZero,

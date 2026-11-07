@@ -380,10 +380,39 @@ internal fun BoxScope.ReaderTopChrome(
                                 }
                             }
                             TopCenterPillState.TITLE -> {
-                                if (isSpread) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(start = 14.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = book.title,
+                                        color = palette.textMain,
+                                        fontSize = 11.5.sp,
+                                        fontFamily = FontFamily.Serif,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = TextStyle(
+                                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                            lineHeight = 12.sp
+                                        ),
+                                        modifier = Modifier
+                                            .widthIn(max = if (isSpread) 240.dp else 168.dp)
+                                            .clickable { onToggleTocDrawer(true) }
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        Modifier
+                                            .width(1.dp)
+                                            .height(13.dp)
+                                            .background(palette.borderSoft)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
                                     Box(
                                         modifier = Modifier
-                                            .size(32.dp)
+                                            .size(24.dp)
                                             .clip(CircleShape)
                                             .clickable {
                                                 onIsPageTranslationActiveChange(true)
@@ -395,59 +424,9 @@ internal fun BoxScope.ReaderTopChrome(
                                         PrototypeSvgIcon(
                                             type = PrototypeIconType.TRANSLATE,
                                             tint = palette.textMain,
-                                            modifier = Modifier.size(14.dp),
+                                            modifier = Modifier.size(13.5.dp),
                                             contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
                                         )
-                                    }
-                                } else {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .padding(start = 14.dp, end = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = book.title,
-                                            color = palette.textMain,
-                                            fontSize = 11.5.sp,
-                                            fontFamily = FontFamily.Serif,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = TextStyle(
-                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                                lineHeight = 12.sp
-                                            ),
-                                            modifier = Modifier
-                                                .widthIn(max = 168.dp)
-                                                .clickable { onToggleTocDrawer(true) }
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Box(
-                                            Modifier
-                                                .width(1.dp)
-                                                .height(13.dp)
-                                                .background(palette.borderSoft)
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .clickable {
-                                                    onIsPageTranslationActiveChange(true)
-                                                    onPeekOriginalPdfPageChange(false)
-                                                    viewModel?.setTranslationActive(true)
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            PrototypeSvgIcon(
-                                                type = PrototypeIconType.TRANSLATE,
-                                                tint = palette.textMain,
-                                                modifier = Modifier.size(13.5.dp),
-                                                contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
-                                            )
-                                        }
                                     }
                                 }
                             }

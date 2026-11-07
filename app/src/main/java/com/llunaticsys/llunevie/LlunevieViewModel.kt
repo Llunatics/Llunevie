@@ -319,10 +319,26 @@ class LlunevieViewModel(
 
     fun getCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): List<Pair<String, String?>>? {
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
-        return translatedTextCache.get(key)
+        val cached = translatedTextCache.get(key) ?: return null
+        val hasTranslatable = cached.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
+        val hasValid = cached.any { (orig, trans) ->
+            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+        }
+        if (hasTranslatable && !hasValid) {
+            translatedTextCache.remove(key)
+            return null
+        }
+        return cached
     }
 
     fun putCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int, paragraphs: List<Pair<String, String?>>) {
+        val hasTranslatable = paragraphs.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
+        val hasValid = paragraphs.any { (orig, trans) ->
+            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
+                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+        }
+        if (hasTranslatable && !hasValid) return
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         translatedTextCache.put(key, paragraphs)
     }
@@ -330,6 +346,7 @@ class LlunevieViewModel(
     fun setTranslationTargetLang(newLang: String) {
         val normLang = normalizeTranslationLangCode(newLang)
         activeTranslationJob?.cancel()
+        com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
         _uiState.update {
             it.copy(
                 translationTargetLang = normLang,
@@ -363,6 +380,7 @@ class LlunevieViewModel(
 
     fun setTranslationActive(active: Boolean) {
         activeTranslationJob?.cancel()
+        com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
         _uiState.update {
             it.copy(
                 isTranslationActive = active,
@@ -378,6 +396,7 @@ class LlunevieViewModel(
     fun setTranslationMode(mode: String) {
         val normMode = mode.trim().lowercase()
         activeTranslationJob?.cancel()
+        com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
         _uiState.update {
             it.copy(
                 translationMode = normMode,
@@ -405,9 +424,9 @@ class LlunevieViewModel(
             val mode = st.translationMode
             val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
             val isBilingualSpread = isSpread && mode.equals("bilingual", ignoreCase = true)
-            val targetPages = if (isSpread && !isBilingualSpread) {
+            val targetPages = if (isSpread) {
                 val sStart = (globalPageIdx / 2) * 2
-                listOf(sStart, sStart + 1).filter { it in 0 until metrics.totalBookPages }
+                listOf(globalPageIdx, sStart, sStart + 1).distinct().filter { it in 0 until metrics.totalBookPages }
             } else {
                 listOf(globalPageIdx)
             }
@@ -936,6 +955,7 @@ class LlunevieViewModel(
             )
         }
         if (normLang != null || displayMode != null) {
+            com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
             _uiState.update {
                 it.copy(
                     translationTargetLang = normLang ?: it.translationTargetLang,
@@ -948,6 +968,7 @@ class LlunevieViewModel(
 
     fun clearTranslationCache() {
         viewModelScope.launch {
+            com.llunaticsys.llunevie.ui.reader.clearEpubSnapshotCache(evictAll = true)
             translatedTextCache.evictAll()
             PdfNativeRenderer.clearTranslatedPdfBitmaps()
             TranslationRepository.getInstance(appContext).clearCache(appContext)
@@ -1539,8 +1560,28 @@ class LlunevieViewModel(
 
                         needsPdfIndexing = !book.tocIndexed || book.tocIndexVersion < PdfNativeRenderer.CURRENT_PDF_TOC_VERSION
                     }
-                } else if (parsedChapters.isEmpty()) {
-                    parsedChapters.addAll(buildStructuredChaptersFromSynopsis(book))
+                } else {
+                    val isLegacyDuplicatedSynopsisChapters = parsedChapters.size == 2 &&
+                        parsedChapters[1].pages.firstOrNull()?.let { firstPageCh2 ->
+                            firstPageCh2.startsWith("Continuation of ") || firstPageCh2.startsWith("Bagian lanjutan dari ")
+                        } == true
+                    if (parsedChapters.isEmpty() || isLegacyDuplicatedSynopsisChapters) {
+                        parsedChapters.clear()
+                        val rebuiltSynopsisChapters = buildStructuredChaptersFromSynopsis(book)
+                        parsedChapters.addAll(rebuiltSynopsisChapters)
+                        if (isLegacyDuplicatedSynopsisChapters) {
+                            val rebuiltEntities = rebuiltSynopsisChapters.map {
+                                BookChapterEntity(
+                                    bookId = bookId,
+                                    chapterIndex = it.index,
+                                    title = it.title,
+                                    pagesJson = JSONArray(it.pages).toString(),
+                                    illustrationsJson = "[]"
+                                )
+                            }
+                            dao.saveBookWithChapters(book, rebuiltEntities)
+                        }
+                    }
                 }
 
                 val safeChIdx = book.savedChapterIndex.coerceIn(0, (parsedChapters.size - 1).coerceAtLeast(0))
@@ -1660,31 +1701,77 @@ class LlunevieViewModel(
     }
 
     private fun buildStructuredChaptersFromSynopsis(book: BookEntity): List<BookChapter> {
-        val isId = preferences.value.lang != "en"
-        val syn = book.synopsis.ifBlank { "${book.title} — ${book.author}" }
-        val sentences = syn.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
-        val p1 = sentences.take((sentences.size / 2).coerceAtLeast(1)).joinToString(" ").ifBlank { syn }
-        val p2 = sentences.drop((sentences.size / 2).coerceAtLeast(1)).joinToString(" ").ifBlank { syn }
-        return listOf(
-            BookChapter(
-                index = 0,
-                title = if (isId) "Bab I — ${book.title}" else "Chapter I — ${book.title}",
-                pages = listOf(
-                    if (isId) "$p1\n\n${book.title} ditulis oleh ${book.author} (${book.publisher}, ${book.year})."
-                    else "$p1\n\n${book.title} by ${book.author} (${book.publisher}, ${book.year}).",
-                    p2
-                )
-            ),
-            BookChapter(
-                index = 1,
-                title = if (isId) "Bab II — Perkembangan Naratif" else "Chapter II — Narrative Arc",
-                pages = listOf(
-                    if (isId) "Bagian lanjutan dari ${book.title} karya ${book.author}.\n\n$p1"
-                    else "Continuation of ${book.title} by ${book.author}.\n\n$p1",
-                    p2
+        val syn = book.synopsis.ifBlank { "${book.title} — ${book.author}" }.trim()
+        val idPattern = Regex("\\b(yang|dan|di|ini|itu|aku|tidak|dengan|untuk|dari|dalam|pada|adalah|sebagai|oleh|karena|sebuah|seorang|mereka|dia|kami|kita|bisa|akan|sudah)\\b", RegexOption.IGNORE_CASE)
+        val enPattern = Regex("\\b(the|and|of|to|in|is|for|that|with|on|as|are|this|by|from|they|have|had|was|were|would|could|should)\\b", RegexOption.IGNORE_CASE)
+        val idHits = idPattern.findAll(syn).count()
+        val enHits = enPattern.findAll(syn).count()
+        val isId = when {
+            idHits > enHits && idHits >= 1 -> true
+            enHits > idHits && enHits >= 1 -> false
+            else -> preferences.value.lang != "en"
+        }
+
+        val sentences = syn.split(Regex("(?<=[.!?])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
+        val pubMeta = if (isId) {
+            "${book.title} ditulis oleh ${book.author} (${book.publisher}, ${book.year})."
+        } else {
+            "${book.title} by ${book.author} (${book.publisher}, ${book.year})."
+        }
+        val editionMeta = if (isId) {
+            "Kategori: ${book.category.ifBlank { "Literatur" }} · Edisi: ${book.edition.ifBlank { "Standar" }} · ISBN: ${book.isbn.ifBlank { "—" }}."
+        } else {
+            "Category: ${book.category.ifBlank { "Literature" }} · Edition: ${book.edition.ifBlank { "Standard" }} · ISBN: ${book.isbn.ifBlank { "—" }}."
+        }
+
+        return if (sentences.size >= 4) {
+            val q1 = (sentences.size / 4).coerceAtLeast(1)
+            val q2 = (sentences.size * 2 / 4).coerceAtLeast(q1 + 1)
+            val q3 = (sentences.size * 3 / 4).coerceAtLeast(q2 + 1)
+            val page1 = sentences.subList(0, q1).joinToString(" ")
+            val page2 = sentences.subList(q1, q2).joinToString(" ")
+            val page3 = sentences.subList(q2, q3).joinToString(" ")
+            val page4 = sentences.subList(q3, sentences.size).joinToString(" ")
+            listOf(
+                BookChapter(
+                    index = 0,
+                    title = if (isId) "Bab I — ${book.title}" else "Chapter I — ${book.title}",
+                    pages = listOf("$page1\n\n$pubMeta", page2)
+                ),
+                BookChapter(
+                    index = 1,
+                    title = if (isId) "Bab II — Perkembangan Naratif" else "Chapter II — Narrative Arc",
+                    pages = listOf(page3, "$page4\n\n$editionMeta")
                 )
             )
-        )
+        } else {
+            val half = ((sentences.size + 1) / 2).coerceAtLeast(1)
+            val p1 = sentences.take(half).joinToString(" ").ifBlank { syn }
+            val p2 = sentences.drop(half).joinToString(" ")
+            val ch1Pages = if (p2.isNotBlank() && p2 != p1) {
+                listOf("$p1\n\n$pubMeta", p2)
+            } else {
+                listOf(p1, "$pubMeta\n\n$editionMeta")
+            }
+            val ch2Page1 = if (isId) {
+                "Catatan Katalog — ${book.title}\n\n$pubMeta"
+            } else {
+                "Catalog Notes — ${book.title}\n\n$pubMeta"
+            }
+            val ch2Page2 = editionMeta
+            listOf(
+                BookChapter(
+                    index = 0,
+                    title = if (isId) "Bab I — ${book.title}" else "Chapter I — ${book.title}",
+                    pages = ch1Pages
+                ),
+                BookChapter(
+                    index = 1,
+                    title = if (isId) "Bab II — Informasi Edisi" else "Chapter II — Edition Details",
+                    pages = listOf(ch2Page1, ch2Page2)
+                )
+            )
+        }
     }
 
     fun computeGlobalPageMetrics(
