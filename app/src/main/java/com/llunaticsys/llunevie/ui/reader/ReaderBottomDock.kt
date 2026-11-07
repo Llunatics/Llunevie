@@ -366,20 +366,20 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
 
     Column(
         modifier = Modifier
-            .align(Alignment.CenterStart)
+            .align(Alignment.TopStart)
             .windowInsetsPadding(WindowInsets.displayCutout)
-            .padding(start = 18.dp),
+            .padding(top = 12.dp, start = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Back button aligned vertically with the left vertical pill
+        // Back button positioned near the top-left corner above the left vertical pill
         Surface(
             onClick = onBack,
             shape = CircleShape,
             color = palette.bgSurface,
             border = BorderStroke(1.dp, palette.borderSoft),
-            shadowElevation = 6.dp,
-            modifier = Modifier.size(46.dp)
+            shadowElevation = 4.dp,
+            modifier = Modifier.size(42.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 PrototypeSvgIcon(
@@ -393,8 +393,8 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
 
         Box(
             modifier = Modifier
-                .width(46.dp)
-                .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
+                .width(42.dp)
+                .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
                 .clip(CircleShape)
                 .background(color = palette.bgSurface, shape = CircleShape)
                 .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
@@ -418,7 +418,7 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
             if (!isSliderMode) {
                 Column(
                     modifier = Modifier
-                        .width(46.dp)
+                        .width(42.dp)
                         .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -554,8 +554,8 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
 
                 Column(
                     modifier = Modifier
-                        .width(46.dp)
-                        .height(230.dp)
+                        .width(42.dp)
+                        .height(220.dp)
                         .padding(vertical = 10.dp, horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween
@@ -767,13 +767,13 @@ internal fun BoxScope.ReaderSpreadRightVerticalBar(
 
     Column(
         modifier = Modifier
-            .align(Alignment.CenterEnd)
+            .align(Alignment.TopEnd)
             .windowInsetsPadding(WindowInsets.displayCutout)
-            .padding(end = 18.dp),
+            .padding(top = 12.dp, end = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Bookmark button aligned vertically with the right vertical pill
+        // Bookmark button positioned near the top-right corner above the right vertical pill
         Surface(
             onClick = {
                 val curPageNum = displayPageIndex + 1
@@ -797,8 +797,8 @@ internal fun BoxScope.ReaderSpreadRightVerticalBar(
             shape = CircleShape,
             color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
             border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
-            shadowElevation = 6.dp,
-            modifier = Modifier.size(46.dp)
+            shadowElevation = 4.dp,
+            modifier = Modifier.size(42.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
@@ -813,8 +813,8 @@ internal fun BoxScope.ReaderSpreadRightVerticalBar(
         // Right vertical pill: Book Title + Translate Access
         Box(
             modifier = Modifier
-                .width(46.dp)
-                .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
+                .width(42.dp)
+                .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
                 .clip(CircleShape)
                 .background(color = palette.bgSurface, shape = CircleShape)
                 .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape),
@@ -822,7 +822,7 @@ internal fun BoxScope.ReaderSpreadRightVerticalBar(
         ) {
             Column(
                 modifier = Modifier
-                    .width(46.dp)
+                    .width(42.dp)
                     .padding(vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)

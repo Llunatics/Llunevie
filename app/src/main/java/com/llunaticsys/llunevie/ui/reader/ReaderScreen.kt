@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -566,16 +568,25 @@ fun ReaderScreen(
             val topClearanceDp = stableStatusBarTopDp + if (isTranslationQuickBarActive) 68.dp else 64.dp
             val bottomClearanceDp = stableNavBarBottomDp + 76.dp
 
-            val spreadTopPadDp = if (isSpread) {
-                effectiveTopSystemInset + if (isTranslationQuickBarActive) 52.dp else 8.dp
-            } else 0.dp
-            val spreadBottomPadDp = if (isSpread) 8.dp else 0.dp
-            val spreadStageH = if (isSpread) {
-                (stageH - with(density) { (spreadTopPadDp + spreadBottomPadDp).roundToPx() }).coerceAtLeast(240)
-            } else stageH
-            val spreadW = (spreadStageH * 1.414f).toInt().coerceAtMost(
-                (stageW - with(density) { (if (isSpread) 32.dp else 0.dp).roundToPx() }).coerceAtLeast(240)
+            val cutoutPaddingValues = WindowInsets.displayCutout.asPaddingValues()
+            val layoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
+            val cutoutHorizontalMaxDp = maxOf(
+                cutoutPaddingValues.calculateStartPadding(layoutDirection),
+                cutoutPaddingValues.calculateEndPadding(layoutDirection)
             )
+            val spreadSidePadDp = if (isSpread) (cutoutHorizontalMaxDp + 64.dp) else 0.dp
+            val spreadTopPadDp = if (isSpread) {
+                maxOf(effectiveTopSystemInset, 14.dp) + if (isTranslationQuickBarActive) 44.dp else 4.dp
+            } else 0.dp
+            val spreadBottomPadDp = if (isSpread) 26.dp else 0.dp
+            val maxSpreadAvailH = (stageH - with(density) { (spreadTopPadDp + spreadBottomPadDp).roundToPx() }).coerceAtLeast(240)
+            val maxSpreadAvailW = (stageW - with(density) { (spreadSidePadDp * 2).roundToPx() }).coerceAtLeast(240)
+            val spreadW = if (isSpread) {
+                minOf((maxSpreadAvailH * 1.414f).toInt(), maxSpreadAvailW).coerceAtLeast(240)
+            } else stageW
+            val spreadStageH = if (isSpread) {
+                minOf(maxSpreadAvailH, (spreadW / 1.414f).toInt()).coerceAtLeast(240)
+            } else stageH
 
             val horizontalMarginDp = when (prefs.pageMargin) {
                 0 -> 12.dp
@@ -1666,25 +1677,25 @@ fun ReaderScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(
-                                    start = if (isSpread) 16.dp else 0.dp,
-                                    end = if (isSpread) 16.dp else 0.dp,
-                                    top = spreadTopPadDp,
-                                    bottom = spreadBottomPadDp
-                                )
+                                .clipToBounds()
                                 .then(flipbookGestureModifier),
                             contentAlignment = Alignment.Center
                         ) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .clipToBounds()
                                     .graphicsLayer {
                                         scaleX = readerZoom
                                         scaleY = readerZoom
                                         translationX = readerPan.x
                                         translationY = readerPan.y
-                                    },
+                                    }
+                                    .padding(
+                                        start = if (isSpread) spreadSidePadDp else 0.dp,
+                                        end = if (isSpread) spreadSidePadDp else 0.dp,
+                                        top = spreadTopPadDp,
+                                        bottom = spreadBottomPadDp
+                                    ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 val activeBmp = activeCurrBmp ?: curBitmap
@@ -1778,10 +1789,16 @@ fun ReaderScreen(
                                             }
                                         },
                                         modifier = if (isSpread) {
+                                            val isDarkSpread = effectiveTheme == AppThemeMode.BLACK
                                             Modifier
-                                                .fillMaxHeight()
-                                                .aspectRatio(1.414f)
-                                                .shadow(14.dp, RoundedCornerShape(6.dp))
+                                                .width(with(density) { spreadW.toDp() })
+                                                .height(with(density) { spreadStageH.toDp() })
+                                                .softBookShadow(
+                                                    cornerRadius = 6.dp,
+                                                    spreadRadius = 18.dp,
+                                                    offsetY = 3.dp,
+                                                    isDarkTheme = isDarkSpread
+                                                )
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
                                         } else {
@@ -2062,21 +2079,27 @@ fun ReaderScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(
-                                        start = 16.dp,
-                                        end = 16.dp,
+                                        start = spreadSidePadDp,
+                                        end = spreadSidePadDp,
                                         top = spreadTopPadDp,
                                         bottom = spreadBottomPadDp
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (spreadBmp != null) {
+                                    val isDarkSpread = effectiveTheme == AppThemeMode.BLACK
                                     Image(
                                         bitmap = spreadBmp!!,
                                         contentDescription = null,
                                         modifier = Modifier
-                                            .fillMaxHeight()
-                                            .aspectRatio(1.414f)
-                                            .shadow(14.dp, RoundedCornerShape(6.dp))
+                                            .width(with(density) { spreadW.toDp() })
+                                            .height(with(density) { spreadStageH.toDp() })
+                                            .softBookShadow(
+                                                cornerRadius = 6.dp,
+                                                spreadRadius = 18.dp,
+                                                offsetY = 3.dp,
+                                                isDarkTheme = isDarkSpread
+                                            )
                                             .clip(RoundedCornerShape(6.dp))
                                             .border(1.dp, palette.borderSoft, RoundedCornerShape(6.dp))
                                     )
@@ -2127,17 +2150,24 @@ fun ReaderScreen(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .background(palette.bgApp)
-                                            .padding(vertical = 4.dp),
+                                            .padding(horizontal = 8.dp, vertical = 12.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (displayPdfBmp != null) {
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = Color.White,
-                                                shadowElevation = 8.dp,
+                                            val isDarkPortrait = effectiveTheme == AppThemeMode.BLACK
+                                            Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .aspectRatio(pdfRatio, matchHeightConstraintsFirst = false)
+                                                    .softBookShadow(
+                                                        cornerRadius = 6.dp,
+                                                        spreadRadius = 16.dp,
+                                                        offsetY = 2.dp,
+                                                        isDarkTheme = isDarkPortrait
+                                                    )
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(Color.White, RoundedCornerShape(6.dp))
+                                                    .border(0.75.dp, palette.borderSoft, RoundedCornerShape(6.dp))
                                             ) {
                                                 Image(
                                                     bitmap = displayPdfBmp.asImageBitmap(),
@@ -2986,29 +3016,32 @@ fun ReaderScreen(
             viewModel = viewModel
         )
 
-        // Middle-Right Quick Notes Drawer Handle Tab (placed at BottomEnd in spread mode so it doesn't overlap right vertical dock)
-        Surface(
-            onClick = { onToggleNotesDrawer(true) },
-            shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 0.dp, bottomEnd = 0.dp),
-            color = palette.bgSurface.copy(alpha = 0.88f),
-            border = BorderStroke(1.dp, palette.borderSoft),
-            shadowElevation = 3.dp,
+        // Quick Notes & Bookmarks Drawer Handle Tab:
+        // - In 2-page spread mode: docked at bottom center (Alignment.BottomCenter)
+        // - In portrait / single-page mode: flush against right-center screen edge (Alignment.CenterEnd) with zero gap
+        val notesHandleShape = if (isSpread) {
+            RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
+        } else {
+            RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp, topEnd = 0.dp, bottomEnd = 0.dp)
+        }
+        Box(
             modifier = Modifier
-                .align(if (isSpread) Alignment.BottomEnd else Alignment.CenterEnd)
-                .padding(bottom = if (isSpread) 20.dp else 0.dp)
-                .minimumInteractiveComponentSize()
-                .width(20.dp)
-                .height(48.dp)
+                .align(if (isSpread) Alignment.BottomCenter else Alignment.CenterEnd)
+                .width(if (isSpread) 48.dp else 20.dp)
+                .height(if (isSpread) 20.dp else 48.dp)
+                .clip(notesHandleShape)
+                .background(palette.bgSurface.copy(alpha = 0.92f), notesHandleShape)
+                .border(1.dp, palette.borderSoft, notesHandleShape)
+                .clickable { onToggleNotesDrawer(true) },
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = "‹",
-                    color = palette.textMain.copy(alpha = 0.8f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(end = 2.dp)
-                )
-            }
+            Text(
+                text = "‹",
+                color = palette.textMain.copy(alpha = 0.85f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+            )
         }
 
         // HIGHLIGHT & NOTE POPOVER (`#highlightPopover`)

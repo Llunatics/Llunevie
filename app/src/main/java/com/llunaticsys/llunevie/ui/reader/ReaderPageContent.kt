@@ -123,13 +123,25 @@ internal fun PdfVerticalPageItem(
         PdfNativeRenderer.getCachedPageAspectRatio(pdfFilePath)
     }
 
-    Surface(
-        shape = if (isWebtoon) RoundedCornerShape(0.dp) else RoundedCornerShape(6.dp),
-        color = surfaceColor,
-        shadowElevation = if (isWebtoon) 0.dp else 4.dp,
+    val palette = LocalLluneviePalette.current
+    val isDarkSurface = palette.bgApp.red < 0.25f
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(ratio)
+            .then(
+                if (isWebtoon) Modifier
+                else Modifier
+                    .softBookShadow(
+                        cornerRadius = 6.dp,
+                        spreadRadius = 12.dp,
+                        offsetY = 2.dp,
+                        isDarkTheme = isDarkSurface
+                    )
+                    .clip(RoundedCornerShape(6.dp))
+                    .border(0.75.dp, palette.borderSoft, RoundedCornerShape(6.dp))
+            )
+            .background(surfaceColor, if (isWebtoon) RoundedCornerShape(0.dp) else RoundedCornerShape(6.dp))
     ) {
         if (bmp != null && !bmp.isRecycled) {
             Image(
@@ -1095,21 +1107,30 @@ fun PdfPageItemContent(
         }
     }
     Box(
-        modifier = modifier.fillMaxSize().background(palette.bgApp),
+        modifier = modifier
+            .fillMaxSize()
+            .background(palette.bgApp)
+            .padding(horizontal = 8.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         val bmp = overrideBitmap ?: pageBitmap
         val imageBitmap = remember(bmp) { bmp?.asImageBitmap() }
         if (imageBitmap != null) {
             val ratio = if (bmp != null && bmp.height > 0) (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.6f) else 0.707f
-            Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = surfaceColor,
-                shadowElevation = 8.dp,
+            val isDarkSurface = palette.bgApp.red < 0.25f
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(ratio, matchHeightConstraintsFirst = false)
-                    .padding(vertical = 4.dp)
+                    .softBookShadow(
+                        cornerRadius = 6.dp,
+                        spreadRadius = 16.dp,
+                        offsetY = 2.dp,
+                        isDarkTheme = isDarkSurface
+                    )
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(surfaceColor, RoundedCornerShape(6.dp))
+                    .border(0.75.dp, palette.borderSoft, RoundedCornerShape(6.dp))
             ) {
                 Image(
                     bitmap = imageBitmap,

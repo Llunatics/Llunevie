@@ -519,6 +519,26 @@ fun CylindricalFlipbookCanvas(
             val activeIdleFilter = if (isTwoPageSpread) null else if (isWaitingForParentPageSync) displayedCurrFilter else curPageColorFilter
             val idlePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else activeIdleFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
             drawRect(color = themeBgColor, size = size)
+            if (isPdfBook && !isTwoPageSpread) {
+                val isDarkBg = themeBgColor.red < 0.25f
+                val baseMaxAlpha = if (isDarkBg) 0.32f else 0.13f
+                val spreadPx = 15.dp.toPx()
+                val cornerPx = 4.dp.toPx()
+                val dyPx = 2.dp.toPx()
+                val steps = 14
+                for (i in steps downTo 1) {
+                    val t = i.toFloat() / steps.toFloat()
+                    val expand = spreadPx * t
+                    val r = cornerPx + expand * 0.7f
+                    val stepAlpha = (baseMaxAlpha / steps.toFloat()) * (1.4f * (1f - t * 0.65f))
+                    drawRoundRect(
+                        color = Color.Black.copy(alpha = stepAlpha.coerceIn(0.002f, 0.045f)),
+                        topLeft = Offset(pageRect.left - expand, pageRect.top - expand * 0.85f + dyPx * t),
+                        size = Size(pageRect.width + expand * 2f, pageRect.height + expand * 1.85f),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r)
+                    )
+                }
+            }
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
                 drawRect(
                     color = idlePaperColor,
@@ -528,19 +548,21 @@ fun CylindricalFlipbookCanvas(
                 drawPageBitmapFitted(curBmp, isPdfBook, isTwoPageSpread, activeIdleFilter)
                 if (isTwoPageSpread) {
                     val spineX = (pageRect.left + pageRect.right) / 2f
+                    val spineHalfW = 26.dp.toPx()
                     drawRect(
                         brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.10f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 24f,
-                            endX = spineX + 24f
+                            0.00f to Color.Transparent,
+                            0.25f to Color.Black.copy(alpha = 0.022f),
+                            0.44f to Color.Black.copy(alpha = 0.075f),
+                            0.50f to Color.Black.copy(alpha = 0.125f),
+                            0.56f to Color.Black.copy(alpha = 0.068f),
+                            0.75f to Color.Black.copy(alpha = 0.018f),
+                            1.00f to Color.Transparent,
+                            startX = spineX - spineHalfW,
+                            endX = spineX + spineHalfW
                         ),
-                        topLeft = Offset(spineX - 24f, pageRect.top),
-                        size = Size(48f, pageRect.height)
+                        topLeft = Offset(spineX - spineHalfW, pageRect.top),
+                        size = Size(spineHalfW * 2f, pageRect.height)
                     )
                 }
             }
@@ -612,19 +634,21 @@ fun CylindricalFlipbookCanvas(
                     }
 
                     // Static spine shadow on underlying spread
+                    val spineHalfW = 26.dp.toPx()
                     drawRect(
                         brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.08f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 22f,
-                            endX = spineX + 22f
+                            0.00f to Color.Transparent,
+                            0.25f to Color.Black.copy(alpha = 0.022f),
+                            0.44f to Color.Black.copy(alpha = 0.075f),
+                            0.50f to Color.Black.copy(alpha = 0.125f),
+                            0.56f to Color.Black.copy(alpha = 0.068f),
+                            0.75f to Color.Black.copy(alpha = 0.018f),
+                            1.00f to Color.Transparent,
+                            startX = spineX - spineHalfW,
+                            endX = spineX + spineHalfW
                         ),
-                        topLeft = Offset(spineX - 22f, pageRect.top),
-                        size = Size(44f, pageH)
+                        topLeft = Offset(spineX - spineHalfW, pageRect.top),
+                        size = Size(spineHalfW * 2f, pageH)
                     )
 
                     // 3. Region 3 (leadX .. foldX — The Turning Sheet Back / New Left Page):
@@ -732,19 +756,21 @@ fun CylindricalFlipbookCanvas(
                     }
 
                     // Static spine shadow on underlying spread
+                    val spineHalfW = 26.dp.toPx()
                     drawRect(
                         brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.08f),
-                                Color.Transparent
-                            ),
-                            startX = spineX - 22f,
-                            endX = spineX + 22f
+                            0.00f to Color.Transparent,
+                            0.25f to Color.Black.copy(alpha = 0.022f),
+                            0.44f to Color.Black.copy(alpha = 0.075f),
+                            0.50f to Color.Black.copy(alpha = 0.125f),
+                            0.56f to Color.Black.copy(alpha = 0.068f),
+                            0.75f to Color.Black.copy(alpha = 0.018f),
+                            1.00f to Color.Transparent,
+                            startX = spineX - spineHalfW,
+                            endX = spineX + spineHalfW
                         ),
-                        topLeft = Offset(spineX - 22f, pageRect.top),
-                        size = Size(44f, pageH)
+                        topLeft = Offset(spineX - spineHalfW, pageRect.top),
+                        size = Size(spineHalfW * 2f, pageH)
                     )
 
                     // 3. Region 3 (foldX .. leadX — The Turning Sheet Back / New Right Page):

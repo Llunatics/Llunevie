@@ -3,6 +3,8 @@ package com.llunaticsys.llunevie.ui.reader
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.LruCache
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -68,6 +71,35 @@ val CURATED_READER_FONTS = listOf(
 )
 
 internal val SANS_FONTS = setOf("Plus Jakarta Sans", "Inter", "DM Sans", "Nunito")
+
+/**
+ * Draws a soft, natural, multi-layered Gaussian-feathered drop shadow around the book/page
+ * without relying on hardware RenderNode spot shadows (which produce harsh edges or clip against bounds).
+ */
+internal fun Modifier.softBookShadow(
+    cornerRadius: Dp = 6.dp,
+    spreadRadius: Dp = 18.dp,
+    offsetY: Dp = 3.dp,
+    isDarkTheme: Boolean = false
+): Modifier = this.drawBehind {
+    val spreadPx = spreadRadius.toPx()
+    val cornerPx = cornerRadius.toPx()
+    val dyPx = offsetY.toPx()
+    val baseMaxAlpha = if (isDarkTheme) 0.36f else 0.14f
+    val steps = 16
+    for (i in steps downTo 1) {
+        val t = i.toFloat() / steps.toFloat()
+        val expand = spreadPx * t
+        val r = cornerPx + expand * 0.75f
+        val stepAlpha = (baseMaxAlpha / steps.toFloat()) * (1.45f * (1f - t * 0.65f))
+        drawRoundRect(
+            color = Color.Black.copy(alpha = stepAlpha.coerceIn(0.002f, 0.05f)),
+            topLeft = Offset(-expand, -expand * 0.85f + dyPx * t),
+            size = Size(size.width + expand * 2f, size.height + expand * 1.85f),
+            cornerRadius = CornerRadius(r, r)
+        )
+    }
+}
 
 private val fontFamiliesCache = mutableMapOf<String, FontFamily>()
 
