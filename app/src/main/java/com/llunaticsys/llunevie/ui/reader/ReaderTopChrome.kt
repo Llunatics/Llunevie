@@ -119,9 +119,24 @@ internal fun BoxScope.ReaderTopChrome(
     viewModel: LlunevieViewModel?
 ) {
     val palette = LocalLluneviePalette.current
+    val isFlipbookMode = prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK &&
+        (prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD)
+    val effectiveZoom = if (isFlipbookMode) readerZoom else nonFlipZoomScale
+
+    val topPillState = when {
+        effectiveZoom > 1.01f -> TopCenterPillState.ZOOM
+        isPageTranslationActive || uiState.isTranslationActive -> TopCenterPillState.TRANSLATION
+        else -> TopCenterPillState.TITLE
+    }
+
+    val shouldShowTopChrome = if (isSpread) {
+        topPillState == TopCenterPillState.ZOOM || topPillState == TopCenterPillState.TRANSLATION
+    } else {
+        showReaderChrome
+    }
 
     AnimatedVisibility(
-        visible = showReaderChrome,
+        visible = shouldShowTopChrome,
         enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = 400f)) { -it } + fadeIn(tween(180)),
         exit = slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(140)),
         modifier = Modifier
@@ -142,37 +157,30 @@ internal fun BoxScope.ReaderTopChrome(
                     .windowInsetsPadding(WindowInsets.displayCutout)
                     .padding(start = topBarStartPad, end = topBarEndPad, top = 10.dp, bottom = 10.dp)
             ) {
-                // Left: 34.dp circular Back button
-                Surface(
-                    onClick = onBack,
-                    shape = CircleShape,
-                    color = palette.bgSurface,
-                    border = BorderStroke(1.dp, palette.borderSoft),
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .minimumInteractiveComponentSize()
-                        .size(34.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        PrototypeSvgIcon(
-                            type = PrototypeIconType.ARROW_LEFT,
-                            tint = palette.textMain,
-                            modifier = Modifier.size(15.dp),
-                            contentDescription = if (strings.isId) "Kembali" else "Back"
-                        )
+                if (!isSpread) {
+                    // Left: 34.dp circular Back button (single-page/portrait modes only; in spread mode Back is in left vertical dock)
+                    Surface(
+                        onClick = onBack,
+                        shape = CircleShape,
+                        color = palette.bgSurface,
+                        border = BorderStroke(1.dp, palette.borderSoft),
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .minimumInteractiveComponentSize()
+                            .size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            PrototypeSvgIcon(
+                                type = PrototypeIconType.ARROW_LEFT,
+                                tint = palette.textMain,
+                                modifier = Modifier.size(15.dp),
+                                contentDescription = if (strings.isId) "Kembali" else "Back"
+                            )
+                        }
                     }
                 }
 
                 // Center Morphing Pill (`#readerTitlePill`) - 100% mathematically centered on screen
-                val isFlipbookMode = prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK &&
-                    (prefs.readingFlowMode == ReadingFlowMode.PAGINATED || prefs.readingFlowMode == ReadingFlowMode.SPREAD)
-                val effectiveZoom = if (isFlipbookMode) readerZoom else nonFlipZoomScale
-
-                val topPillState = when {
-                    effectiveZoom > 1.01f -> TopCenterPillState.ZOOM
-                    isPageTranslationActive || uiState.isTranslationActive -> TopCenterPillState.TRANSLATION
-                    else -> TopCenterPillState.TITLE
-                }
 
                 Surface(
                     shape = CircleShape,
@@ -224,7 +232,9 @@ internal fun BoxScope.ReaderTopChrome(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    val isReplaceActive = !peekOriginalPdfPage && uiState.translationMode == "replace"
+                                    val isReplaceActive = !peekOriginalPdfPage &&
+                                        !uiState.translationMode.equals("original", ignoreCase = true) &&
+                                        (isPdfBook || uiState.translationMode == "replace")
                                     Box(
                                         modifier = Modifier
                                             .height(24.dp)
@@ -232,6 +242,7 @@ internal fun BoxScope.ReaderTopChrome(
                                             .background(if (isReplaceActive) palette.pillActiveBg else Color.Transparent)
                                             .clickable {
                                                 onPeekOriginalPdfPageChange(false)
+                                                clearEpubSnapshotCache(evictAll = true)
                                                 viewModel?.setTranslationMode("replace")
                                             }
                                             .padding(horizontal = 10.dp),
@@ -250,14 +261,16 @@ internal fun BoxScope.ReaderTopChrome(
                                     }
 
                                     if (isPdfBook) {
-                                        val isOrigActive = peekOriginalPdfPage
+                                        val isOrigActive = peekOriginalPdfPage || uiState.translationMode.equals("original", ignoreCase = true)
                                         Box(
                                             modifier = Modifier
                                                 .height(24.dp)
                                                 .clip(CircleShape)
                                                 .background(if (isOrigActive) palette.pillActiveBg else Color.Transparent)
                                                 .clickable {
-                                                    onPeekOriginalPdfPageChange(!peekOriginalPdfPage)
+                                                    onPeekOriginalPdfPageChange(true)
+                                                    clearEpubSnapshotCache(evictAll = true)
+                                                    viewModel?.setTranslationMode("original")
                                                 }
                                                 .padding(horizontal = 10.dp),
                                             contentAlignment = Alignment.Center
@@ -417,6 +430,9 @@ internal fun BoxScope.ReaderTopChrome(
                                             .clickable {
                                                 onIsPageTranslationActiveChange(true)
                                                 onPeekOriginalPdfPageChange(false)
+                                                if (uiState.translationMode.equals("original", ignoreCase = true)) {
+                                                    viewModel?.setTranslationMode("replace")
+                                                }
                                                 viewModel?.setTranslationActive(true)
                                             },
                                         contentAlignment = Alignment.Center
@@ -434,55 +450,57 @@ internal fun BoxScope.ReaderTopChrome(
                     }
                 }
 
-                // Right: 34.dp circular Bookmark button
-                val isBilingualSpread = isSpread && (isPageTranslationActive || uiState.isTranslationActive) &&
-                    uiState.translationMode.equals("bilingual", ignoreCase = true)
-                val isCurrentPageBookmarked = if (isSpread && !isBilingualSpread) {
-                    val sStart = (displayPageIndex / 2) * 2
-                    bookBookmarks.any { it.pageNumber == sStart + 1 || it.pageNumber == sStart + 2 }
-                } else {
-                    bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
-                }
-                Surface(
-                    onClick = {
-                        val curPageNum = displayPageIndex + 1
-                        val curTriple = getPageAtGlobalZero(displayPageIndex)
-                        val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
-                            ?: currentChapter?.title
-                            ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
-                        val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
-                        val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
-                            .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                            .trim()
-                            .take(100)
-                        viewModel?.togglePageBookmark(
-                            bookId = book.id,
-                            pageNumber = curPageNum,
-                            chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
-                            chapterTitle = chTitle,
-                            snippetText = snippet
-                        )
-                    },
-                    shape = CircleShape,
-                    color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
-                    border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
-                    modifier = Modifier
-                        .size(34.dp)
-                        .align(Alignment.CenterEnd)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                            contentDescription = "Bookmark",
-                            tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
-                            modifier = Modifier.size(17.dp)
-                        )
+                if (!isSpread) {
+                    // Right: 34.dp circular Bookmark button (single-page/portrait modes only; in spread mode Bookmark is in right vertical dock)
+                    val isBilingualSpread = isSpread && (isPageTranslationActive || uiState.isTranslationActive) &&
+                        uiState.translationMode.equals("bilingual", ignoreCase = true)
+                    val isCurrentPageBookmarked = if (isSpread && !isBilingualSpread) {
+                        val sStart = (displayPageIndex / 2) * 2
+                        bookBookmarks.any { it.pageNumber == sStart + 1 || it.pageNumber == sStart + 2 }
+                    } else {
+                        bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
+                    }
+                    Surface(
+                        onClick = {
+                            val curPageNum = displayPageIndex + 1
+                            val curTriple = getPageAtGlobalZero(displayPageIndex)
+                            val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
+                                ?: currentChapter?.title
+                                ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
+                            val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+                            val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
+                                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                                .trim()
+                                .take(100)
+                            viewModel?.togglePageBookmark(
+                                bookId = book.id,
+                                pageNumber = curPageNum,
+                                chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
+                                chapterTitle = chTitle,
+                                snippetText = snippet
+                            )
+                        },
+                        shape = CircleShape,
+                        color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
+                        border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
+                        modifier = Modifier
+                            .size(34.dp)
+                            .align(Alignment.CenterEnd)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                                contentDescription = "Bookmark",
+                                tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
                     }
                 }
             }
 
             AnimatedVisibility(
-                visible = showLangDropdown && uiState.isTranslationActive,
+                visible = showLangDropdown && (isPageTranslationActive || uiState.isTranslationActive),
                 enter = fadeIn(animationSpec = tween(150)) +
                     scaleIn(initialScale = 0.96f, animationSpec = tween(150)) +
                     expandVertically(expandFrom = Alignment.Top, animationSpec = tween(160)),

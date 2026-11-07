@@ -510,14 +510,14 @@ fun CylindricalFlipbookCanvas(
         val destBitmap = if (effectiveTurnDir > 0) (displayedNextBmp ?: nextPageBitmap) else (displayedPrevBmp ?: prevPageBitmap)
         val destColorFilter = if (effectiveTurnDir > 0) (displayedNextFilter ?: nextPageColorFilter) else (displayedPrevFilter ?: prevPageColorFilter)
 
-        val curPagePaperColor = if (isPdfBook && displayedCurrFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
-        val destPagePaperColor = if (isPdfBook && destColorFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
-        val curBackFlapColor = if (isPdfBook && displayedCurrFilter == null) Color(0xFFFAF8F4) else backPaperColor
+        val curPagePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else displayedCurrFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+        val destPagePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else destColorFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+        val curBackFlapColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else displayedCurrFilter == null)) Color(0xFFFAF8F4) else backPaperColor
         val displayedCurrAndroidColorFilter = displayedCurrFilter?.asAndroidColorFilter()
 
         if (p <= 0.002f) {
-            val activeIdleFilter = if (isWaitingForParentPageSync) displayedCurrFilter else curPageColorFilter
-            val idlePaperColor = if (isPdfBook && activeIdleFilter == null) Color.White else (pdfTintedPaperColor ?: themeBgColor)
+            val activeIdleFilter = if (isTwoPageSpread) null else if (isWaitingForParentPageSync) displayedCurrFilter else curPageColorFilter
+            val idlePaperColor = if (isPdfBook && (if (isTwoPageSpread) pdfTintedPaperColor == null else activeIdleFilter == null)) Color.White else (pdfTintedPaperColor ?: themeBgColor)
             drawRect(color = themeBgColor, size = size)
             clipRect(pageRect.left, pageRect.top, pageRect.right, pageRect.bottom) {
                 drawRect(

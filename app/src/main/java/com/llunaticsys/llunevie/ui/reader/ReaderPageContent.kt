@@ -1089,9 +1089,8 @@ fun PdfPageItemContent(
                 }
             }
         } else {
-            if (pageBitmap == null) {
-                pageBitmap = viewModel.loadPdfPageBitmap(bookId, filePath, pageIndex)
-            }
+            pageBitmap = viewModel.getCachedPdfBitmap(bookId, pageIndex, filePath)
+                ?: viewModel.loadPdfPageBitmap(bookId, filePath, pageIndex)
             viewModel.prefetchPdfNeighbors(bookId, filePath, pageIndex)
         }
     }

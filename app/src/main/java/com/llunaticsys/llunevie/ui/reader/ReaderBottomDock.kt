@@ -45,7 +45,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -61,11 +65,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -74,15 +80,19 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.llunaticsys.llunevie.GlobalPageMetrics
 import com.llunaticsys.llunevie.LlunevieUiState
 import com.llunaticsys.llunevie.LlunevieViewModel
+import com.llunaticsys.llunevie.data.local.BookEntity
 import com.llunaticsys.llunevie.data.local.HighlightNoteEntity
+import com.llunaticsys.llunevie.data.local.PageBookmarkEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.data.remote.TranslationRepository
+import com.llunaticsys.llunevie.model.BookChapter
 import com.llunaticsys.llunevie.model.HighlightColorKey
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
@@ -340,6 +350,7 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
     onDisplayPageIndexChange: (Int) -> Unit,
     showInlinePageSlider: Boolean,
     onShowInlinePageSliderChange: (Boolean) -> Unit,
+    onBack: () -> Unit = {},
     onToggleTocDrawer: (Boolean) -> Unit,
     onToggleTypeSheet: (Boolean, String?) -> Unit,
     onTurnPage: (Int) -> Unit,
@@ -353,21 +364,45 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
         mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
     }
 
-    Box(
+    Column(
         modifier = Modifier
             .align(Alignment.CenterStart)
             .windowInsetsPadding(WindowInsets.displayCutout)
-            .padding(start = 18.dp)
-            .width(46.dp)
-            .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
-            .clip(CircleShape)
-            .background(color = palette.bgSurface, shape = CircleShape)
-            .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
-            .animateContentSize(
-                animationSpec = spring<IntSize>(dampingRatio = 0.82f, stiffness = 380f)
-            ),
-        contentAlignment = Alignment.Center
+            .padding(start = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // Back button aligned vertically with the left vertical pill
+        Surface(
+            onClick = onBack,
+            shape = CircleShape,
+            color = palette.bgSurface,
+            border = BorderStroke(1.dp, palette.borderSoft),
+            shadowElevation = 6.dp,
+            modifier = Modifier.size(46.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                PrototypeSvgIcon(
+                    type = PrototypeIconType.ARROW_LEFT,
+                    tint = palette.textMain,
+                    modifier = Modifier.size(16.dp),
+                    contentDescription = if (strings.isId) "Kembali" else "Back"
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .width(46.dp)
+                .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
+                .clip(CircleShape)
+                .background(color = palette.bgSurface, shape = CircleShape)
+                .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
+                .animateContentSize(
+                    animationSpec = spring<IntSize>(dampingRatio = 0.82f, stiffness = 380f)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
         AnimatedContent(
             targetState = showInlinePageSlider,
             transitionSpec = {
@@ -643,6 +678,200 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+@Composable
+private fun SpreadVerticalRotatedTitle(
+    text: String,
+    color: Color,
+    fontSizeSp: Float,
+    fontFamily: FontFamily,
+    fontWeight: FontWeight,
+    modifier: Modifier = Modifier
+) {
+    Layout(
+        content = {
+            Text(
+                text = text,
+                color = color,
+                fontSize = fontSizeSp.sp,
+                fontFamily = fontFamily,
+                fontWeight = fontWeight,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeight = (fontSizeSp + 1f).sp
+                ),
+                modifier = Modifier.rotate(90f)
+            )
+        },
+        modifier = modifier
+    ) { measurables, constraints ->
+        val maxLen = constraints.maxHeight.coerceAtLeast(24)
+        val placeable = measurables.first().measure(
+            Constraints(
+                minWidth = 0,
+                maxWidth = maxLen,
+                minHeight = 0,
+                maxHeight = constraints.maxWidth.coerceAtLeast(20)
+            )
+        )
+        val layoutW = constraints.maxWidth.coerceAtLeast(placeable.height)
+        val layoutH = placeable.width.coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(layoutW, layoutH) {
+            val x = (layoutW - placeable.width) / 2
+            val y = (layoutH - placeable.height) / 2
+            placeable.place(x, y)
+        }
+    }
+}
+
+@Composable
+internal fun BoxScope.ReaderSpreadRightVerticalBar(
+    isSpread: Boolean,
+    book: BookEntity,
+    prefs: UserPreferencesState,
+    uiState: LlunevieUiState,
+    strings: LlunevieStrings,
+    chapters: List<BookChapter>,
+    currentChapter: BookChapter?,
+    currentPageRaw: String,
+    displayPageIndex: Int,
+    bookBookmarks: List<PageBookmarkEntity>,
+    isPageTranslationActive: Boolean,
+    onIsPageTranslationActiveChange: (Boolean) -> Unit,
+    onPeekOriginalPdfPageChange: (Boolean) -> Unit,
+    onShowLangDropdownChange: (Boolean) -> Unit,
+    getPageAtGlobalZero: (Int) -> Triple<Int, Int, String>?,
+    onToggleTocDrawer: (Boolean) -> Unit,
+    viewModel: LlunevieViewModel?
+) {
+    if (!isSpread) return
+    val palette = LocalLluneviePalette.current
+    val isTransActive = isPageTranslationActive || uiState.isTranslationActive
+    val isBilingualSpread = isSpread && isTransActive &&
+        uiState.translationMode.equals("bilingual", ignoreCase = true)
+    val isCurrentPageBookmarked = if (!isBilingualSpread) {
+        val sStart = (displayPageIndex / 2) * 2
+        bookBookmarks.any { it.pageNumber == sStart + 1 || it.pageNumber == sStart + 2 }
+    } else {
+        bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
+    }
+
+    Column(
+        modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .windowInsetsPadding(WindowInsets.displayCutout)
+            .padding(end = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Bookmark button aligned vertically with the right vertical pill
+        Surface(
+            onClick = {
+                val curPageNum = displayPageIndex + 1
+                val curTriple = getPageAtGlobalZero(displayPageIndex)
+                val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
+                    ?: currentChapter?.title
+                    ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
+                val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+                val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
+                    .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                    .trim()
+                    .take(100)
+                viewModel?.togglePageBookmark(
+                    bookId = book.id,
+                    pageNumber = curPageNum,
+                    chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
+                    chapterTitle = chTitle,
+                    snippetText = snippet
+                )
+            },
+            shape = CircleShape,
+            color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
+            border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
+            shadowElevation = 6.dp,
+            modifier = Modifier.size(46.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                    contentDescription = "Bookmark",
+                    tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        // Right vertical pill: Book Title + Translate Access
+        Box(
+            modifier = Modifier
+                .width(46.dp)
+                .shadow(elevation = 6.dp, shape = CircleShape, clip = false)
+                .clip(CircleShape)
+                .background(color = palette.bgSurface, shape = CircleShape)
+                .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(46.dp)
+                    .padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SpreadVerticalRotatedTitle(
+                    text = book.title,
+                    color = palette.textMain,
+                    fontSizeSp = 11.5f,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp, max = 148.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onToggleTocDrawer(true) }
+                        .padding(vertical = 4.dp)
+                )
+
+                Box(
+                    modifier = Modifier
+                        .width(16.dp)
+                        .height(1.dp)
+                        .background(palette.borderSoft)
+                )
+
+                Surface(
+                    onClick = {
+                        val nextActive = !isTransActive
+                        onIsPageTranslationActiveChange(nextActive)
+                        onPeekOriginalPdfPageChange(false)
+                        if (nextActive && uiState.translationMode.equals("original", ignoreCase = true)) {
+                            viewModel?.setTranslationMode("replace")
+                        }
+                        if (!nextActive) {
+                            onShowLangDropdownChange(false)
+                        }
+                        viewModel?.setTranslationActive(nextActive)
+                    },
+                    shape = CircleShape,
+                    color = if (isTransActive) palette.pillActiveBg else Color.Transparent,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        PrototypeSvgIcon(
+                            type = PrototypeIconType.TRANSLATE,
+                            tint = if (isTransActive) palette.accent else palette.textMain,
+                            modifier = Modifier.size(15.dp),
+                            contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
+                        )
                     }
                 }
             }

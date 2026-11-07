@@ -122,7 +122,8 @@ internal fun buildSnapshotCacheKey(
     return "$bookId:$pageZero:$isSpread:${widthPx}x${heightPx}:$bgArgb:$textArgb:" +
         "${prefs.fontSizeSp}:${prefs.lineHeightMultiplier}:${prefs.fontFamily}:" +
         "${prefs.fontWeight}:${prefs.paraSpacingEm}:${prefs.wordSpacingPx}:" +
-        "${prefs.pageMargin}:${prefs.paraIndent}:${prefs.letterSpacingEm}:${prefs.textAlign}:$highlightsHash$translationSuffix"
+        "${prefs.pageMargin}:${prefs.paraIndent}:${prefs.letterSpacingEm}:${prefs.textAlign}:" +
+        "${prefs.appTheme}:${prefs.followDeviceTheme}:${prefs.amoledBlack}:${prefs.pdfThemeTintEnabled}:${prefs.pdfProtectIllustrations}:$highlightsHash$translationSuffix"
 }
 
 internal fun buildTranslatedPageRaw(
@@ -922,26 +923,18 @@ internal fun renderTwoPageSpreadSnapshot(
             val scale = minOf(halfW / leftPdfBitmap.width.toFloat(), size.height / leftPdfBitmap.height.toFloat())
             val dstW = leftPdfBitmap.width * scale
             val dstH = leftPdfBitmap.height * scale
-            if (leftColorFilter != null) {
-                val androidCanvas = drawContext.canvas.nativeCanvas
-                val paint = android.graphics.Paint().apply {
-                    colorFilter = leftColorFilter
-                }
-                val srcRect = android.graphics.Rect(0, 0, leftPdfBitmap.width, leftPdfBitmap.height)
-                val dstRect = android.graphics.RectF(
-                    ((halfW - dstW) / 2),
-                    ((size.height - dstH) / 2),
-                    ((halfW - dstW) / 2) + dstW,
-                    ((size.height - dstH) / 2) + dstH
-                )
-                androidCanvas.drawBitmap(leftPdfBitmap, srcRect, dstRect, paint)
-            } else {
-                drawImage(
-                    image = leftPdfBitmap.asImageBitmap(),
-                    dstOffset = IntOffset(((halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
-                    dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-                )
+            val androidCanvas = drawContext.canvas.nativeCanvas
+            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                colorFilter = leftColorFilter
             }
+            val srcRect = android.graphics.Rect(0, 0, leftPdfBitmap.width, leftPdfBitmap.height)
+            val dstRect = android.graphics.RectF(
+                ((halfW - dstW) / 2),
+                ((size.height - dstH) / 2),
+                ((halfW - dstW) / 2) + dstW,
+                ((size.height - dstH) / 2) + dstH
+            )
+            androidCanvas.drawBitmap(leftPdfBitmap, srcRect, dstRect, paint)
         } else if (leftIllustBmp != null) {
             val scale = minOf(colInnerW.toFloat() / leftIllustBmp.width.toFloat(), colInnerH / leftIllustBmp.height.toFloat())
             val dstW = (leftIllustBmp.width * scale).roundToInt().coerceAtLeast(1)
@@ -978,26 +971,18 @@ internal fun renderTwoPageSpreadSnapshot(
             val scale = minOf(halfW / rightPdfBitmap.width.toFloat(), size.height / rightPdfBitmap.height.toFloat())
             val dstW = rightPdfBitmap.width * scale
             val dstH = rightPdfBitmap.height * scale
-            if (rightColorFilter != null) {
-                val androidCanvas = drawContext.canvas.nativeCanvas
-                val paint = android.graphics.Paint().apply {
-                    colorFilter = rightColorFilter
-                }
-                val srcRect = android.graphics.Rect(0, 0, rightPdfBitmap.width, rightPdfBitmap.height)
-                val dstRect = android.graphics.RectF(
-                    (halfW + (halfW - dstW) / 2),
-                    ((size.height - dstH) / 2),
-                    (halfW + (halfW - dstW) / 2) + dstW,
-                    ((size.height - dstH) / 2) + dstH
-                )
-                androidCanvas.drawBitmap(rightPdfBitmap, srcRect, dstRect, paint)
-            } else {
-                drawImage(
-                    image = rightPdfBitmap.asImageBitmap(),
-                    dstOffset = IntOffset((halfW + (halfW - dstW) / 2).roundToInt(), ((size.height - dstH) / 2).roundToInt()),
-                    dstSize = IntSize(dstW.roundToInt(), dstH.roundToInt())
-                )
+            val androidCanvas = drawContext.canvas.nativeCanvas
+            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+                colorFilter = rightColorFilter
             }
+            val srcRect = android.graphics.Rect(0, 0, rightPdfBitmap.width, rightPdfBitmap.height)
+            val dstRect = android.graphics.RectF(
+                (halfW + (halfW - dstW) / 2),
+                ((size.height - dstH) / 2),
+                (halfW + (halfW - dstW) / 2) + dstW,
+                ((size.height - dstH) / 2) + dstH
+            )
+            androidCanvas.drawBitmap(rightPdfBitmap, srcRect, dstRect, paint)
         } else if (rightIllustBmp != null) {
             val scale = minOf(colInnerW.toFloat() / rightIllustBmp.width.toFloat(), colInnerH / rightIllustBmp.height.toFloat())
             val dstW = (rightIllustBmp.width * scale).roundToInt().coerceAtLeast(1)

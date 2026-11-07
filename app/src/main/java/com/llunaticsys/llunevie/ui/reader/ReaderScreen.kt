@@ -287,9 +287,13 @@ fun ReaderScreen(
         "pdf:${normalizeTranslationLangCode(targetLang)}:${mode.lowercase()}:$pageZero"
 
     val getEffectivePdfPageBitmap: (Int, Bitmap?) -> Bitmap? = { pageZero, origBmp ->
-        val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
-        if (!isPdfBook || !isTrans || peekOriginalPdfPage) {
-            origBmp
+        val isTrans = (isPageTranslationActive || uiState.isTranslationActive) &&
+            !uiState.translationMode.equals("original", ignoreCase = true) &&
+            !peekOriginalPdfPage
+        if (!isPdfBook || !isTrans) {
+            viewModel?.getCachedPdfBitmap(book.id, pageZero, book.localFilePath)
+                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", pageZero, 1080)
+                ?: origBmp
         } else {
             val cachedTrans = viewModel?.getCachedTranslatedPdfBitmap(book.id, pageZero, uiState.translationTargetLang, uiState.translationMode)
             if (cachedTrans != null && !cachedTrans.isRecycled) {
@@ -352,7 +356,12 @@ fun ReaderScreen(
     LaunchedEffect(
         uiState.translationTargetLang,
         uiState.translationMode,
+        peekOriginalPdfPage,
         isSpread,
+        effectiveTheme,
+        prefs.amoledBlack,
+        prefs.pdfThemeTintEnabled,
+        prefs.pdfProtectIllustrations,
         prefs.translatorEngine,
         prefs.aiModelName,
         prefs.aiSystemPrompt
@@ -558,7 +567,7 @@ fun ReaderScreen(
             val bottomClearanceDp = stableNavBarBottomDp + 76.dp
 
             val spreadTopPadDp = if (isSpread) {
-                effectiveTopSystemInset + if (showReaderChrome || isTranslationQuickBarActive) 52.dp else 8.dp
+                effectiveTopSystemInset + if (isTranslationQuickBarActive) 52.dp else 8.dp
             } else 0.dp
             val spreadBottomPadDp = if (isSpread) 8.dp else 0.dp
             val spreadStageH = if (isSpread) {
@@ -586,7 +595,9 @@ fun ReaderScreen(
                         nonFlipZoomScale = 1f
                         nonFlipZoomOffset = Offset.Zero
                     }
-                    val isTrans = (isPageTranslationActive || uiState.isTranslationActive) && !uiState.translationMode.equals("original", ignoreCase = true)
+                    val isTrans = (isPageTranslationActive || uiState.isTranslationActive) &&
+                        !uiState.translationMode.equals("original", ignoreCase = true) &&
+                        !(isPdfBook && peekOriginalPdfPage)
                     val transTargetLang = uiState.translationTargetLang
                     val transMode = uiState.translationMode
                     val transRev = uiState.translationRevision
@@ -620,7 +631,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, curLeftIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
+                        isPageTranslationActive, uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread, peekOriginalPdfPage
                     ) {
                         value = if (needStagePdfBitmaps) {
                             if (leftPdfShouldTranslate && viewModel != null) {
@@ -649,7 +660,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, isSpread, curRightIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
+                        isPageTranslationActive, uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread, peekOriginalPdfPage
                     ) {
                         value = if (needStagePdfBitmaps && isSpread && curRightIdx < metrics.totalBookPages) {
                             if (isTrans && viewModel != null) {
@@ -678,7 +689,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, nextLeftIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
+                        isPageTranslationActive, uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread, peekOriginalPdfPage
                     ) {
                         value = if (needStagePdfBitmaps && nextLeftIdx < metrics.totalBookPages) {
                             if (leftPdfShouldTranslate && viewModel != null) {
@@ -707,7 +718,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, isSpread, nextRightIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
+                        isPageTranslationActive, uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread, peekOriginalPdfPage
                     ) {
                         value = if (needStagePdfBitmaps && isSpread && nextRightIdx < metrics.totalBookPages) {
                             if (isTrans && viewModel != null) {
@@ -736,7 +747,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, prevLeftIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
+                        isPageTranslationActive, uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread, peekOriginalPdfPage
                     ) {
                         value = if (needStagePdfBitmaps && prevLeftIdx >= 0) {
                             if (leftPdfShouldTranslate && viewModel != null) {
@@ -765,7 +776,7 @@ fun ReaderScreen(
                             }
                         } else null,
                         needStagePdfBitmaps, isSpread, prevRightIdx, book.localFilePath, stageW,
-                        uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread
+                        isPageTranslationActive, uiState.isTranslationActive, transMode, transTargetLang, transRev, isBilingualSpread, peekOriginalPdfPage
                     ) {
                         value = if (needStagePdfBitmaps && isSpread && prevRightIdx >= 0) {
                             if (isTrans && viewModel != null) {
@@ -784,11 +795,11 @@ fun ReaderScreen(
                     }
 
                     val curLeftEffectivePdfBmp = if (isBilingualSpread) curLeftPdfBmp else getEffectivePdfPageBitmap(curLeftIdx, curLeftPdfBmp)
-                    val curRightEffectivePdfBmp = curRightPdfBmp ?: getEffectivePdfPageBitmap(curRightIdx, curRightPdfBmp)
+                    val curRightEffectivePdfBmp = if (isBilingualSpread) curRightPdfBmp else getEffectivePdfPageBitmap(curRightIdx, curRightPdfBmp)
                     val nextLeftEffectivePdfBmp = if (isBilingualSpread) nextLeftPdfBmp else getEffectivePdfPageBitmap(nextLeftIdx, nextLeftPdfBmp)
-                    val nextRightEffectivePdfBmp = nextRightPdfBmp ?: getEffectivePdfPageBitmap(nextRightIdx, nextRightPdfBmp)
+                    val nextRightEffectivePdfBmp = if (isBilingualSpread) nextRightPdfBmp else getEffectivePdfPageBitmap(nextRightIdx, nextRightPdfBmp)
                     val prevLeftEffectivePdfBmp = if (isBilingualSpread) prevLeftPdfBmp else getEffectivePdfPageBitmap(prevLeftIdx, prevLeftPdfBmp)
-                    val prevRightEffectivePdfBmp = prevRightPdfBmp ?: getEffectivePdfPageBitmap(prevRightIdx, prevRightPdfBmp)
+                    val prevRightEffectivePdfBmp = if (isBilingualSpread) prevRightPdfBmp else getEffectivePdfPageBitmap(prevRightIdx, prevRightPdfBmp)
 
                     val textMeasurer = rememberTextMeasurer()
                     val resolvedFontFamily = remember(prefs.fontFamily, prefs.fontWeight) {
@@ -917,23 +928,30 @@ fun ReaderScreen(
 
                     fun buildEpubSnapshotKey(pageZero: Int, textHash: Int, spread: Boolean, rightZero: Int = pageZero): String {
                         val transActive = (isPageTranslationActive || uiState.isTranslationActive) &&
-                            !uiState.translationMode.equals("original", ignoreCase = true)
+                            !uiState.translationMode.equals("original", ignoreCase = true) &&
+                            !(isPdfBook && peekOriginalPdfPage)
                         val normLang = normalizeTranslationLangCode(uiState.translationTargetLang)
                         val normMode = if (transActive) uiState.translationMode.lowercase() else "original"
                         val leftReady = isEpubPageTranslationReady(pageZero)
                         val rightReady = if (spread) (rightZero >= metrics.totalBookPages || isEpubPageTranslationReady(rightZero)) else true
                         val versionTag = if (!transActive) "orig" else if (leftReady && rightReady) "trans" else "partial"
-                        val modeTag = "$versionTag:$normMode:$normLang:$leftReady:$rightReady"
-                        val combinedHash = (((bookHighlights.hashCode() * 31 + textHash) * 31 +
+                        val tintLeft = isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(pageZero, indexedIllustrationPages))
+                        val tintRight = spread && isPdfBook && prefs.pdfThemeTintEnabled && effectiveTheme != AppThemeMode.WHITE &&
+                            rightZero < metrics.totalBookPages &&
+                            !(prefs.pdfProtectIllustrations && PdfNativeRenderer.isPdfPageProtectedIllustration(rightZero, indexedIllustrationPages))
+                        val themeFilterTag = "${effectiveTheme.name}:${prefs.amoledBlack}:${prefs.pdfThemeTintEnabled}:${prefs.pdfProtectIllustrations}:$tintLeft:$tintRight"
+                        val modeTag = "$versionTag:$normMode:$normLang:$leftReady:$rightReady:$themeFilterTag"
+                        val combinedHash = ((((bookHighlights.hashCode() * 31 + textHash) * 31 +
                             (if (transActive) normLang.hashCode() else 0)) * 31 +
-                            normMode.hashCode()) * 31 + rightZero
+                            normMode.hashCode()) * 31 + rightZero) * 31 + themeFilterTag.hashCode()
                         return buildSnapshotCacheKey(
                             bookId = book.id,
                             pageZero = pageZero,
                             widthPx = if (spread) spreadW else stageW,
                             heightPx = if (spread) spreadStageH else stageH,
                             prefs = prefs,
-                            bgArgb = (if (spread) palette.bgCard else palette.bgApp).toArgb(),
+                            bgArgb = (if (spread) (if (isPdfBook && (!prefs.pdfThemeTintEnabled || effectiveTheme == AppThemeMode.WHITE)) Color.White else palette.bgCard) else palette.bgApp).toArgb(),
                             textArgb = palette.textMain.toArgb(),
                             isSpread = spread,
                             highlightsHash = combinedHash,
@@ -952,11 +970,25 @@ fun ReaderScreen(
                         var lockedNextFilter by remember { mutableStateOf<ColorFilter?>(null) }
                         var lockedPrevFilter by remember { mutableStateOf<ColorFilter?>(null) }
 
-                        LaunchedEffect(uiState.isTranslationActive, uiState.translationMode, uiState.translationTargetLang, uiState.translationRevision) {
+                        LaunchedEffect(
+                            uiState.isTranslationActive,
+                            uiState.translationMode,
+                            uiState.translationTargetLang,
+                            uiState.translationRevision,
+                            peekOriginalPdfPage,
+                            effectiveTheme,
+                            prefs.amoledBlack,
+                            prefs.pdfThemeTintEnabled,
+                            prefs.pdfProtectIllustrations,
+                            indexedIllustrationPages
+                        ) {
                             committedCurrentBmp = null
                             lockedCurrBmp = null
                             lockedNextBmp = null
                             lockedPrevBmp = null
+                            lockedCurrFilter = null
+                            lockedNextFilter = null
+                            lockedPrevFilter = null
                         }
 
                         val curBitmapInitial = if (isPdfBook && !isSpread) {
@@ -978,10 +1010,12 @@ fun ReaderScreen(
                             initialValue = curBitmapInitial,
                             curZero, curLeftIdx, curRightIdx, isSpread, isBilingualSpread, isPdfBook, currentPageRaw,
                             curLeftEffectivePdfBmp, curRightEffectivePdfBmp,
-                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
+                            palette.bgApp, palette.bgCard, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
                             prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                            effectiveTheme, prefs.amoledBlack, prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations,
+                            indexedIllustrationPages, metrics.totalBookPages,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
                             pageTranslationMap[pageTransMapKey(curZero)],
                             pageTranslationMap[pageTransMapKey(curLeftIdx)],
@@ -1027,7 +1061,7 @@ fun ReaderScreen(
                                             rightText = rightText,
                                             leftPdfBitmap = curLeftEffectivePdfBmp,
                                             rightPdfBitmap = curRightEffectivePdfBmp,
-                                            bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                            bgColor = if (isPdfBook && (!prefs.pdfThemeTintEnabled || effectiveTheme == AppThemeMode.WHITE)) Color.White else palette.bgCard,
                                             pageTextStyle = spreadTextStyle,
                                             palette = palette,
                                             prefs = prefs,
@@ -1097,10 +1131,12 @@ fun ReaderScreen(
                             initialValue = nextBitmapInitial,
                             curZero, nextLeftIdx, nextRightIdx, isSpread, isBilingualSpread, isPdfBook, nextTriple,
                             nextLeftEffectivePdfBmp, nextRightEffectivePdfBmp,
-                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
+                            palette.bgApp, palette.bgCard, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
                             prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                            effectiveTheme, prefs.amoledBlack, prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations,
+                            indexedIllustrationPages, metrics.totalBookPages,
                             activeDraggingSliderKey == null,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
                             pageTranslationMap[pageTransMapKey(if (isSpread) nextLeftIdx else curZero + 1)],
@@ -1150,7 +1186,7 @@ fun ReaderScreen(
                                                 rightText = rightText,
                                                 leftPdfBitmap = nextLeftEffectivePdfBmp,
                                                 rightPdfBitmap = nextRightEffectivePdfBmp,
-                                                bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                                bgColor = if (isPdfBook && (!prefs.pdfThemeTintEnabled || effectiveTheme == AppThemeMode.WHITE)) Color.White else palette.bgCard,
                                                 pageTextStyle = spreadTextStyle,
                                                 palette = palette,
                                                 prefs = prefs,
@@ -1223,10 +1259,12 @@ fun ReaderScreen(
                             initialValue = prevBitmapInitial,
                             curZero, prevLeftIdx, prevRightIdx, isSpread, isBilingualSpread, isPdfBook, prevTriple,
                             prevLeftEffectivePdfBmp, prevRightEffectivePdfBmp,
-                            palette.bgApp, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
+                            palette.bgApp, palette.bgCard, palette.textMain, baseTextStyle, spreadTextStyle, stageW, stageH, spreadW, spreadStageH,
                             prefs.paraSpacingEm, prefs.wordSpacingPx, prefs.pageMargin, prefs.paraIndent,
                             prefs.letterSpacingEm, prefs.lineHeightMultiplier, prefs.fontSizeSp,
                             prefs.fontWeight, prefs.textAlign, prefs.fontFamily, padTop, padBottom, padX,
+                            effectiveTheme, prefs.amoledBlack, prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations,
+                            indexedIllustrationPages, metrics.totalBookPages,
                             activeDraggingSliderKey == null,
                             isPageTranslationActive, prefs.translatorDisplayMode, prefs.translatorTargetLang,
                             pageTranslationMap[pageTransMapKey(if (isSpread) prevLeftIdx else curZero - 1)],
@@ -1276,7 +1314,7 @@ fun ReaderScreen(
                                                 rightText = rightText,
                                                 leftPdfBitmap = prevLeftEffectivePdfBmp,
                                                 rightPdfBitmap = prevRightEffectivePdfBmp,
-                                                bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                                bgColor = if (isPdfBook && (!prefs.pdfThemeTintEnabled || effectiveTheme == AppThemeMode.WHITE)) Color.White else palette.bgCard,
                                                 pageTextStyle = spreadTextStyle,
                                                 palette = palette,
                                                 prefs = prefs,
@@ -1354,9 +1392,11 @@ fun ReaderScreen(
                             lockedPrevBmp = null
                         }
 
-                        val curPdfColorFilter = pdfFilterForPage(curLeftIdx)
-                        val nextPdfColorFilter = pdfFilterForPage(nextLeftIdx)
-                        val prevPdfColorFilter = pdfFilterForPage(prevLeftIdx)
+                        // In two-page spread mode, leftColorFilter and rightColorFilter are already applied per-page
+                        // inside renderCachedTwoPageSpreadSnapshot. Passing a canvas-wide filter would double-invert!
+                        val curPdfColorFilter = if (isSpread) null else pdfFilterForPage(curLeftIdx)
+                        val nextPdfColorFilter = if (isSpread) null else pdfFilterForPage(nextLeftIdx)
+                        val prevPdfColorFilter = if (isSpread) null else pdfFilterForPage(prevLeftIdx)
 
                         val activeCurrBmp = committedCurrentBmp ?: (if (isFlippingInProgress) (lockedCurrBmp ?: curBitmap) else curBitmap)
                         val activeNextBmp = if (isFlippingInProgress) (lockedNextBmp ?: nextBitmap) else nextBitmap
@@ -1367,16 +1407,20 @@ fun ReaderScreen(
                         var liveCornerYNorm by remember { mutableFloatStateOf(0.76f) }
 
                         val flipbookGestureModifier = Modifier.pointerInput(
-                            curZero, metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
-                            showPageScrubber, showInlinePageSlider, uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer
+                            curZero, isSpread, isBilingualSpread, spreadStart, spreadStep,
+                            metrics.totalBookPages, hasSelectionActive, selStartHandleAnchor, selEndHandleAnchor,
+                            showPageScrubber, showInlinePageSlider, uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer,
+                            curPdfColorFilter, nextPdfColorFilter, prevPdfColorFilter
                         ) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                 if (isTurnCommitting) return@awaitEachGesture
+                                val hasTopChromeZone = !isSpread || isTranslationQuickBarActive || readerZoom > 1.01f
+                                val hasBottomChromeZone = !isSpread
                                 if (showPageScrubber ||
                                     showInlinePageSlider ||
-                                    down.position.y >= size.height - 96.dp.toPx() ||
-                                    down.position.y <= 88.dp.toPx() ||
+                                    (hasBottomChromeZone && down.position.y >= size.height - 96.dp.toPx()) ||
+                                    (hasTopChromeZone && down.position.y <= (if (isSpread) 54.dp else 88.dp).toPx()) ||
                                     uiState.showReaderTypeSheet ||
                                     uiState.showReaderTocDrawer ||
                                     uiState.showReaderNotesDrawer
@@ -1395,9 +1439,11 @@ fun ReaderScreen(
                                 var totalDx = 0f
                                 var totalDy = 0f
                                 var isMultiTouchPinch = false
+                                var releaseHandled = false
                                 val velocityTracker = VelocityTracker()
                                 velocityTracker.addPosition(down.uptimeMillis, down.position)
 
+                                try {
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     val pressedChanges = event.changes.filter { it.pressed }
@@ -1457,7 +1503,8 @@ fun ReaderScreen(
 
                                     // 3. EXISTING SINGLE-FINGER PAGE FLIP LOGIC (only when !isMultiTouchPinch && readerZoom <= 1.01f)
                                     val change = event.changes.firstOrNull() ?: break
-                                    if (change.changedToUp()) {
+                                    if (!change.pressed || pressedChanges.isEmpty()) {
+                                        releaseHandled = true
                                         if (dragLocked && isFlippingInProgress) {
                                             val velX = velocityTracker.calculateVelocity().x
                                             val speedInDir = if (flipTurnDir > 0) -velX else velX
@@ -1555,7 +1602,7 @@ fun ReaderScreen(
                                                         hasSelectionActive = false
                                                         clearSelectionTrigger++
                                                         selectedQuoteForPopover = null
-                                                    } else {
+                                                    } else if (!isSpread) {
                                                         showReaderChrome = !showReaderChrome
                                                     }
                                                 }
@@ -1599,6 +1646,18 @@ fun ReaderScreen(
                                         val signedDelta = if (flipTurnDir > 0) -totalDx else totalDx
                                         liveDragProgress = (signedDelta / (size.width.toFloat() * 0.85f)).coerceIn(0.01f, 0.99f)
                                         liveCornerYNorm = (change.position.y / size.height.toFloat()).coerceIn(0.15f, 0.85f)
+                                    }
+                                }
+                                } finally {
+                                    if (!releaseHandled && dragLocked && !isTurnCommitting) {
+                                        liveDragProgress = 0f
+                                        isFlippingInProgress = false
+                                        lockedCurrBmp = null
+                                        lockedNextBmp = null
+                                        lockedPrevBmp = null
+                                        lockedCurrFilter = null
+                                        lockedNextFilter = null
+                                        lockedPrevFilter = null
                                     }
                                 }
                             }
@@ -1695,7 +1754,7 @@ fun ReaderScreen(
                                                 hasSelectionActive = false
                                                 clearSelectionTrigger++
                                                 selectedQuoteForPopover = null
-                                            } else {
+                                            } else if (!isSpread) {
                                                 showReaderChrome = !showReaderChrome
                                             }
                                         },
@@ -1836,20 +1895,37 @@ fun ReaderScreen(
                             val rightCh = rightTriple?.let { chapters.getOrNull(it.first) }
                             val (leftText, rightText) = resolveSpreadPairTexts(leftZero, rightZero, if (leftZero == curZero) currentPageRaw else "")
 
-                            var leftPdfBmp by remember(book.id, leftZero) {
+                            var leftPdfBmp by remember(
+                                book.id, leftZero, isTrans, isBilingualSpread,
+                                uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision, peekOriginalPdfPage
+                            ) {
                                 mutableStateOf(
                                     if (isPdfBook) {
-                                        viewModel?.getCachedPdfBitmap(book.id, leftZero, book.localFilePath)
-                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
-                                            ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        if (isTrans && !isBilingualSpread) {
+                                            viewModel?.getCachedTranslatedPdfBitmap(book.id, leftZero, uiState.translationTargetLang, uiState.translationMode)
+                                                ?: viewModel?.getCachedPdfBitmap(book.id, leftZero, book.localFilePath)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        } else {
+                                            viewModel?.getCachedPdfBitmap(book.id, leftZero, book.localFilePath)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, 1080)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", leftZero, ((stageW / 240) * 120).coerceAtLeast(360))
+                                        }
                                     } else null
                                 )
                             }
-                            var rightPdfBmp by remember(book.id, rightZero, isBilingualSpread, uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision) {
+                            var rightPdfBmp by remember(
+                                book.id, rightZero, isTrans, isBilingualSpread,
+                                uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision, peekOriginalPdfPage
+                            ) {
                                 mutableStateOf(
-                                    if (isPdfBook) {
-                                        if (isBilingualSpread) {
-                                            viewModel?.getCachedTranslatedPdfBitmap(book.id, rightZero, uiState.translationTargetLang, "replace")
+                                    if (isPdfBook && rightZero < metrics.totalBookPages) {
+                                        val effRightMode = if (isBilingualSpread) "replace" else uiState.translationMode
+                                        if (isTrans) {
+                                            viewModel?.getCachedTranslatedPdfBitmap(book.id, rightZero, uiState.translationTargetLang, effRightMode)
+                                                ?: viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
+                                                ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, ((stageW / 240) * 120).coerceAtLeast(360))
                                         } else {
                                             viewModel?.getCachedPdfBitmap(book.id, rightZero, book.localFilePath)
                                                 ?: PdfNativeRenderer.getCachedBitmap(book.localFilePath ?: "", rightZero, 1080)
@@ -1860,22 +1936,38 @@ fun ReaderScreen(
                             }
 
                             if (isPdfBook) {
-                                LaunchedEffect(book.id, book.localFilePath, leftZero, rightZero, isBilingualSpread, uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision) {
+                                LaunchedEffect(
+                                    book.id, book.localFilePath, leftZero, rightZero,
+                                    isTrans, isBilingualSpread, peekOriginalPdfPage,
+                                    uiState.translationTargetLang, uiState.translationMode, uiState.translationRevision
+                                ) {
                                     val path = book.localFilePath ?: return@LaunchedEffect
-                                    if (leftPdfBmp == null) {
-                                        leftPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, leftZero)
-                                    }
-                                    if (isBilingualSpread) {
-                                        rightPdfBmp = viewModel?.loadOrTranslatePdfPageBitmap(
+                                    if (isTrans && !isBilingualSpread && viewModel != null) {
+                                        leftPdfBmp = viewModel.loadOrTranslatePdfPageBitmap(
                                             bookId = book.id,
                                             filePath = path,
-                                            pageIndex = rightZero,
+                                            pageIndex = leftZero,
                                             targetLang = uiState.translationTargetLang,
-                                            mode = "replace",
+                                            mode = uiState.translationMode,
                                             targetWidthPx = stageW / 2
                                         )
-                                    } else if (rightPdfBmp == null) {
-                                        rightPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, rightZero)
+                                    } else if (leftPdfBmp == null) {
+                                        leftPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, leftZero)
+                                    }
+                                    if (rightZero < metrics.totalBookPages) {
+                                        val effRightMode = if (isBilingualSpread) "replace" else uiState.translationMode
+                                        if (isTrans && viewModel != null) {
+                                            rightPdfBmp = viewModel.loadOrTranslatePdfPageBitmap(
+                                                bookId = book.id,
+                                                filePath = path,
+                                                pageIndex = rightZero,
+                                                targetLang = uiState.translationTargetLang,
+                                                mode = effRightMode,
+                                                targetWidthPx = stageW / 2
+                                            )
+                                        } else if (rightPdfBmp == null) {
+                                            rightPdfBmp = viewModel?.loadPdfPageBitmap(book.id, path, rightZero)
+                                        }
                                     }
                                     viewModel?.prefetchPdfNeighbors(book.id, path, leftZero, isTwoPageSpread = true)
                                 }
@@ -1935,6 +2027,7 @@ fun ReaderScreen(
                                 prefs.fontWeight, prefs.textAlign, prefs.fontFamily,
                                 palette, isPdfBook, effLeftBmp, effRightBmp,
                                 prefs.pdfThemeTintEnabled, prefs.pdfProtectIllustrations, effectiveTheme, prefs.amoledBlack,
+                                indexedIllustrationPages, metrics.totalBookPages, peekOriginalPdfPage,
                                 isPageTranslationActive, uiState.isTranslationActive, uiState.translationMode,
                                 uiState.translationTargetLang, uiState.translationRevision,
                                 pageTranslationMap[pageTransMapKey(leftZero)],
@@ -1956,7 +2049,7 @@ fun ReaderScreen(
                                         rightText = rightText,
                                         leftPdfBitmap = effLeftBmp,
                                         rightPdfBitmap = effRightBmp,
-                                        bgColor = if (isPdfBook && !prefs.pdfThemeTintEnabled) Color.White else palette.bgCard,
+                                        bgColor = if (isPdfBook && (!prefs.pdfThemeTintEnabled || effectiveTheme == AppThemeMode.WHITE)) Color.White else palette.bgCard,
                                         pageTextStyle = spreadTextStyle,
                                         palette = palette,
                                         prefs = prefs,
@@ -2115,16 +2208,18 @@ fun ReaderScreen(
                         }
 
                         val nonFlipbookZoomGestureModifier = Modifier.pointerInput(
-                            prefs.pageAnimStyle, prefs.readingFlowMode,
+                            prefs.pageAnimStyle, prefs.readingFlowMode, isSpread,
                             uiState.showReaderTypeSheet, uiState.showReaderTocDrawer, uiState.showReaderNotesDrawer,
                             showPageScrubber, showInlinePageSlider, hasSelectionActive
                         ) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                val hasTopChromeZone = !isSpread || isTranslationQuickBarActive || nonFlipZoomScale > 1.01f
+                                val hasBottomChromeZone = !isSpread
                                 if (uiState.showReaderTypeSheet || uiState.showReaderTocDrawer || uiState.showReaderNotesDrawer ||
                                     showPageScrubber || showInlinePageSlider ||
-                                    down.position.y >= size.height - 96.dp.toPx() ||
-                                    down.position.y <= 88.dp.toPx()
+                                    (hasBottomChromeZone && down.position.y >= size.height - 96.dp.toPx()) ||
+                                    (hasTopChromeZone && down.position.y <= (if (isSpread) 54.dp else 88.dp).toPx())
                                 ) {
                                     return@awaitEachGesture
                                 }
@@ -2152,7 +2247,7 @@ fun ReaderScreen(
                                                     hasSelectionActive = false
                                                     clearSelectionTrigger++
                                                     selectedQuoteForPopover = null
-                                                } else {
+                                                } else if (!isSpread) {
                                                     showReaderChrome = !showReaderChrome
                                                 }
                                             }
@@ -2863,6 +2958,7 @@ fun ReaderScreen(
             onDisplayPageIndexChange = { displayPageIndex = it },
             showInlinePageSlider = showInlinePageSlider,
             onShowInlinePageSliderChange = { showInlinePageSlider = it },
+            onBack = onBack,
             onExternalFlipTrigger = { externalFlipTrigger = it },
             onTurnPage = onTurnPage,
             onToggleTocDrawer = onToggleTocDrawer,
@@ -2870,7 +2966,27 @@ fun ReaderScreen(
             viewModel = viewModel
         )
 
-        // Middle-Right Quick Notes Drawer Handle Tab
+        ReaderSpreadRightVerticalBar(
+            isSpread = isSpread,
+            book = book,
+            prefs = prefs,
+            uiState = uiState,
+            strings = strings,
+            chapters = chapters,
+            currentChapter = currentChapter,
+            currentPageRaw = currentPageRaw,
+            displayPageIndex = displayPageIndex,
+            bookBookmarks = bookBookmarks,
+            isPageTranslationActive = isPageTranslationActive,
+            onIsPageTranslationActiveChange = { isPageTranslationActive = it },
+            onPeekOriginalPdfPageChange = { peekOriginalPdfPage = it },
+            onShowLangDropdownChange = { showLangDropdown = it },
+            getPageAtGlobalZero = getPageAtGlobalZero,
+            onToggleTocDrawer = onToggleTocDrawer,
+            viewModel = viewModel
+        )
+
+        // Middle-Right Quick Notes Drawer Handle Tab (placed at BottomEnd in spread mode so it doesn't overlap right vertical dock)
         Surface(
             onClick = { onToggleNotesDrawer(true) },
             shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 0.dp, bottomEnd = 0.dp),
@@ -2878,7 +2994,8 @@ fun ReaderScreen(
             border = BorderStroke(1.dp, palette.borderSoft),
             shadowElevation = 3.dp,
             modifier = Modifier
-                .align(Alignment.CenterEnd)
+                .align(if (isSpread) Alignment.BottomEnd else Alignment.CenterEnd)
+                .padding(bottom = if (isSpread) 20.dp else 0.dp)
                 .minimumInteractiveComponentSize()
                 .width(20.dp)
                 .height(48.dp)
