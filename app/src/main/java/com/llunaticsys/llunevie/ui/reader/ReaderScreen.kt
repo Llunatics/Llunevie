@@ -574,11 +574,11 @@ fun ReaderScreen(
                 cutoutPaddingValues.calculateStartPadding(layoutDirection),
                 cutoutPaddingValues.calculateEndPadding(layoutDirection)
             )
-            val spreadSidePadDp = if (isSpread) (cutoutHorizontalMaxDp + 64.dp) else 0.dp
+            val spreadSidePadDp = if (isSpread) (cutoutHorizontalMaxDp + 72.dp) else 0.dp
             val spreadTopPadDp = if (isSpread) {
-                maxOf(effectiveTopSystemInset, 14.dp) + if (isTranslationQuickBarActive) 44.dp else 4.dp
+                effectiveTopSystemInset + if (isTranslationQuickBarActive) 52.dp else 8.dp
             } else 0.dp
-            val spreadBottomPadDp = if (isSpread) 26.dp else 0.dp
+            val spreadBottomPadDp = if (isSpread) 8.dp else 0.dp
             val maxSpreadAvailH = (stageH - with(density) { (spreadTopPadDp + spreadBottomPadDp).roundToPx() }).coerceAtLeast(240)
             val maxSpreadAvailW = (stageW - with(density) { (spreadSidePadDp * 2).roundToPx() }).coerceAtLeast(240)
             val spreadW = if (isSpread) {
@@ -3017,18 +3017,13 @@ fun ReaderScreen(
         )
 
         // Quick Notes & Bookmarks Drawer Handle Tab:
-        // - In 2-page spread mode: docked at bottom center (Alignment.BottomCenter)
-        // - In portrait / single-page mode: flush against right-center screen edge (Alignment.CenterEnd) with zero gap
-        val notesHandleShape = if (isSpread) {
-            RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
-        } else {
-            RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp, topEnd = 0.dp, bottomEnd = 0.dp)
-        }
+        // Flush against right-center screen edge (Alignment.CenterEnd) with zero gap in both portrait and spread modes
+        val notesHandleShape = RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp, topEnd = 0.dp, bottomEnd = 0.dp)
         Box(
             modifier = Modifier
-                .align(if (isSpread) Alignment.BottomCenter else Alignment.CenterEnd)
-                .width(if (isSpread) 48.dp else 20.dp)
-                .height(if (isSpread) 20.dp else 48.dp)
+                .align(Alignment.CenterEnd)
+                .width(20.dp)
+                .height(48.dp)
                 .clip(notesHandleShape)
                 .background(palette.bgSurface.copy(alpha = 0.92f), notesHandleShape)
                 .border(1.dp, palette.borderSoft, notesHandleShape)

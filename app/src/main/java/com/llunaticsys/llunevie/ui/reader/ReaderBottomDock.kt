@@ -364,45 +364,45 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
         mutableIntStateOf((metrics.currentGlobalPage - 1).coerceAtLeast(0))
     }
 
-    Column(
+    // Back button positioned near the top-left corner (retained from beta.6)
+    Surface(
+        onClick = onBack,
+        shape = CircleShape,
+        color = palette.bgSurface,
+        border = BorderStroke(1.dp, palette.borderSoft),
+        shadowElevation = 4.dp,
         modifier = Modifier
             .align(Alignment.TopStart)
             .windowInsetsPadding(WindowInsets.displayCutout)
-            .padding(top = 12.dp, start = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(top = 12.dp, start = 10.dp)
+            .size(42.dp)
     ) {
-        // Back button positioned near the top-left corner above the left vertical pill
-        Surface(
-            onClick = onBack,
-            shape = CircleShape,
-            color = palette.bgSurface,
-            border = BorderStroke(1.dp, palette.borderSoft),
-            shadowElevation = 4.dp,
-            modifier = Modifier.size(42.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                PrototypeSvgIcon(
-                    type = PrototypeIconType.ARROW_LEFT,
-                    tint = palette.textMain,
-                    modifier = Modifier.size(16.dp),
-                    contentDescription = if (strings.isId) "Kembali" else "Back"
-                )
-            }
+        Box(contentAlignment = Alignment.Center) {
+            PrototypeSvgIcon(
+                type = PrototypeIconType.ARROW_LEFT,
+                tint = palette.textMain,
+                modifier = Modifier.size(16.dp),
+                contentDescription = if (strings.isId) "Kembali" else "Back"
+            )
         }
+    }
 
-        Box(
-            modifier = Modifier
-                .width(42.dp)
-                .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
-                .clip(CircleShape)
-                .background(color = palette.bgSurface, shape = CircleShape)
-                .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
-                .animateContentSize(
-                    animationSpec = spring<IntSize>(dampingRatio = 0.82f, stiffness = 380f)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
+    // Left vertical menu pill centered vertically on the left edge
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterStart)
+            .windowInsetsPadding(WindowInsets.displayCutout)
+            .padding(start = 10.dp)
+            .width(42.dp)
+            .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(color = palette.bgSurface, shape = CircleShape)
+            .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape)
+            .animateContentSize(
+                animationSpec = spring<IntSize>(dampingRatio = 0.82f, stiffness = 380f)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
         AnimatedContent(
             targetState = showInlinePageSlider,
             transitionSpec = {
@@ -682,7 +682,6 @@ internal fun BoxScope.ReaderSpreadLeftVerticalBar(
                 }
             }
         }
-        }
     }
 }
 
@@ -765,114 +764,114 @@ internal fun BoxScope.ReaderSpreadRightVerticalBar(
         bookBookmarks.any { it.pageNumber == displayPageIndex + 1 }
     }
 
-    Column(
+    // Bookmark button positioned near the top-right corner (retained vertical position from beta.6,
+    // shifted slightly left to align with the right title pill and clear the flush right-center ‹ tab)
+    Surface(
+        onClick = {
+            val curPageNum = displayPageIndex + 1
+            val curTriple = getPageAtGlobalZero(displayPageIndex)
+            val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
+                ?: currentChapter?.title
+                ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
+            val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
+            val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
+                .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
+                .trim()
+                .take(100)
+            viewModel?.togglePageBookmark(
+                bookId = book.id,
+                pageNumber = curPageNum,
+                chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
+                chapterTitle = chTitle,
+                snippetText = snippet
+            )
+        },
+        shape = CircleShape,
+        color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
+        border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
+        shadowElevation = 4.dp,
         modifier = Modifier
             .align(Alignment.TopEnd)
             .windowInsetsPadding(WindowInsets.displayCutout)
-            .padding(top = 12.dp, end = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(top = 12.dp, end = 26.dp)
+            .size(42.dp)
     ) {
-        // Bookmark button positioned near the top-right corner above the right vertical pill
-        Surface(
-            onClick = {
-                val curPageNum = displayPageIndex + 1
-                val curTriple = getPageAtGlobalZero(displayPageIndex)
-                val chTitle = curTriple?.let { chapters.getOrNull(it.first)?.title }
-                    ?: currentChapter?.title
-                    ?: (if (strings.isId) "Bab ${uiState.activeChapterIndex + 1}" else "Chapter ${uiState.activeChapterIndex + 1}")
-                val pageRaw = curTriple?.third.orEmpty().ifBlank { currentPageRaw }
-                val snippet = pageRaw.replace(Regex("\\[ILLUST:[^]]+]"), "")
-                    .replace(Regex("\\[PDF_PAGE:[^]]+]"), "")
-                    .trim()
-                    .take(100)
-                viewModel?.togglePageBookmark(
-                    bookId = book.id,
-                    pageNumber = curPageNum,
-                    chapterIndex = curTriple?.first ?: uiState.activeChapterIndex,
-                    chapterTitle = chTitle,
-                    snippetText = snippet
-                )
-            },
-            shape = CircleShape,
-            color = if (isCurrentPageBookmarked) palette.accent.copy(alpha = 0.15f) else palette.bgSurface,
-            border = BorderStroke(1.dp, if (isCurrentPageBookmarked) palette.accent else palette.borderSoft),
-            shadowElevation = 4.dp,
-            modifier = Modifier.size(42.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                    contentDescription = "Bookmark",
-                    tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (isCurrentPageBookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                contentDescription = "Bookmark",
+                tint = if (isCurrentPageBookmarked) palette.accent else palette.textMain,
+                modifier = Modifier.size(18.dp)
+            )
         }
+    }
 
-        // Right vertical pill: Book Title + Translate Access
-        Box(
+    // Right vertical pill: Book Title + Translate Access, centered vertically and shifted slightly left
+    // so it does not collide with the flush right-center ‹ notes drawer tab (20.dp wide)
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .windowInsetsPadding(WindowInsets.displayCutout)
+            .padding(end = 26.dp)
+            .width(42.dp)
+            .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(color = palette.bgSurface, shape = CircleShape)
+            .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
             modifier = Modifier
                 .width(42.dp)
-                .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
-                .clip(CircleShape)
-                .background(color = palette.bgSurface, shape = CircleShape)
-                .border(width = 1.dp, color = palette.borderSoft, shape = CircleShape),
-            contentAlignment = Alignment.Center
+                .padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column(
+            SpreadVerticalRotatedTitle(
+                text = book.title,
+                color = palette.textMain,
+                fontSizeSp = 11.5f,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Medium,
                 modifier = Modifier
-                    .width(42.dp)
-                    .padding(vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SpreadVerticalRotatedTitle(
-                    text = book.title,
-                    color = palette.textMain,
-                    fontSizeSp = 11.5f,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp, max = 148.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onToggleTocDrawer(true) }
-                        .padding(vertical = 4.dp)
-                )
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp, max = 148.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onToggleTocDrawer(true) }
+                    .padding(vertical = 4.dp)
+            )
 
-                Box(
-                    modifier = Modifier
-                        .width(16.dp)
-                        .height(1.dp)
-                        .background(palette.borderSoft)
-                )
+            Box(
+                modifier = Modifier
+                    .width(16.dp)
+                    .height(1.dp)
+                    .background(palette.borderSoft)
+            )
 
-                Surface(
-                    onClick = {
-                        val nextActive = !isTransActive
-                        onIsPageTranslationActiveChange(nextActive)
-                        onPeekOriginalPdfPageChange(false)
-                        if (nextActive && uiState.translationMode.equals("original", ignoreCase = true)) {
-                            viewModel?.setTranslationMode("replace")
-                        }
-                        if (!nextActive) {
-                            onShowLangDropdownChange(false)
-                        }
-                        viewModel?.setTranslationActive(nextActive)
-                    },
-                    shape = CircleShape,
-                    color = if (isTransActive) palette.pillActiveBg else Color.Transparent,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        PrototypeSvgIcon(
-                            type = PrototypeIconType.TRANSLATE,
-                            tint = if (isTransActive) palette.accent else palette.textMain,
-                            modifier = Modifier.size(15.dp),
-                            contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
-                        )
+            Surface(
+                onClick = {
+                    val nextActive = !isTransActive
+                    onIsPageTranslationActiveChange(nextActive)
+                    onPeekOriginalPdfPageChange(false)
+                    if (nextActive && uiState.translationMode.equals("original", ignoreCase = true)) {
+                        viewModel?.setTranslationMode("replace")
                     }
+                    if (!nextActive) {
+                        onShowLangDropdownChange(false)
+                    }
+                    viewModel?.setTranslationActive(nextActive)
+                },
+                shape = CircleShape,
+                color = if (isTransActive) palette.pillActiveBg else Color.Transparent,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    PrototypeSvgIcon(
+                        type = PrototypeIconType.TRANSLATE,
+                        tint = if (isTransActive) palette.accent else palette.textMain,
+                        modifier = Modifier.size(15.dp),
+                        contentDescription = if (strings.isId) "Terjemahkan halaman" else "Translate page"
+                    )
                 }
             }
         }
