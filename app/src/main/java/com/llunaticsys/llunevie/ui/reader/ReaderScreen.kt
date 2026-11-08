@@ -390,11 +390,15 @@ fun ReaderScreen(
         val isBilingualSpreadNow = isSpread && curMode.equals("bilingual", ignoreCase = true)
         val effPdfMode = if (isBilingualSpreadNow) "replace" else curMode
 
-        val pagesToTranslate = if (isSpread) {
+        val isContinuousScroll = prefs.readingFlowMode == ReadingFlowMode.SCROLL || prefs.readingFlowMode == ReadingFlowMode.WEBTOON
+
+        val pagesToTranslate = if (isContinuousScroll) {
+            listOf(displayPageIndex).filter { it in 0 until metrics.totalBookPages }
+        } else if (isSpread) {
             val sStart = (displayPageIndex / 2) * 2
-            listOf(displayPageIndex, sStart, sStart + 1).distinct()
+            listOf(displayPageIndex, sStart, sStart + 1).distinct().filter { it in 0 until metrics.totalBookPages }
         } else {
-            listOf(displayPageIndex)
+            listOf(displayPageIndex).filter { it in 0 until metrics.totalBookPages }
         }
 
         if (isPdfBook) {
@@ -405,41 +409,47 @@ fun ReaderScreen(
                     if (pZero in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(pdfKey)) {
                         isTranslatingPage = true
                         val targetW = if (isSpread) 540 else 1080
-                        viewModel?.loadOrTranslatePdfPageBitmap(
-                            bookId = book.id,
-                            filePath = path,
-                            pageIndex = pZero,
-                            targetLang = curTargetLang,
-                            mode = effPdfMode,
-                            targetWidthPx = targetW
-                        )
+                        runCatching {
+                            viewModel?.loadOrTranslatePdfPageBitmap(
+                                bookId = book.id,
+                                filePath = path,
+                                pageIndex = pZero,
+                                targetLang = curTargetLang,
+                                mode = effPdfMode,
+                                targetWidthPx = targetW
+                            )
+                        }
                         pageTranslationMap = pageTranslationMap + (pdfKey to emptyList())
                         isTranslatingPage = false
                     }
                 }
 
-                // Pre-extract & pre-translate upcoming pages in the background
-                val nextPages = if (isBilingualSpreadNow) {
-                    listOf(displayPageIndex + 1, displayPageIndex + 2)
-                } else if (isSpread) {
-                    val sStart = (displayPageIndex / 2) * 2
-                    listOf(sStart + 2, sStart + 3, sStart + 4, sStart + 5)
-                } else {
-                    listOf(displayPageIndex + 1, displayPageIndex + 2)
-                }
-                for (nextP in nextPages) {
-                    val pdfKey = pdfTransMapKey(nextP, curTargetLang, effPdfMode)
-                    if (nextP in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(pdfKey)) {
-                        val targetW = if (isSpread) 540 else 1080
-                        viewModel?.loadOrTranslatePdfPageBitmap(
-                            bookId = book.id,
-                            filePath = path,
-                            pageIndex = nextP,
-                            targetLang = curTargetLang,
-                            mode = effPdfMode,
-                            targetWidthPx = targetW
-                        )
-                        pageTranslationMap = pageTranslationMap + (pdfKey to emptyList())
+                // Pre-extract & pre-translate upcoming pages in the background ONLY in page turn / spread modes
+                if (!isContinuousScroll) {
+                    val nextPages = if (isBilingualSpreadNow) {
+                        listOf(displayPageIndex + 1, displayPageIndex + 2)
+                    } else if (isSpread) {
+                        val sStart = (displayPageIndex / 2) * 2
+                        listOf(sStart + 2, sStart + 3, sStart + 4, sStart + 5)
+                    } else {
+                        listOf(displayPageIndex + 1, displayPageIndex + 2)
+                    }
+                    for (nextP in nextPages) {
+                        val pdfKey = pdfTransMapKey(nextP, curTargetLang, effPdfMode)
+                        if (nextP in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(pdfKey)) {
+                            val targetW = if (isSpread) 540 else 1080
+                            runCatching {
+                                viewModel?.loadOrTranslatePdfPageBitmap(
+                                    bookId = book.id,
+                                    filePath = path,
+                                    pageIndex = nextP,
+                                    targetLang = curTargetLang,
+                                    mode = effPdfMode,
+                                    targetWidthPx = targetW
+                                )
+                            }
+                            pageTranslationMap = pageTranslationMap + (pdfKey to emptyList())
+                        }
                     }
                 }
             }
@@ -456,22 +466,24 @@ fun ReaderScreen(
                             !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
                                 !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
                         }
-                        if (hasValidCached && cached != null) {
+                        if (hasValidCached) {
                             if (!pageTranslationMap.containsKey(mapKey)) {
                                 pageTranslationMap = pageTranslationMap + (mapKey to cached)
                             }
                         } else {
                             isTranslatingPage = true
-                            val res = if (viewModel != null) {
-                                viewModel.loadOrTranslatePageParagraphs(
-                                    bookId = book.id,
-                                    pageIndex = pZero,
-                                    pageRaw = pRaw,
-                                    targetLang = curTargetLang
-                                )
-                            } else {
-                                translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
-                            }
+                            val res = runCatching {
+                                if (viewModel != null) {
+                                    viewModel.loadOrTranslatePageParagraphs(
+                                        bookId = book.id,
+                                        pageIndex = pZero,
+                                        pageRaw = pRaw,
+                                        targetLang = curTargetLang
+                                    )
+                                } else {
+                                    translationRepo.translatePageParagraphs(pRaw, prefs, context, curTargetLang).getOrNull()
+                                }
+                            }.getOrNull()
                             if (res != null) {
                                 pageTranslationMap = pageTranslationMap + (mapKey to res)
                             }
@@ -481,34 +493,38 @@ fun ReaderScreen(
                 }
             }
 
-            // Pre-fetch next pages in background
-            val nextPages = if (isBilingualSpreadNow) {
-                listOf(displayPageIndex + 1, displayPageIndex + 2)
-            } else if (isSpread) {
-                val sStart = (displayPageIndex / 2) * 2
-                listOf(sStart + 2, sStart + 3)
-            } else {
-                listOf(displayPageIndex + 1, displayPageIndex + 2)
-            }
-            for (nextP in nextPages) {
-                val mapKey = pageTransMapKey(nextP, curTargetLang)
-                if (nextP in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(mapKey)) {
-                    val nextTriple = getPageAtGlobalZero(nextP)
-                    val nextRaw = nextTriple?.third.orEmpty()
-                    if (nextRaw.isNotBlank()) {
-                        val cached = viewModel?.getCachedTranslatedParagraphs(book.id, nextP, curTargetLang, nextRaw.hashCode())
-                        val res = cached ?: if (viewModel != null) {
-                            viewModel.loadOrTranslatePageParagraphs(
-                                bookId = book.id,
-                                pageIndex = nextP,
-                                pageRaw = nextRaw,
-                                targetLang = curTargetLang
-                            )
-                        } else {
-                            translationRepo.translatePageParagraphs(nextRaw, prefs, context, curTargetLang).getOrNull()
-                        }
-                        if (res != null) {
-                            pageTranslationMap = pageTranslationMap + (mapKey to res)
+            // Pre-fetch next pages in background ONLY in page turn / spread modes
+            if (!isContinuousScroll) {
+                val nextPages = if (isBilingualSpreadNow) {
+                    listOf(displayPageIndex + 1, displayPageIndex + 2)
+                } else if (isSpread) {
+                    val sStart = (displayPageIndex / 2) * 2
+                    listOf(sStart + 2, sStart + 3)
+                } else {
+                    listOf(displayPageIndex + 1, displayPageIndex + 2)
+                }
+                for (nextP in nextPages) {
+                    val mapKey = pageTransMapKey(nextP, curTargetLang)
+                    if (nextP in 0 until metrics.totalBookPages && !pageTranslationMap.containsKey(mapKey)) {
+                        val nextTriple = getPageAtGlobalZero(nextP)
+                        val nextRaw = nextTriple?.third.orEmpty()
+                        if (nextRaw.isNotBlank()) {
+                            val cached = viewModel?.getCachedTranslatedParagraphs(book.id, nextP, curTargetLang, nextRaw.hashCode())
+                            val res = cached ?: runCatching {
+                                if (viewModel != null) {
+                                    viewModel.loadOrTranslatePageParagraphs(
+                                        bookId = book.id,
+                                        pageIndex = nextP,
+                                        pageRaw = nextRaw,
+                                        targetLang = curTargetLang
+                                    )
+                                } else {
+                                    translationRepo.translatePageParagraphs(nextRaw, prefs, context, curTargetLang).getOrNull()
+                                }
+                            }.getOrNull()
+                            if (res != null) {
+                                pageTranslationMap = pageTranslationMap + (mapKey to res)
+                            }
                         }
                     }
                 }

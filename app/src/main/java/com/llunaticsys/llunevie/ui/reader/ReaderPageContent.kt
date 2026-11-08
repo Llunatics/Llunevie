@@ -1,5 +1,7 @@
 package com.llunaticsys.llunevie.ui.reader
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.graphics.Bitmap
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -277,7 +279,7 @@ internal fun InteractiveTextPageContent(
     }
 
     var currentTranslatedParas by remember(
-        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev, translatedParagraphs
+        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, translatedParagraphs
     ) {
         mutableStateOf(
             if (isTrans && displayPageIndex >= 0) {
@@ -291,25 +293,28 @@ internal fun InteractiveTextPageContent(
         )
     }
 
-    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev) {
+    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang) {
         if (isTrans && displayPageIndex >= 0 && !pageText.startsWith("[PDF_PAGE:")) {
             val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
             if (hasValidTranslatedPairs(cached)) {
                 currentTranslatedParas = cached
-            } else if (viewModel != null) {
-                val res = viewModel.loadOrTranslatePageParagraphs(
-                    bookId = bookId,
-                    pageIndex = displayPageIndex,
-                    pageRaw = pageText,
-                    targetLang = targetLang
-                )
-                if (hasValidTranslatedPairs(res)) {
-                    currentTranslatedParas = res
-                }
             } else {
-                val res = com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance(context)
-                    .translatePageParagraphs(pageText, prefs, context, targetLang)
-                    .getOrNull()
+                val res = runCatching {
+                    withContext(Dispatchers.IO) {
+                        if (viewModel != null) {
+                            viewModel.loadOrTranslatePageParagraphs(
+                                bookId = bookId,
+                                pageIndex = displayPageIndex,
+                                pageRaw = pageText,
+                                targetLang = targetLang
+                            )
+                        } else {
+                            com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance(context)
+                                .translatePageParagraphs(pageText, prefs, context, targetLang)
+                                .getOrNull()
+                        }
+                    }
+                }.getOrNull()
                 if (hasValidTranslatedPairs(res)) {
                     currentTranslatedParas = res
                 }
@@ -440,14 +445,14 @@ internal fun InteractiveTextPageContent(
         }
     }
 
-    val effectiveScrollable = scrollable || isBilingual
+    val effectiveScrollable = scrollable
     val outerScrollModifier = if (effectiveScrollable) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
     } else {
         Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
     }
 
     val currentOnCenterTap by rememberUpdatedState(onCenterTap)
@@ -770,9 +775,9 @@ internal fun InteractiveTextPageContent(
                                             }
                                         }
 
+                                        val touchSlop = viewConfiguration.touchSlop
+                                        val longPressTimeout = 400L
                                         val startTime = System.currentTimeMillis()
-                                        var movedBeyondJitter = false
-                                        var abortedToPageTurn = false
                                         var isLongPressTriggered = false
                                         var initialWordStart = -1
                                         var initialWordEnd = -1
@@ -782,16 +787,18 @@ internal fun InteractiveTextPageContent(
                                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
 
                                             if (event.changes.count { it.pressed } >= 2) {
-                                                abortedToPageTurn = true
                                                 break
                                             }
 
                                             if (!change.pressed) {
                                                 if (isLongPressTriggered) {
                                                     change.consume()
-                                                } else if (!abortedToPageTurn) {
+                                                } else {
                                                     val elapsed = System.currentTimeMillis() - startTime
-                                                    if (elapsed < 340L && !movedBeyondJitter) {
+                                                    val dx = change.position.x - down.position.x
+                                                    val dy = change.position.y - down.position.y
+                                                    val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                                                    if (elapsed < longPressTimeout && dist <= touchSlop) {
                                                         if (hasSelection) {
                                                             change.consume()
                                                             selStart = -1
@@ -851,16 +858,12 @@ internal fun InteractiveTextPageContent(
                                             val dist = kotlin.math.sqrt(dx * dx + dy * dy)
 
                                             if (!isLongPressTriggered) {
-                                                if (dist > 18.dp.toPx()) {
-                                                    movedBeyondJitter = true
-                                                }
-                                                if (kotlin.math.abs(dx) > 22.dp.toPx() && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
-                                                    abortedToPageTurn = true
+                                                if (dist > touchSlop || change.isConsumed) {
                                                     break
                                                 }
 
                                                 val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 340L && !abortedToPageTurn && !movedBeyondJitter) {
+                                                if (elapsed >= longPressTimeout) {
                                                     isLongPressTriggered = true
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                     change.consume()

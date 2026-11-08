@@ -424,34 +424,42 @@ class LlunevieViewModel(
             val mode = st.translationMode
             val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
             val isBilingualSpread = isSpread && mode.equals("bilingual", ignoreCase = true)
-            val targetPages = if (isSpread) {
+            val isContinuousScroll = preferences.value.readingFlowMode == ReadingFlowMode.SCROLL ||
+                preferences.value.readingFlowMode == ReadingFlowMode.WEBTOON
+            val targetPages = if (isContinuousScroll) {
+                listOf(globalPageIdx).filter { it in 0 until metrics.totalBookPages }
+            } else if (isSpread) {
                 val sStart = (globalPageIdx / 2) * 2
                 listOf(globalPageIdx, sStart, sStart + 1).distinct().filter { it in 0 until metrics.totalBookPages }
             } else {
-                listOf(globalPageIdx)
+                listOf(globalPageIdx).filter { it in 0 until metrics.totalBookPages }
             }
 
             if (isPdf) {
                 val path = book.localFilePath ?: return@launch
                 for (pZero in targetPages) {
-                    loadOrTranslatePdfPageBitmap(
-                        bookId = bookId,
-                        filePath = path,
-                        pageIndex = pZero,
-                        targetLang = normLang,
-                        mode = if (isBilingualSpread) "replace" else mode
-                    )
+                    runCatching {
+                        loadOrTranslatePdfPageBitmap(
+                            bookId = bookId,
+                            filePath = path,
+                            pageIndex = pZero,
+                            targetLang = normLang,
+                            mode = if (isBilingualSpread) "replace" else mode
+                        )
+                    }
                 }
             } else {
                 for (pZero in targetPages) {
                     val pageRaw = getPageContentAtGlobalZeroIndex(chapters, pZero)?.third.orEmpty()
                     if (pageRaw.isNotBlank()) {
-                        loadOrTranslatePageParagraphs(
-                            bookId = bookId,
-                            pageIndex = pZero,
-                            pageRaw = pageRaw,
-                            targetLang = normLang
-                        )
+                        runCatching {
+                            loadOrTranslatePageParagraphs(
+                                bookId = bookId,
+                                pageIndex = pZero,
+                                pageRaw = pageRaw,
+                                targetLang = normLang
+                            )
+                        }
                     }
                 }
             }
@@ -492,13 +500,15 @@ class LlunevieViewModel(
 
                 val texts = blocks.map { it.text }
                 val currentPrefs = preferences.value
-                val res = translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
+                val res = runCatching {
+                    translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
+                }.getOrElse { Result.failure(it) }
                 if (!res.isSuccess) {
                     _uiState.update { it.copy(isTranslatingPage = false) }
                     return@async loadPdfPageBitmap(bookId, filePath, pageIndex)
                 }
 
-                val transPairs = res.getOrThrow()
+                val transPairs = res.getOrNull() ?: return@async loadPdfPageBitmap(bookId, filePath, pageIndex)
                 val transTexts = transPairs.map { it.second ?: it.first }
 
                 val isIllust = pageIndex == 0 || _uiState.value.activeBookIllustrations.any { it.pageIndexInBook == pageIndex }
@@ -562,13 +572,15 @@ class LlunevieViewModel(
 
                 val translationRepo = TranslationRepository.getInstance(appContext)
                 val currentPrefs = preferences.value
-                val res = translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
+                val res = runCatching {
+                    translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
+                }.getOrElse { Result.failure(it) }
                 if (!res.isSuccess) {
                     _uiState.update { it.copy(isTranslatingPage = false) }
                     return@async null
                 }
 
-                val transList = res.getOrThrow()
+                val transList = res.getOrNull() ?: return@async null
                 putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
 
                 if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == normLang) {
