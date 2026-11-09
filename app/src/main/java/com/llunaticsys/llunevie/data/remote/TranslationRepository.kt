@@ -11,6 +11,9 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -24,6 +27,7 @@ class TranslationRepository private constructor() {
 
     private val memoryCache = LruCache<String, String>(250)
     private val pdfParagraphsCache = LruCache<String, List<String>>(100)
+    private val freeTranslateMutex = Mutex()
 
     companion object {
         @Volatile
@@ -36,6 +40,100 @@ class TranslationRepository private constructor() {
         }
 
         fun getInstance(context: Context): TranslationRepository = getInstance()
+
+        internal fun isInvalidOrUnchangedTranslation(sourceText: String, translatedText: String): Boolean {
+            val src = sourceText.trim()
+            val tr = translatedText.trim()
+            if (tr.isEmpty()) return true
+            if (tr.contains("INVALID LANGUAGE PAIR SPECIFIED", ignoreCase = true) ||
+                tr.contains("MYMEMORY WARNING", ignoreCase = true) ||
+                tr.contains("QUERY LENGTH LIMIT EXCEEDED", ignoreCase = true)
+            ) {
+                return true
+            }
+            // Reject leftover delimiter tokens
+            if (tr.contains("PARA_SPLIT", ignoreCase = true) ||
+                tr.contains("PARA SPLIT", ignoreCase = true) ||
+                tr.contains("[[") || tr.contains("]]") ||
+                tr.contains("［［") || tr.contains("］］") ||
+                tr.contains("【PARA", ignoreCase = true)
+            ) {
+                return true
+            }
+            // Reject truncated stubs
+            if (src.length >= 35 && tr.length <= 4) {
+                return true
+            }
+            if (src.length >= 80 && tr.length < (src.length * 0.12).toInt()) {
+                return true
+            }
+            if (src.length >= 10 && src.any { it.isLetter() } && tr.equals(src, ignoreCase = true)) {
+                return true
+            }
+            return false
+        }
+
+        internal fun guessSourceLangForFallback(text: String, targetLang: String): String {
+            val normTarget = normalizeTranslationLangCode(targetLang)
+            val lower = text.lowercase()
+            val idPattern = Regex("\\b(yang|dan|di|ke|dari|ini|itu|aku|saya|kamu|kau|dia|ia|mereka|kami|kita|tidak|tak|bukan|belum|sudah|telah|sedang|akan|bisa|dapat|harus|mau|ingin|dengan|untuk|dalam|pada|adalah|sebagai|oleh|karena|kalau|jika|tapi|tetapi|namun|atau|saja|lagi|masih|juga|pun|lah|nya|ibu|bapak|pak|bu|mas|mbak|kak|anak|orang|rumah|kata|bilang|lihat|ambil|pergi|datang|tahu|jadi|sama|ada|kok|sih)\\b")
+            val enPattern = Regex("\\b(the|and|of|to|in|is|for|that|with|on|as|are|this|by|from|they|have|had|was|were|would|could|should)\\b")
+            val idHits = idPattern.findAll(lower).count()
+            val enHits = enPattern.findAll(lower).count()
+            val guessed = when {
+                idHits > enHits && idHits >= 1 -> "id"
+                enHits > idHits && enHits >= 1 -> "en"
+                normTarget == "en" -> "id"
+                normTarget != "id" && enHits == 0 && (normTarget.startsWith("zh") || normTarget in setOf("ja", "ko", "vi", "th", "ru", "fr", "de", "es", "it", "pt", "ar")) -> "id"
+                else -> "en"
+            }
+            return if (guessed == normTarget) {
+                if (normTarget == "en") "id" else "en"
+            } else {
+                guessed
+            }
+        }
+
+        internal fun splitTextSafelyByLength(text: String, maxLen: Int): List<String> {
+            if (text.length <= maxLen || maxLen <= 0) return listOf(text)
+            val chunks = mutableListOf<String>()
+            var remaining = text
+            while (remaining.isNotEmpty()) {
+                if (remaining.length <= maxLen) {
+                    chunks.add(remaining)
+                    break
+                }
+                val window = remaining.take(maxLen)
+                // 1. Break at last paragraph boundary
+                val lastPara = window.lastIndexOf('\n')
+                val splitPoint = if (lastPara > 0) {
+                    lastPara + 1
+                } else {
+                    // 2. Break at sentence boundary: terminal punctuation followed by space
+                    val sentenceBreak = Regex("""[.!?…][)\]"”’']?\s+""").findAll(window)
+                        .map { it.range.last + 1 }
+                        .lastOrNull { it > 0 }
+                    if (sentenceBreak != null && sentenceBreak > 0) {
+                        sentenceBreak
+                    } else {
+                        // 3. Break at last whitespace
+                        val lastSpace = window.indexOfLast { it.isWhitespace() }
+                        if (lastSpace > 0) {
+                            lastSpace + 1
+                        } else {
+                            // 4. Hard slice if single unbroken token has no whitespace
+                            maxLen
+                        }
+                    }
+                }
+                val chunk = remaining.substring(0, splitPoint).trim()
+                if (chunk.isNotEmpty()) {
+                    chunks.add(chunk)
+                }
+                remaining = remaining.substring(splitPoint).trimStart()
+            }
+            return if (chunks.isEmpty()) listOf(text) else chunks
+        }
     }
 
     private fun getDiskCacheDir(context: Context): File {
@@ -56,42 +154,6 @@ class TranslationRepository private constructor() {
         val md = MessageDigest.getInstance("SHA-256")
         val digest = md.digest(raw.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }
-    }
-
-    private fun isInvalidOrUnchangedTranslation(sourceText: String, translatedText: String): Boolean {
-        val src = sourceText.trim()
-        val tr = translatedText.trim()
-        if (tr.isEmpty()) return true
-        if (tr.contains("INVALID LANGUAGE PAIR SPECIFIED", ignoreCase = true) ||
-            tr.contains("MYMEMORY WARNING", ignoreCase = true) ||
-            tr.contains("QUERY LENGTH LIMIT EXCEEDED", ignoreCase = true)
-        ) {
-            return true
-        }
-        if (src.length >= 10 && src.any { it.isLetter() } && tr.equals(src, ignoreCase = true)) {
-            return true
-        }
-        return false
-    }
-
-    private fun guessSourceLangForFallback(text: String, targetLang: String): String {
-        val normTarget = normalizeTranslationLangCode(targetLang)
-        val lower = text.lowercase()
-        val idPattern = Regex("\\b(yang|dan|di|ini|itu|aku|tidak|dengan|untuk|dari|dalam|pada|adalah|sebagai|oleh|karena|sebuah|seorang|mereka|dia|kami|kita|bisa|akan|sudah)\\b")
-        val enPattern = Regex("\\b(the|and|of|to|in|is|for|that|with|on|as|are|this|by|from|they|have|had|was|were|would|could|should)\\b")
-        val idHits = idPattern.findAll(lower).count()
-        val enHits = enPattern.findAll(lower).count()
-        val guessed = when {
-            idHits > enHits && idHits >= 1 -> "id"
-            enHits > idHits && enHits >= 1 -> "en"
-            normTarget == "en" -> "id"
-            else -> "en"
-        }
-        return if (guessed == normTarget) {
-            if (normTarget == "en") "id" else "en"
-        } else {
-            guessed
-        }
     }
 
     fun getFromCache(
@@ -227,46 +289,35 @@ class TranslationRepository private constructor() {
         val cleanText = text.trim()
         if (cleanText.isEmpty()) return@withContext Result.success("")
 
-        val maxCap = 4000
-        val cappedText = if (cleanText.length > maxCap) cleanText.take(maxCap) else cleanText
-
-        if (cappedText.length > 1000) {
-            translateFreeChunked(cappedText, targetLang)
+        if (cleanText.length > 900) {
+            translateFreeChunked(cleanText, targetLang)
         } else {
-            translateFreeSingleChunk(cappedText, targetLang)
+            translateFreeSingleChunk(cleanText, targetLang)
         }
     }
 
     private suspend fun translateFreeChunked(text: String, targetLang: String): Result<String> {
-        val paras = text.split("\n")
-        val chunks = mutableListOf<String>()
-        var sb = StringBuilder()
-        for (para in paras) {
-            if (sb.isNotEmpty() && sb.length + para.length + 1 > 1000) {
-                chunks.add(sb.toString())
-                sb = StringBuilder()
-            }
-            if (sb.isNotEmpty()) sb.append("\n")
-            sb.append(para)
-        }
-        if (sb.isNotEmpty()) chunks.add(sb.toString())
-
+        val chunks = splitTextSafelyByLength(text, 900)
         val results = mutableListOf<String>()
         for (chunk in chunks) {
-            val chunkRes = translateFreeSingleChunk(chunk, targetLang)
+            var chunkRes = translateFreeSingleChunk(chunk, targetLang)
+            if (!chunkRes.isSuccess) {
+                delay(150L)
+                chunkRes = translateFreeSingleChunk(chunk, targetLang)
+            }
             if (chunkRes.isSuccess) {
                 results.add(chunkRes.getOrNull().orEmpty())
             } else {
-                results.add(chunk)
+                return Result.failure(chunkRes.exceptionOrNull() ?: Exception("Chunk translation failed"))
             }
         }
         return Result.success(results.joinToString("\n"))
     }
 
-    private suspend fun translateFreeSingleChunk(text: String, targetLang: String): Result<String> {
+    private suspend fun translateFreeSingleChunk(text: String, targetLang: String): Result<String> = freeTranslateMutex.withLock {
         val clean = text.trim()
-        if (clean.isEmpty()) return Result.success("")
-        val chunkToTranslate = clean.take(1000)
+        if (clean.isEmpty()) return@withLock Result.success("")
+        val chunkToTranslate = clean
 
         // Primary: Google GTX
         val gtxResult = runCatching {
@@ -305,34 +356,61 @@ class TranslationRepository private constructor() {
         }
 
         if (gtxResult.isSuccess) {
-            return gtxResult
+            return@withLock gtxResult
+        }
+
+        // If the input contains PARA_SPLIT (a multi-paragraph batch) and Google GTX fails,
+        // do NOT pass the [[PARA_SPLIT]] block to MyMemory; fail immediately so caller translates individually
+        if (chunkToTranslate.contains("PARA_SPLIT", ignoreCase = true)) {
+            return@withLock Result.failure(gtxResult.exceptionOrNull() ?: Exception("GTX batch translation failed; skipping MyMemory for batch"))
         }
 
         // Fallback: MyMemory (requires explicit source language ISO code, never 'autodetect')
-        return runCatching {
-            val truncated = chunkToTranslate.take(480)
-            val srcLang = guessSourceLangForFallback(truncated, targetLang)
-            val encodedQ = URLEncoder.encode(truncated, "UTF-8")
-            val encodedLang = URLEncoder.encode(targetLang, "UTF-8")
-            val url = URL("https://api.mymemory.translated.net/get?q=$encodedQ&langpair=$srcLang|$encodedLang")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 8000
-                setRequestProperty("User-Agent", "Mozilla/5.0")
+        val subPieces = if (chunkToTranslate.length > 450) {
+            splitTextSafelyByLength(chunkToTranslate, 450)
+        } else {
+            listOf(chunkToTranslate)
+        }
+
+        val translatedPieces = mutableListOf<String>()
+        for (piece in subPieces) {
+            val pRes = translateMyMemorySinglePiece(piece, targetLang)
+            if (pRes.isSuccess) {
+                translatedPieces.add(pRes.getOrNull().orEmpty())
+            } else {
+                return@withLock Result.failure(pRes.exceptionOrNull() ?: gtxResult.exceptionOrNull() ?: Exception("MyMemory fallback failed"))
             }
-            withCancellableConn(conn) {
-                if (conn.responseCode in 200..299) {
-                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    val json = runCatching { JSONObject(body) }.getOrNull()
-                    val status = json?.optInt("responseStatus", 200) ?: 200
-                    val trans = json?.optJSONObject("responseData")?.optString("translatedText")?.trim()
-                    if (status in 200..299 && !trans.isNullOrEmpty() && !isInvalidOrUnchangedTranslation(truncated, trans)) {
-                        return@withCancellableConn trans
-                    }
+        }
+        val fullMyMemory = translatedPieces.joinToString(" ").trim()
+        if (fullMyMemory.isNotEmpty() && !isInvalidOrUnchangedTranslation(chunkToTranslate, fullMyMemory)) {
+            Result.success(fullMyMemory)
+        } else {
+            Result.failure(gtxResult.exceptionOrNull() ?: Exception("Translation failed"))
+        }
+    }
+
+    private suspend fun translateMyMemorySinglePiece(piece: String, targetLang: String): Result<String> = runCatching {
+        val srcLang = guessSourceLangForFallback(piece, targetLang)
+        val encodedQ = URLEncoder.encode(piece, "UTF-8")
+        val encodedLang = URLEncoder.encode(targetLang, "UTF-8")
+        val url = URL("https://api.mymemory.translated.net/get?q=$encodedQ&langpair=$srcLang|$encodedLang")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8000
+            readTimeout = 8000
+            setRequestProperty("User-Agent", "Mozilla/5.0")
+        }
+        withCancellableConn(conn) {
+            if (conn.responseCode in 200..299) {
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val json = runCatching { JSONObject(body) }.getOrNull()
+                val status = json?.optInt("responseStatus", 200) ?: 200
+                val trans = json?.optJSONObject("responseData")?.optString("translatedText")?.trim()
+                if (status in 200..299 && !trans.isNullOrEmpty() && !isInvalidOrUnchangedTranslation(piece, trans)) {
+                    return@withCancellableConn trans
                 }
-                error(gtxResult.exceptionOrNull()?.message ?: "Translation failed")
             }
+            error("MyMemory returned code ${conn.responseCode} or invalid response")
         }
     }
 
@@ -611,6 +689,19 @@ class TranslationRepository private constructor() {
             if (!transText.isNullOrBlank() && !isInvalidOrUnchangedTranslation(srcPara, transText)) {
                 resultList[originalIdx] = Pair(srcPara, transText)
                 putInCache(context, engine, model, targetLang, systemPrompt, srcPara, transText)
+            }
+        }
+
+        // Retry translating any missing individual paragraph once
+        for (idx in resultList.indices) {
+            val (orig, trans) = resultList[idx]
+            if (trans.isNullOrBlank() && !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:")) {
+                delay(100L)
+                val retryRes = runCatching { translate(orig, prefs, context, targetLang).getOrNull()?.trim() }.getOrNull()
+                if (!retryRes.isNullOrBlank() && !isInvalidOrUnchangedTranslation(orig, retryRes)) {
+                    resultList[idx] = Pair(orig, retryRes)
+                    putInCache(context, engine, model, targetLang, systemPrompt, orig, retryRes)
+                }
             }
         }
 

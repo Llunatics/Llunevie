@@ -81,7 +81,7 @@ object TxtNativeParser {
             }
             // Split single oversized paragraphs at sentence boundaries
             if (para.length > 620) {
-                val sentences = para.split(Regex("""(?<=[.!?""'])\s+"""))
+                val sentences = para.split(Regex("""(?<=[.!?…])\s+|(?<=[.!?…]["”’'])\s+"""))
                 var subChunk = StringBuilder()
                 for (sent in sentences) {
                     if (subChunk.isNotEmpty() && subChunk.length + sent.length > 580) {

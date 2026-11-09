@@ -96,6 +96,9 @@ data class GlobalPageMetrics(
 fun normalizeTranslationLangCode(rawLang: String): String =
     com.llunaticsys.llunevie.model.normalizeTranslationLangCode(rawLang)
 
+fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?): Boolean =
+    com.llunaticsys.llunevie.model.isPageTranslationComplete(pairs)
+
 data class LlunevieUiState(
     val activeTab: MainNavTab = MainNavTab.HOME,
     val previousTab: MainNavTab = MainNavTab.HOME,
@@ -320,12 +323,7 @@ class LlunevieViewModel(
     fun getCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): List<Pair<String, String?>>? {
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         val cached = translatedTextCache.get(key) ?: return null
-        val hasTranslatable = cached.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
-        val hasValid = cached.any { (orig, trans) ->
-            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
-        }
-        if (hasTranslatable && !hasValid) {
+        if (!isPageTranslationComplete(cached)) {
             translatedTextCache.remove(key)
             return null
         }
@@ -333,12 +331,7 @@ class LlunevieViewModel(
     }
 
     fun putCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int, paragraphs: List<Pair<String, String?>>) {
-        val hasTranslatable = paragraphs.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
-        val hasValid = paragraphs.any { (orig, trans) ->
-            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
-        }
-        if (hasTranslatable && !hasValid) return
+        if (!isPageTranslationComplete(paragraphs)) return
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         translatedTextCache.put(key, paragraphs)
     }
@@ -1371,7 +1364,7 @@ class LlunevieViewModel(
                 }
                 // Split single oversized paragraphs at sentence boundaries
                 if (para.length > 620) {
-                    val sentences = para.split(Regex("""(?<=[.!?""'])\s+"""))
+                    val sentences = para.split(Regex("""(?<=[.!?…])\s+|(?<=[.!?…]["”’'])\s+"""))
                     var subChunk = StringBuilder()
                     for (sent in sentences) {
                         if (subChunk.isNotEmpty() && subChunk.length + sent.length > maxChars) {

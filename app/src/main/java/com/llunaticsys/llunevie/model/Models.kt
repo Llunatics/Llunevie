@@ -216,6 +216,17 @@ fun normalizeTranslationLangCode(rawLang: String): String {
     }
 }
 
+fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?): Boolean {
+    if (pairs.isNullOrEmpty()) return false
+    val translatable = pairs.filter { (orig, _) ->
+        !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") && orig.any { it.isLetter() }
+    }
+    if (translatable.isEmpty()) return false
+    return translatable.all { (orig, trans) ->
+        !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+    }
+}
+
 fun getActiveTranslationLanguages(customCodes: Set<String>): List<TranslationLangOption> {
     val normCustom = customCodes.map { normalizeTranslationLangCode(it) }.toSet()
     val extras = EXTRA_TRANSLATION_LANGUAGES.filter { normalizeTranslationLangCode(it.code) in normCustom }

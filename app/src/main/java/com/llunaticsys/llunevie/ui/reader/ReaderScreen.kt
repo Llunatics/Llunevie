@@ -112,6 +112,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -126,6 +127,7 @@ import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
 import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import com.llunaticsys.llunevie.model.AppThemeMode
 import com.llunaticsys.llunevie.model.HighlightColorKey
+import com.llunaticsys.llunevie.model.isPageTranslationComplete
 import com.llunaticsys.llunevie.model.PageAnimStyle
 import com.llunaticsys.llunevie.model.ReadingFlowMode
 import com.llunaticsys.llunevie.model.getActiveTranslationLanguages
@@ -213,6 +215,7 @@ fun ReaderScreen(
     var lastTurnDirection by remember { mutableIntStateOf(1) }
     var slideDragOffsetPx by remember { mutableFloatStateOf(0f) }
     var hasSelectionActive by remember { mutableStateOf(false) }
+    var activeSelectionPageIndex by remember { mutableIntStateOf(-1) }
     var clearSelectionTrigger by remember { mutableIntStateOf(0) }
     var selStartHandleAnchor by remember { mutableStateOf(Offset.Zero) }
     var selEndHandleAnchor by remember { mutableStateOf(Offset.Zero) }
@@ -340,6 +343,7 @@ fun ReaderScreen(
             }
             hasSelectionActive -> {
                 hasSelectionActive = false
+                activeSelectionPageIndex = -1
                 clearSelectionTrigger++
             }
         }
@@ -462,11 +466,8 @@ fun ReaderScreen(
                     if (pRaw.isNotBlank()) {
                         val cached = viewModel?.getCachedTranslatedParagraphs(book.id, pZero, curTargetLang, pRaw.hashCode())
                             ?: pageTranslationMap[mapKey]
-                        val hasValidCached = cached != null && cached.any { (orig, trans) ->
-                            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
-                        }
-                        if (hasValidCached) {
+                        val isCachedComplete = isPageTranslationComplete(cached)
+                        if (isCachedComplete && cached != null) {
                             if (!pageTranslationMap.containsKey(mapKey)) {
                                 pageTranslationMap = pageTranslationMap + (mapKey to cached)
                             }
@@ -884,14 +885,11 @@ fun ReaderScreen(
                         val raw = getPageAtGlobalZero(pageZero)?.third.orEmpty().ifBlank { fallbackRaw }
                         val hasTranslatable = raw.split(Regex("\n\\s*\n")).any {
                             val t = it.trim()
-                            t.isNotBlank() && !t.startsWith("[ILLUST:") && !t.startsWith("[PDF_PAGE:")
+                            t.isNotBlank() && !t.startsWith("[ILLUST:") && !t.startsWith("[PDF_PAGE:") && t.any { c -> c.isLetter() }
                         }
                         if (!hasTranslatable) return true
                         val pairs = getEffectivePageTranslationPairs(pageZero, raw) ?: return false
-                        return pairs.any { (orig, trans) ->
-                            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
-                        }
+                        return isPageTranslationComplete(pairs)
                     }
 
                     fun isSpreadTranslationReady(leftZero: Int, rightZero: Int, fallbackLeftRaw: String = ""): Boolean {
@@ -1625,8 +1623,9 @@ fun ReaderScreen(
                                                 val elapsed = change.uptimeMillis - down.uptimeMillis
                                                 val childHandlesTap = !isPdfBook && !isSpread && !isBilingualMode
                                                 if (elapsed < 340L && (!childHandlesTap || selectedQuoteForPopover != null)) {
-                                                    if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                    if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                                         hasSelectionActive = false
+                                                        activeSelectionPageIndex = -1
                                                         clearSelectionTrigger++
                                                         selectedQuoteForPopover = null
                                                     } else if (!isSpread) {
@@ -1777,8 +1776,9 @@ fun ReaderScreen(
                                             }
                                         },
                                         onCenterTap = {
-                                            if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                            if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                                 hasSelectionActive = false
+                                                activeSelectionPageIndex = -1
                                                 clearSelectionTrigger++
                                                 selectedQuoteForPopover = null
                                             } else if (!isSpread) {
@@ -1895,15 +1895,23 @@ fun ReaderScreen(
                                             transparentTextForFlipbook = (activeBmp != null && !hasActivePageTranslation),
                                             topClearanceDp = topClearanceDp,
                                             bottomClearanceDp = bottomClearanceDp,
+                                            activeSelectionPageIndex = activeSelectionPageIndex,
                                             clearSelectionTrigger = clearSelectionTrigger,
                                             onSelectionActiveChanged = { active, start, end ->
-                                                hasSelectionActive = active
-                                                selStartHandleAnchor = start
-                                                selEndHandleAnchor = end
+                                                if (active) {
+                                                    activeSelectionPageIndex = curZero
+                                                    hasSelectionActive = true
+                                                    selStartHandleAnchor = start
+                                                    selEndHandleAnchor = end
+                                                } else if (activeSelectionPageIndex == curZero) {
+                                                    activeSelectionPageIndex = -1
+                                                    hasSelectionActive = false
+                                                }
                                             },
                                             onCenterTap = {
-                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                                     hasSelectionActive = false
+                                                    activeSelectionPageIndex = -1
                                                     clearSelectionTrigger++
                                                     selectedQuoteForPopover = null
                                                 } else {
@@ -2230,15 +2238,23 @@ fun ReaderScreen(
                                     transparentTextForFlipbook = false,
                                     topClearanceDp = topClearanceDp,
                                     bottomClearanceDp = bottomClearanceDp,
+                                    activeSelectionPageIndex = activeSelectionPageIndex,
                                     clearSelectionTrigger = clearSelectionTrigger,
                                     onSelectionActiveChanged = { active, start, end ->
-                                        hasSelectionActive = active
-                                        selStartHandleAnchor = start
-                                        selEndHandleAnchor = end
+                                        if (active) {
+                                            activeSelectionPageIndex = pageZero
+                                            hasSelectionActive = true
+                                            selStartHandleAnchor = start
+                                            selEndHandleAnchor = end
+                                        } else if (activeSelectionPageIndex == pageZero) {
+                                            activeSelectionPageIndex = -1
+                                            hasSelectionActive = false
+                                        }
                                     },
                                     onCenterTap = {
-                                        if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                        if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                             hasSelectionActive = false
+                                            activeSelectionPageIndex = -1
                                             clearSelectionTrigger++
                                             selectedQuoteForPopover = null
                                         } else {
@@ -2289,8 +2305,9 @@ fun ReaderScreen(
                                         ) {
                                             val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
                                             if (relX in 0.24f..0.76f) {
-                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                                     hasSelectionActive = false
+                                                    activeSelectionPageIndex = -1
                                                     clearSelectionTrigger++
                                                     selectedQuoteForPopover = null
                                                 } else if (!isSpread) {
@@ -2702,8 +2719,9 @@ fun ReaderScreen(
                                     ) {
                                         val relX = down.position.x / size.width.toFloat().coerceAtLeast(1f)
                                         if (relX in 0.24f..0.76f) {
-                                            if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                            if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                                 hasSelectionActive = false
+                                                activeSelectionPageIndex = -1
                                                 clearSelectionTrigger++
                                                 selectedQuoteForPopover = null
                                             } else {
@@ -2857,7 +2875,9 @@ fun ReaderScreen(
                                             uiState.translationTargetLang,
                                             pgRaw.hashCode()
                                         ) ?: pageTranslationMap[pageTransMapKey(globalPageZero)]
+                                        val isPageSelected = activeSelectionPageIndex == globalPageZero
                                         InteractiveTextPageContent(
+                                            modifier = Modifier.zIndex(if (isPageSelected) 10f else 0f),
                                             bookId = book.id,
                                             displayPageIndex = globalPageZero,
                                             chapterTitle = ch.title,
@@ -2881,15 +2901,23 @@ fun ReaderScreen(
                                             onSearchInBook = { inBookSearchQuery = it },
                                             isCoverPage = (globalPageZero == 0),
                                             bookTitle = book.title,
+                                            activeSelectionPageIndex = activeSelectionPageIndex,
                                             clearSelectionTrigger = clearSelectionTrigger,
                                             onSelectionActiveChanged = { active, start, end ->
-                                                hasSelectionActive = active
-                                                selStartHandleAnchor = start
-                                                selEndHandleAnchor = end
+                                                if (active) {
+                                                    activeSelectionPageIndex = globalPageZero
+                                                    hasSelectionActive = true
+                                                    selStartHandleAnchor = start
+                                                    selEndHandleAnchor = end
+                                                } else if (activeSelectionPageIndex == globalPageZero) {
+                                                    activeSelectionPageIndex = -1
+                                                    hasSelectionActive = false
+                                                }
                                             },
                                             onCenterTap = {
-                                                if (hasSelectionActive || selectedQuoteForPopover != null) {
+                                                if (hasSelectionActive || selectedQuoteForPopover != null || activeSelectionPageIndex != -1) {
                                                     hasSelectionActive = false
+                                                    activeSelectionPageIndex = -1
                                                     clearSelectionTrigger++
                                                     selectedQuoteForPopover = null
                                                 } else {

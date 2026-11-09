@@ -80,6 +80,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.llunaticsys.llunevie.LlunevieUiState
@@ -89,6 +91,7 @@ import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.data.parser.EpubNativeParser
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
 import com.llunaticsys.llunevie.model.HighlightColorKey
+import com.llunaticsys.llunevie.model.isPageTranslationComplete
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import java.io.File
@@ -173,6 +176,7 @@ internal fun PdfVerticalPageItem(
 
 @Composable
 internal fun InteractiveTextPageContent(
+    modifier: Modifier = Modifier,
     chapterTitle: String,
     pageText: String,
     currentChapterIndex: Int = 0,
@@ -194,6 +198,7 @@ internal fun InteractiveTextPageContent(
     transparentTextForFlipbook: Boolean = false,
     topClearanceDp: Dp = 0.dp,
     bottomClearanceDp: Dp = 0.dp,
+    activeSelectionPageIndex: Int = -1,
     clearSelectionTrigger: Int = 0,
     onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> },
     onCenterTap: (() -> Unit)? = null,
@@ -279,13 +284,15 @@ internal fun InteractiveTextPageContent(
     }
 
     var currentTranslatedParas by remember(
-        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, translatedParagraphs
+        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, translatedParagraphs, transRev
     ) {
         mutableStateOf(
             if (isTrans && displayPageIndex >= 0) {
                 val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
                 when {
+                    isPageTranslationComplete(cached) -> cached
                     hasValidTranslatedPairs(cached) -> cached
+                    isPageTranslationComplete(translatedParagraphs) -> translatedParagraphs
                     hasValidTranslatedPairs(translatedParagraphs) -> translatedParagraphs
                     else -> null
                 }
@@ -293,12 +300,15 @@ internal fun InteractiveTextPageContent(
         )
     }
 
-    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang) {
+    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev) {
         if (isTrans && displayPageIndex >= 0 && !pageText.startsWith("[PDF_PAGE:")) {
             val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-            if (hasValidTranslatedPairs(cached)) {
+            if (isPageTranslationComplete(cached)) {
                 currentTranslatedParas = cached
-            } else {
+            } else if (!isPageTranslationComplete(currentTranslatedParas)) {
+                if (hasValidTranslatedPairs(cached) && currentTranslatedParas == null) {
+                    currentTranslatedParas = cached
+                }
                 val res = runCatching {
                     withContext(Dispatchers.IO) {
                         if (viewModel != null) {
@@ -400,6 +410,16 @@ internal fun InteractiveTextPageContent(
             selectedHighlightId = null
         }
     }
+
+    LaunchedEffect(activeSelectionPageIndex) {
+        if (activeSelectionPageIndex != -1 && activeSelectionPageIndex != displayPageIndex) {
+            if (selStart != -1 || selEnd != -1 || selectedHighlightId != null) {
+                selStart = -1
+                selEnd = -1
+                selectedHighlightId = null
+            }
+        }
+    }
     val hasActiveSelection = selStart >= 0 && selEnd > selStart && selEnd <= fullPageText.length
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -458,7 +478,8 @@ internal fun InteractiveTextPageContent(
     val currentOnCenterTap by rememberUpdatedState(onCenterTap)
 
     Box(
-        modifier = outerScrollModifier
+        modifier = modifier
+            .then(outerScrollModifier)
             .background(if (transparentTextForFlipbook) Color.Transparent else palette.bgApp)
             .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = topPadDp, bottom = bottomPadDp)
     ) {
@@ -677,6 +698,16 @@ internal fun InteractiveTextPageContent(
                                                     size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
                                                     cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
                                                 )
+                                            } else if (line > startLine && line < endLine) {
+                                                val prevLeft = l.getLineLeft(line - 1).coerceAtLeast(0f)
+                                                val prevRight = l.getLineRight(line - 1)
+                                                val fillRight = if (prevRight > prevLeft) prevRight else size.width
+                                                drawRoundRect(
+                                                    color = Color(0xFF38BDF8).copy(alpha = 0.28f),
+                                                    topLeft = Offset(prevLeft, tightTop),
+                                                    size = Size((fillRight - prevLeft).coerceAtLeast(10f), (tightBottom - tightTop).coerceAtLeast(10f)),
+                                                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                                                )
                                             }
                                         }
 
@@ -804,6 +835,9 @@ internal fun InteractiveTextPageContent(
                                                             selStart = -1
                                                             selEnd = -1
                                                             selectedHighlightId = null
+                                                        } else if (activeSelectionPageIndex != -1 && activeSelectionPageIndex != displayPageIndex) {
+                                                            change.consume()
+                                                            currentOnCenterTap?.invoke()
                                                         } else {
                                                             val tapOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
                                                             val matchedHl = currentPageHighlights.find { hl ->
@@ -839,6 +873,12 @@ internal fun InteractiveTextPageContent(
                                                                     selStart = hlS
                                                                     selEnd = hlE
                                                                     selectedHighlightId = matchedHl.id
+                                                                    val sRect = l.getCursorRect(hlS.coerceIn(0, txt.lastIndex))
+                                                                    val eRect = l.getCursorRect((hlE - 1).coerceIn(hlS, txt.lastIndex) + 1)
+                                                                    val hRadius = with(density) { 7.dp.toPx() }
+                                                                    val startAnchor = Offset(sRect.left + padX, sRect.bottom + padTop + hRadius)
+                                                                    val endAnchor = Offset(eRect.left + padX, eRect.bottom + padTop + hRadius)
+                                                                    onSelectionActiveChanged(true, startAnchor, endAnchor)
                                                                 }
                                                             } else if (currentOnCenterTap != null) {
                                                                 val relX = change.position.x / size.width.toFloat().coerceAtLeast(1f)
@@ -885,6 +925,12 @@ internal fun InteractiveTextPageContent(
                                                     selStart = wStart
                                                     selEnd = wEnd
                                                     selectedHighlightId = null
+                                                    val sRect = l.getCursorRect(wStart.coerceIn(0, txt.lastIndex))
+                                                    val eRect = l.getCursorRect((wEnd - 1).coerceIn(wStart, txt.lastIndex) + 1)
+                                                    val hRadius = with(density) { 7.dp.toPx() }
+                                                    val startAnchor = Offset(sRect.left + padX, sRect.bottom + padTop + hRadius)
+                                                    val endAnchor = Offset(eRect.left + padX, eRect.bottom + padTop + hRadius)
+                                                    onSelectionActiveChanged(true, startAnchor, endAnchor)
                                                 }
                                             } else {
                                                 change.consume()
@@ -936,97 +982,60 @@ internal fun InteractiveTextPageContent(
                 with(density) { (sTop - 64.dp.toPx()).roundToInt().coerceAtLeast(0) }
             }
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = palette.bgSurface,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset { IntOffset(0, popoverY) }
-                    .zIndex(100f)
-                    .graphicsLayer {
-                        alpha = popoverAlpha
-                        scaleX = popoverScale
-                        scaleY = popoverScale
-                    }
+            Popup(
+                alignment = Alignment.TopCenter,
+                offset = IntOffset(0, popoverY),
+                properties = PopupProperties(focusable = false, clippingEnabled = false)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = palette.bgSurface,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            alpha = popoverAlpha
+                            scaleX = popoverScale
+                            scaleY = popoverScale
+                        }
                 ) {
-                    val pastelSwatches = listOf(
-                        HighlightColorKey.GOLD to Color(0xFFFEF3C7),
-                        HighlightColorKey.SKY to Color(0xFFDBEAFE),
-                        HighlightColorKey.PEACH to Color(0xFFFCE7F3),
-                        HighlightColorKey.MINT to Color(0xFFDCFCE7)
-                    )
-                    pastelSwatches.forEach { (key, col) ->
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val pastelSwatches = listOf(
+                            HighlightColorKey.GOLD to Color(0xFFFEF3C7),
+                            HighlightColorKey.SKY to Color(0xFFDBEAFE),
+                            HighlightColorKey.PEACH to Color(0xFFFCE7F3),
+                            HighlightColorKey.MINT to Color(0xFFDCFCE7)
+                        )
+                        pastelSwatches.forEach { (key, col) ->
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(col)
+                                    .border(1.dp, palette.borderSoft, CircleShape)
+                                    .clickable {
+                                        onSaveHighlightNote(selectedText, "", key, selectedHighlightId, selStart, selEnd)
+                                        selStart = -1
+                                        selEnd = -1
+                                        selectedHighlightId = null
+                                    }
+                            )
+                        }
+
                         Box(
                             modifier = Modifier
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .background(col)
-                                .border(1.dp, palette.borderSoft, CircleShape)
-                                .clickable {
-                                    onSaveHighlightNote(selectedText, "", key, selectedHighlightId, selStart, selEnd)
-                                    selStart = -1
-                                    selEnd = -1
-                                    selectedHighlightId = null
-                                }
+                                .width(1.dp)
+                                .height(16.dp)
+                                .background(palette.borderSoft)
                         )
-                    }
 
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(16.dp)
-                            .background(palette.borderSoft)
-                    )
-
-                    Surface(
-                        onClick = {
-                            onParagraphClicked(selectedText, sTop <= 200f)
-                            selStart = -1
-                            selEnd = -1
-                            selectedHighlightId = null
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = if (prefs.lang == "en") "+ Note" else "+ Catatan",
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    Surface(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(selectedText))
-                            selStart = -1
-                            selEnd = -1
-                            selectedHighlightId = null
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = if (prefs.lang == "en") "Copy" else "Salin",
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    if (selectedHighlightId != null) {
                         Surface(
                             onClick = {
-                                onDeleteHighlightNote(selectedHighlightId!!)
+                                onParagraphClicked(selectedText, sTop <= 200f)
                                 selStart = -1
                                 selEnd = -1
                                 selectedHighlightId = null
@@ -1035,12 +1044,52 @@ internal fun InteractiveTextPageContent(
                             color = Color.Transparent
                         ) {
                             Text(
-                                text = if (prefs.lang == "en") "Delete" else "Hapus",
-                                color = Color(0xFFEF4444),
+                                text = if (prefs.lang == "en") "+ Note" else "+ Catatan",
+                                color = palette.textMain,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Medium,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                             )
+                        }
+
+                        Surface(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(selectedText))
+                                selStart = -1
+                                selEnd = -1
+                                selectedHighlightId = null
+                            },
+                            shape = CircleShape,
+                            color = Color.Transparent
+                        ) {
+                            Text(
+                                text = if (prefs.lang == "en") "Copy" else "Salin",
+                                color = palette.textMain,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        if (selectedHighlightId != null) {
+                            Surface(
+                                onClick = {
+                                    onDeleteHighlightNote(selectedHighlightId!!)
+                                    selStart = -1
+                                    selEnd = -1
+                                    selectedHighlightId = null
+                                },
+                                shape = CircleShape,
+                                color = Color.Transparent
+                            ) {
+                                Text(
+                                    text = if (prefs.lang == "en") "Delete" else "Hapus",
+                                    color = Color(0xFFEF4444),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
