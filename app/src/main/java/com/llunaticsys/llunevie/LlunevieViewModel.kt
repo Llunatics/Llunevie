@@ -96,6 +96,9 @@ data class GlobalPageMetrics(
 fun normalizeTranslationLangCode(rawLang: String): String =
     com.llunaticsys.llunevie.model.normalizeTranslationLangCode(rawLang)
 
+fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?, targetLang: String = ""): Boolean =
+    com.llunaticsys.llunevie.model.isPageTranslationComplete(pairs, targetLang)
+
 data class LlunevieUiState(
     val activeTab: MainNavTab = MainNavTab.HOME,
     val previousTab: MainNavTab = MainNavTab.HOME,
@@ -320,12 +323,7 @@ class LlunevieViewModel(
     fun getCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): List<Pair<String, String?>>? {
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         val cached = translatedTextCache.get(key) ?: return null
-        val hasTranslatable = cached.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
-        val hasValid = cached.any { (orig, trans) ->
-            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
-        }
-        if (hasTranslatable && !hasValid) {
+        if (!isPageTranslationComplete(cached, targetLang)) {
             translatedTextCache.remove(key)
             return null
         }
@@ -333,12 +331,7 @@ class LlunevieViewModel(
     }
 
     fun putCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int, paragraphs: List<Pair<String, String?>>) {
-        val hasTranslatable = paragraphs.any { !it.first.startsWith("[ILLUST:") && !it.first.startsWith("[PDF_PAGE:") }
-        val hasValid = paragraphs.any { (orig, trans) ->
-            !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
-        }
-        if (hasTranslatable && !hasValid) return
+        if (!isPageTranslationComplete(paragraphs, targetLang)) return
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         translatedTextCache.put(key, paragraphs)
     }
@@ -424,34 +417,42 @@ class LlunevieViewModel(
             val mode = st.translationMode
             val isSpread = preferences.value.readingFlowMode == ReadingFlowMode.SPREAD
             val isBilingualSpread = isSpread && mode.equals("bilingual", ignoreCase = true)
-            val targetPages = if (isSpread) {
+            val isContinuousScroll = preferences.value.readingFlowMode == ReadingFlowMode.SCROLL ||
+                preferences.value.readingFlowMode == ReadingFlowMode.WEBTOON
+            val targetPages = if (isContinuousScroll) {
+                listOf(globalPageIdx).filter { it in 0 until metrics.totalBookPages }
+            } else if (isSpread) {
                 val sStart = (globalPageIdx / 2) * 2
                 listOf(globalPageIdx, sStart, sStart + 1).distinct().filter { it in 0 until metrics.totalBookPages }
             } else {
-                listOf(globalPageIdx)
+                listOf(globalPageIdx).filter { it in 0 until metrics.totalBookPages }
             }
 
             if (isPdf) {
                 val path = book.localFilePath ?: return@launch
                 for (pZero in targetPages) {
-                    loadOrTranslatePdfPageBitmap(
-                        bookId = bookId,
-                        filePath = path,
-                        pageIndex = pZero,
-                        targetLang = normLang,
-                        mode = if (isBilingualSpread) "replace" else mode
-                    )
+                    runCatching {
+                        loadOrTranslatePdfPageBitmap(
+                            bookId = bookId,
+                            filePath = path,
+                            pageIndex = pZero,
+                            targetLang = normLang,
+                            mode = if (isBilingualSpread) "replace" else mode
+                        )
+                    }
                 }
             } else {
                 for (pZero in targetPages) {
                     val pageRaw = getPageContentAtGlobalZeroIndex(chapters, pZero)?.third.orEmpty()
                     if (pageRaw.isNotBlank()) {
-                        loadOrTranslatePageParagraphs(
-                            bookId = bookId,
-                            pageIndex = pZero,
-                            pageRaw = pageRaw,
-                            targetLang = normLang
-                        )
+                        runCatching {
+                            loadOrTranslatePageParagraphs(
+                                bookId = bookId,
+                                pageIndex = pZero,
+                                pageRaw = pageRaw,
+                                targetLang = normLang
+                            )
+                        }
                     }
                 }
             }
@@ -492,13 +493,15 @@ class LlunevieViewModel(
 
                 val texts = blocks.map { it.text }
                 val currentPrefs = preferences.value
-                val res = translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
+                val res = runCatching {
+                    translationRepo.translateParagraphList(texts, currentPrefs, appContext, explicitTargetLang = normLang)
+                }.getOrElse { Result.failure(it) }
                 if (!res.isSuccess) {
                     _uiState.update { it.copy(isTranslatingPage = false) }
                     return@async loadPdfPageBitmap(bookId, filePath, pageIndex)
                 }
 
-                val transPairs = res.getOrThrow()
+                val transPairs = res.getOrNull() ?: return@async loadPdfPageBitmap(bookId, filePath, pageIndex)
                 val transTexts = transPairs.map { it.second ?: it.first }
 
                 val isIllust = pageIndex == 0 || _uiState.value.activeBookIllustrations.any { it.pageIndexInBook == pageIndex }
@@ -562,21 +565,34 @@ class LlunevieViewModel(
 
                 val translationRepo = TranslationRepository.getInstance(appContext)
                 val currentPrefs = preferences.value
-                val res = translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
+                val res = runCatching {
+                    translationRepo.translatePageParagraphs(pageRaw, currentPrefs, appContext, explicitTargetLang = normLang)
+                }.getOrElse { Result.failure(it) }
                 if (!res.isSuccess) {
                     _uiState.update { it.copy(isTranslatingPage = false) }
                     return@async null
                 }
 
-                val transList = res.getOrThrow()
-                putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
+                val transList = res.getOrNull() ?: return@async null
+                val isComplete = isPageTranslationComplete(transList, normLang)
+                if (isComplete) {
+                    putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
+                }
 
                 if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == normLang) {
-                    _uiState.update {
-                        it.copy(
-                            isTranslatingPage = false,
-                            translationRevision = it.translationRevision + 1
-                        )
+                    if (isComplete) {
+                        _uiState.update {
+                            it.copy(
+                                isTranslatingPage = false,
+                                translationRevision = it.translationRevision + 1
+                            )
+                        }
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                isTranslatingPage = false
+                            )
+                        }
                     }
                 }
 
@@ -1359,7 +1375,7 @@ class LlunevieViewModel(
                 }
                 // Split single oversized paragraphs at sentence boundaries
                 if (para.length > 620) {
-                    val sentences = para.split(Regex("""(?<=[.!?""'])\s+"""))
+                    val sentences = para.split(Regex("""(?<=[.!?…])\s+|(?<=[.!?…]["”’'])\s+"""))
                     var subChunk = StringBuilder()
                     for (sent in sentences) {
                         if (subChunk.isNotEmpty() && subChunk.length + sent.length > maxChars) {

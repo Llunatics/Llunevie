@@ -165,7 +165,7 @@ internal fun BoxScope.ReaderBottomChrome(
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(top = 4.dp, bottom = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -173,9 +173,8 @@ internal fun BoxScope.ReaderBottomChrome(
                 shape = CircleShape,
                 color = palette.bgSurface,
                 border = BorderStroke(1.dp, palette.borderSoft),
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .size(40.dp)
+                shadowElevation = 6.dp,
+                modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PrototypeSvgIcon(
@@ -196,24 +195,23 @@ internal fun BoxScope.ReaderBottomChrome(
                 label = "bottomScrubberTransition",
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 8.dp)
                     .height(40.dp)
             ) { isScrubberOpen ->
                 if (!isScrubberOpen) {
                     Surface(
+                        onClick = { if (!showArrows) onShowPageScrubberChange(true) },
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
+                        shadowElevation = 6.dp,
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxHeight()
                     ) {
-                        Row(
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                .padding(horizontal = 12.dp)
                         ) {
                             if (showArrows) {
                                 Text(
@@ -222,6 +220,7 @@ internal fun BoxScope.ReaderBottomChrome(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier
+                                        .align(Alignment.CenterStart)
                                         .clip(CircleShape)
                                         .clickable {
                                             if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
@@ -240,10 +239,15 @@ internal fun BoxScope.ReaderBottomChrome(
                                 fontFamily = FontFamily.Monospace,
                                 letterSpacing = 1.sp,
                                 fontWeight = FontWeight.Medium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(horizontal = if (showArrows) 28.dp else 4.dp)
                                     .clip(CircleShape)
                                     .clickable { onShowPageScrubberChange(true) }
-                                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                             if (showArrows) {
                                 Text(
@@ -252,6 +256,7 @@ internal fun BoxScope.ReaderBottomChrome(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier
+                                        .align(Alignment.CenterEnd)
                                         .clip(CircleShape)
                                         .clickable {
                                             if (prefs.animatePageTurn && prefs.pageAnimStyle == PageAnimStyle.FLIPBOOK) {
@@ -270,6 +275,7 @@ internal fun BoxScope.ReaderBottomChrome(
                         shape = CircleShape,
                         color = palette.bgSurface,
                         border = BorderStroke(1.dp, palette.borderSoft),
+                        shadowElevation = 6.dp,
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxHeight()
@@ -324,6 +330,7 @@ internal fun BoxScope.ReaderBottomChrome(
                 shape = CircleShape,
                 color = palette.bgSurface,
                 border = BorderStroke(1.dp, palette.borderSoft),
+                shadowElevation = 6.dp,
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {

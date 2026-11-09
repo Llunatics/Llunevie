@@ -1,5 +1,7 @@
 package com.llunaticsys.llunevie.ui.reader
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.graphics.Bitmap
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -78,6 +80,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.llunaticsys.llunevie.LlunevieUiState
@@ -86,7 +90,11 @@ import com.llunaticsys.llunevie.data.local.HighlightNoteEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.data.parser.EpubNativeParser
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import com.llunaticsys.llunevie.model.HighlightColorKey
+import com.llunaticsys.llunevie.model.extractCleanPageParagraphs
+import com.llunaticsys.llunevie.model.isOrphanParagraphFragment
+import com.llunaticsys.llunevie.model.isPageTranslationComplete
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
 import java.io.File
@@ -171,6 +179,7 @@ internal fun PdfVerticalPageItem(
 
 @Composable
 internal fun InteractiveTextPageContent(
+    modifier: Modifier = Modifier,
     chapterTitle: String,
     pageText: String,
     currentChapterIndex: Int = 0,
@@ -192,6 +201,7 @@ internal fun InteractiveTextPageContent(
     transparentTextForFlipbook: Boolean = false,
     topClearanceDp: Dp = 0.dp,
     bottomClearanceDp: Dp = 0.dp,
+    activeSelectionPageIndex: Int = -1,
     clearSelectionTrigger: Int = 0,
     onSelectionActiveChanged: (Boolean, Offset, Offset) -> Unit = { _, _, _ -> },
     onCenterTap: (() -> Unit)? = null,
@@ -207,9 +217,8 @@ internal fun InteractiveTextPageContent(
     val clipboardManager = LocalClipboardManager.current
 
     val rawParagraphs = remember(pageText) {
-        pageText.split("\n\n")
-            .map { it.trim() }
-            .filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
+        extractCleanPageParagraphs(pageText)
+            .filter { !it.startsWith("[PDF_PAGE:") }
     }
 
     val isCover = isCoverPage || (
@@ -272,18 +281,21 @@ internal fun InteractiveTextPageContent(
         if (pairs.isNullOrEmpty()) return false
         return pairs.any { (orig, trans) ->
             !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+                (pairs.size <= 1 || !isOrphanParagraphFragment(orig)) &&
+                !trans.isNullOrBlank() && !TranslationRepository.isInvalidOrUnchangedTranslation(orig, trans, targetLang)
         }
     }
 
     var currentTranslatedParas by remember(
-        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev, translatedParagraphs
+        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang
     ) {
         mutableStateOf(
             if (isTrans && displayPageIndex >= 0) {
                 val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
                 when {
+                    isPageTranslationComplete(cached, targetLang) -> cached
                     hasValidTranslatedPairs(cached) -> cached
+                    isPageTranslationComplete(translatedParagraphs, targetLang) -> translatedParagraphs
                     hasValidTranslatedPairs(translatedParagraphs) -> translatedParagraphs
                     else -> null
                 }
@@ -291,28 +303,43 @@ internal fun InteractiveTextPageContent(
         )
     }
 
-    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev) {
+    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev, translatedParagraphs) {
         if (isTrans && displayPageIndex >= 0 && !pageText.startsWith("[PDF_PAGE:")) {
+            if (isPageTranslationComplete(currentTranslatedParas, targetLang)) {
+                return@LaunchedEffect
+            }
             val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-            if (hasValidTranslatedPairs(cached)) {
+            if (isPageTranslationComplete(cached, targetLang)) {
                 currentTranslatedParas = cached
-            } else if (viewModel != null) {
-                val res = viewModel.loadOrTranslatePageParagraphs(
-                    bookId = bookId,
-                    pageIndex = displayPageIndex,
-                    pageRaw = pageText,
-                    targetLang = targetLang
-                )
-                if (hasValidTranslatedPairs(res)) {
-                    currentTranslatedParas = res
+                return@LaunchedEffect
+            }
+            if (isPageTranslationComplete(translatedParagraphs, targetLang)) {
+                currentTranslatedParas = translatedParagraphs
+                return@LaunchedEffect
+            }
+            if (hasValidTranslatedPairs(cached) && currentTranslatedParas == null) {
+                currentTranslatedParas = cached
+            } else if (hasValidTranslatedPairs(translatedParagraphs) && currentTranslatedParas == null) {
+                currentTranslatedParas = translatedParagraphs
+            }
+            val res = runCatching {
+                withContext(Dispatchers.IO) {
+                    if (viewModel != null) {
+                        viewModel.loadOrTranslatePageParagraphs(
+                            bookId = bookId,
+                            pageIndex = displayPageIndex,
+                            pageRaw = pageText,
+                            targetLang = targetLang
+                        )
+                    } else {
+                        TranslationRepository.getInstance(context)
+                            .translatePageParagraphs(pageText, prefs, context, targetLang)
+                            .getOrNull()
+                    }
                 }
-            } else {
-                val res = com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance(context)
-                    .translatePageParagraphs(pageText, prefs, context, targetLang)
-                    .getOrNull()
-                if (hasValidTranslatedPairs(res)) {
-                    currentTranslatedParas = res
-                }
+            }.getOrNull()
+            if (hasValidTranslatedPairs(res)) {
+                currentTranslatedParas = res
             }
         }
     }
@@ -330,10 +357,12 @@ internal fun InteractiveTextPageContent(
 
     val effectiveParagraphs = remember(textParagraphs, isReplace, activeTranslatedParagraphs) {
         if (isReplace && !activeTranslatedParagraphs.isNullOrEmpty()) {
-            activeTranslatedParagraphs.map { (orig, trans) ->
-                val cleanTrans = trans?.trim()
-                if (!cleanTrans.isNullOrBlank()) cleanTrans else orig
-            }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
+            activeTranslatedParagraphs
+                .filter { (orig, _) -> !isOrphanParagraphFragment(orig) }
+                .map { (orig, trans) ->
+                    val cleanTrans = trans?.trim()
+                    if (!cleanTrans.isNullOrBlank()) cleanTrans else orig
+                }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
         } else {
             textParagraphs
         }
@@ -395,6 +424,16 @@ internal fun InteractiveTextPageContent(
             selectedHighlightId = null
         }
     }
+
+    LaunchedEffect(activeSelectionPageIndex) {
+        if (activeSelectionPageIndex != -1 && activeSelectionPageIndex != displayPageIndex) {
+            if (selStart != -1 || selEnd != -1 || selectedHighlightId != null) {
+                selStart = -1
+                selEnd = -1
+                selectedHighlightId = null
+            }
+        }
+    }
     val hasActiveSelection = selStart >= 0 && selEnd > selStart && selEnd <= fullPageText.length
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -440,20 +479,21 @@ internal fun InteractiveTextPageContent(
         }
     }
 
-    val effectiveScrollable = scrollable || isBilingual
+    val effectiveScrollable = scrollable
     val outerScrollModifier = if (effectiveScrollable) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
     } else {
         Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
     }
 
     val currentOnCenterTap by rememberUpdatedState(onCenterTap)
 
     Box(
-        modifier = outerScrollModifier
+        modifier = modifier
+            .then(outerScrollModifier)
             .background(if (transparentTextForFlipbook) Color.Transparent else palette.bgApp)
             .padding(start = horizontalMarginDp, end = horizontalMarginDp, top = topPadDp, bottom = bottomPadDp)
     ) {
@@ -515,7 +555,8 @@ internal fun InteractiveTextPageContent(
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 if (isBilingual) {
-                    val bilingualPairs = activeTranslatedParagraphs ?: textParagraphs.map { it to null }
+                    val bilingualPairs = (activeTranslatedParagraphs ?: textParagraphs.map { it to null })
+                        .filterNot { isOrphanParagraphFragment(it.first) }
                     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
                         bilingualPairs.forEach { (origPara, transPara) ->
                             val cleanOrig = sanitizeBookOrChapterText(origPara).trim()
@@ -672,6 +713,16 @@ internal fun InteractiveTextPageContent(
                                                     size = Size(lineRight - lineLeft, (tightBottom - tightTop).coerceAtLeast(10f)),
                                                     cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
                                                 )
+                                            } else if (line > startLine && line < endLine) {
+                                                val prevLeft = l.getLineLeft(line - 1).coerceAtLeast(0f)
+                                                val prevRight = l.getLineRight(line - 1)
+                                                val fillRight = if (prevRight > prevLeft) prevRight else size.width
+                                                drawRoundRect(
+                                                    color = Color(0xFF38BDF8).copy(alpha = 0.28f),
+                                                    topLeft = Offset(prevLeft, tightTop),
+                                                    size = Size((fillRight - prevLeft).coerceAtLeast(10f), (tightBottom - tightTop).coerceAtLeast(10f)),
+                                                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                                                )
                                             }
                                         }
 
@@ -770,9 +821,9 @@ internal fun InteractiveTextPageContent(
                                             }
                                         }
 
+                                        val touchSlop = viewConfiguration.touchSlop
+                                        val longPressTimeout = 400L
                                         val startTime = System.currentTimeMillis()
-                                        var movedBeyondJitter = false
-                                        var abortedToPageTurn = false
                                         var isLongPressTriggered = false
                                         var initialWordStart = -1
                                         var initialWordEnd = -1
@@ -782,21 +833,26 @@ internal fun InteractiveTextPageContent(
                                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
 
                                             if (event.changes.count { it.pressed } >= 2) {
-                                                abortedToPageTurn = true
                                                 break
                                             }
 
                                             if (!change.pressed) {
                                                 if (isLongPressTriggered) {
                                                     change.consume()
-                                                } else if (!abortedToPageTurn) {
+                                                } else {
                                                     val elapsed = System.currentTimeMillis() - startTime
-                                                    if (elapsed < 340L && !movedBeyondJitter) {
+                                                    val dx = change.position.x - down.position.x
+                                                    val dy = change.position.y - down.position.y
+                                                    val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                                                    if (elapsed < longPressTimeout && dist <= touchSlop) {
                                                         if (hasSelection) {
                                                             change.consume()
                                                             selStart = -1
                                                             selEnd = -1
                                                             selectedHighlightId = null
+                                                        } else if (activeSelectionPageIndex != -1 && activeSelectionPageIndex != displayPageIndex) {
+                                                            change.consume()
+                                                            currentOnCenterTap?.invoke()
                                                         } else {
                                                             val tapOffset = l.getOffsetForPosition(change.position).coerceIn(0, txt.length)
                                                             val matchedHl = currentPageHighlights.find { hl ->
@@ -832,6 +888,12 @@ internal fun InteractiveTextPageContent(
                                                                     selStart = hlS
                                                                     selEnd = hlE
                                                                     selectedHighlightId = matchedHl.id
+                                                                    val sRect = l.getCursorRect(hlS.coerceIn(0, txt.lastIndex))
+                                                                    val eRect = l.getCursorRect((hlE - 1).coerceIn(hlS, txt.lastIndex) + 1)
+                                                                    val hRadius = with(density) { 7.dp.toPx() }
+                                                                    val startAnchor = Offset(sRect.left + padX, sRect.bottom + padTop + hRadius)
+                                                                    val endAnchor = Offset(eRect.left + padX, eRect.bottom + padTop + hRadius)
+                                                                    onSelectionActiveChanged(true, startAnchor, endAnchor)
                                                                 }
                                                             } else if (currentOnCenterTap != null) {
                                                                 val relX = change.position.x / size.width.toFloat().coerceAtLeast(1f)
@@ -851,16 +913,12 @@ internal fun InteractiveTextPageContent(
                                             val dist = kotlin.math.sqrt(dx * dx + dy * dy)
 
                                             if (!isLongPressTriggered) {
-                                                if (dist > 18.dp.toPx()) {
-                                                    movedBeyondJitter = true
-                                                }
-                                                if (kotlin.math.abs(dx) > 22.dp.toPx() && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
-                                                    abortedToPageTurn = true
+                                                if (dist > touchSlop || change.isConsumed) {
                                                     break
                                                 }
 
                                                 val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 340L && !abortedToPageTurn && !movedBeyondJitter) {
+                                                if (elapsed >= longPressTimeout) {
                                                     isLongPressTriggered = true
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                     change.consume()
@@ -882,6 +940,12 @@ internal fun InteractiveTextPageContent(
                                                     selStart = wStart
                                                     selEnd = wEnd
                                                     selectedHighlightId = null
+                                                    val sRect = l.getCursorRect(wStart.coerceIn(0, txt.lastIndex))
+                                                    val eRect = l.getCursorRect((wEnd - 1).coerceIn(wStart, txt.lastIndex) + 1)
+                                                    val hRadius = with(density) { 7.dp.toPx() }
+                                                    val startAnchor = Offset(sRect.left + padX, sRect.bottom + padTop + hRadius)
+                                                    val endAnchor = Offset(eRect.left + padX, eRect.bottom + padTop + hRadius)
+                                                    onSelectionActiveChanged(true, startAnchor, endAnchor)
                                                 }
                                             } else {
                                                 change.consume()
@@ -933,97 +997,60 @@ internal fun InteractiveTextPageContent(
                 with(density) { (sTop - 64.dp.toPx()).roundToInt().coerceAtLeast(0) }
             }
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = palette.bgSurface,
-                border = BorderStroke(1.dp, palette.borderSoft),
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset { IntOffset(0, popoverY) }
-                    .zIndex(100f)
-                    .graphicsLayer {
-                        alpha = popoverAlpha
-                        scaleX = popoverScale
-                        scaleY = popoverScale
-                    }
+            Popup(
+                alignment = Alignment.TopCenter,
+                offset = IntOffset(0, popoverY),
+                properties = PopupProperties(focusable = false, clippingEnabled = false)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = palette.bgSurface,
+                    border = BorderStroke(1.dp, palette.borderSoft),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            alpha = popoverAlpha
+                            scaleX = popoverScale
+                            scaleY = popoverScale
+                        }
                 ) {
-                    val pastelSwatches = listOf(
-                        HighlightColorKey.GOLD to Color(0xFFFEF3C7),
-                        HighlightColorKey.SKY to Color(0xFFDBEAFE),
-                        HighlightColorKey.PEACH to Color(0xFFFCE7F3),
-                        HighlightColorKey.MINT to Color(0xFFDCFCE7)
-                    )
-                    pastelSwatches.forEach { (key, col) ->
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val pastelSwatches = listOf(
+                            HighlightColorKey.GOLD to Color(0xFFFEF3C7),
+                            HighlightColorKey.SKY to Color(0xFFDBEAFE),
+                            HighlightColorKey.PEACH to Color(0xFFFCE7F3),
+                            HighlightColorKey.MINT to Color(0xFFDCFCE7)
+                        )
+                        pastelSwatches.forEach { (key, col) ->
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(col)
+                                    .border(1.dp, palette.borderSoft, CircleShape)
+                                    .clickable {
+                                        onSaveHighlightNote(selectedText, "", key, selectedHighlightId, selStart, selEnd)
+                                        selStart = -1
+                                        selEnd = -1
+                                        selectedHighlightId = null
+                                    }
+                            )
+                        }
+
                         Box(
                             modifier = Modifier
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .background(col)
-                                .border(1.dp, palette.borderSoft, CircleShape)
-                                .clickable {
-                                    onSaveHighlightNote(selectedText, "", key, selectedHighlightId, selStart, selEnd)
-                                    selStart = -1
-                                    selEnd = -1
-                                    selectedHighlightId = null
-                                }
+                                .width(1.dp)
+                                .height(16.dp)
+                                .background(palette.borderSoft)
                         )
-                    }
 
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(16.dp)
-                            .background(palette.borderSoft)
-                    )
-
-                    Surface(
-                        onClick = {
-                            onParagraphClicked(selectedText, sTop <= 200f)
-                            selStart = -1
-                            selEnd = -1
-                            selectedHighlightId = null
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = if (prefs.lang == "en") "+ Note" else "+ Catatan",
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    Surface(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(selectedText))
-                            selStart = -1
-                            selEnd = -1
-                            selectedHighlightId = null
-                        },
-                        shape = CircleShape,
-                        color = Color.Transparent
-                    ) {
-                        Text(
-                            text = if (prefs.lang == "en") "Copy" else "Salin",
-                            color = palette.textMain,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    if (selectedHighlightId != null) {
                         Surface(
                             onClick = {
-                                onDeleteHighlightNote(selectedHighlightId!!)
+                                onParagraphClicked(selectedText, sTop <= 200f)
                                 selStart = -1
                                 selEnd = -1
                                 selectedHighlightId = null
@@ -1032,12 +1059,52 @@ internal fun InteractiveTextPageContent(
                             color = Color.Transparent
                         ) {
                             Text(
-                                text = if (prefs.lang == "en") "Delete" else "Hapus",
-                                color = Color(0xFFEF4444),
+                                text = if (prefs.lang == "en") "+ Note" else "+ Catatan",
+                                color = palette.textMain,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Medium,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                             )
+                        }
+
+                        Surface(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(selectedText))
+                                selStart = -1
+                                selEnd = -1
+                                selectedHighlightId = null
+                            },
+                            shape = CircleShape,
+                            color = Color.Transparent
+                        ) {
+                            Text(
+                                text = if (prefs.lang == "en") "Copy" else "Salin",
+                                color = palette.textMain,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        if (selectedHighlightId != null) {
+                            Surface(
+                                onClick = {
+                                    onDeleteHighlightNote(selectedHighlightId!!)
+                                    selStart = -1
+                                    selEnd = -1
+                                    selectedHighlightId = null
+                                },
+                                shape = CircleShape,
+                                color = Color.Transparent
+                            ) {
+                                Text(
+                                    text = if (prefs.lang == "en") "Delete" else "Hapus",
+                                    color = Color(0xFFEF4444),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
