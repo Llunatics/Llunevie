@@ -466,7 +466,7 @@ fun ReaderScreen(
                     if (pRaw.isNotBlank()) {
                         val cached = viewModel?.getCachedTranslatedParagraphs(book.id, pZero, curTargetLang, pRaw.hashCode())
                             ?: pageTranslationMap[mapKey]
-                        val isCachedComplete = isPageTranslationComplete(cached)
+                        val isCachedComplete = isPageTranslationComplete(cached, curTargetLang)
                         if (isCachedComplete && cached != null) {
                             if (!pageTranslationMap.containsKey(mapKey)) {
                                 pageTranslationMap = pageTranslationMap + (mapKey to cached)
@@ -889,7 +889,7 @@ fun ReaderScreen(
                         }
                         if (!hasTranslatable) return true
                         val pairs = getEffectivePageTranslationPairs(pageZero, raw) ?: return false
-                        return isPageTranslationComplete(pairs)
+                        return isPageTranslationComplete(pairs, uiState.translationTargetLang)
                     }
 
                     fun isSpreadTranslationReady(leftZero: Int, rightZero: Int, fallbackLeftRaw: String = ""): Boolean {

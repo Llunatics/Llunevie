@@ -3,6 +3,8 @@ package com.llunaticsys.llunevie.ui.reader
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.LruCache
+import com.llunaticsys.llunevie.model.extractCleanPageParagraphs
+import com.llunaticsys.llunevie.model.isOrphanParagraphFragment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -164,7 +166,7 @@ internal fun buildTranslatedPageRaw(
     displayMode: String
 ): String {
     if (translatedParagraphs.isNullOrEmpty()) return originalPageRaw
-    val rawParas = originalPageRaw.split(Regex("\n\\s*\n"))
+    val rawParas = extractCleanPageParagraphs(originalPageRaw)
     if (displayMode == "replace") {
         var tIdx = 0
         return rawParas.joinToString("\n\n") { para ->
@@ -204,9 +206,10 @@ internal fun buildTranslatedPageRaw(
     displayMode: String
 ): String {
     if (translatedPairs.isNullOrEmpty()) return originalPageRaw
+    val filteredPairs = translatedPairs.filterNot { isOrphanParagraphFragment(it.first) }
     val modeNorm = displayMode.trim().lowercase()
     if (modeNorm == "replace") {
-        return translatedPairs.joinToString("\n\n") { (orig, trans) ->
+        return filteredPairs.joinToString("\n\n") { (orig, trans) ->
             val trimmedOrig = orig.trim()
             if (trimmedOrig.isEmpty() || trimmedOrig.startsWith("[ILLUST:") || trimmedOrig.startsWith("[PDF_PAGE:")) {
                 trimmedOrig
@@ -216,7 +219,7 @@ internal fun buildTranslatedPageRaw(
             }
         }
     } else if (modeNorm == "bilingual") {
-        return translatedPairs.joinToString("\n\n") { (orig, trans) ->
+        return filteredPairs.joinToString("\n\n") { (orig, trans) ->
             val trimmedOrig = orig.trim()
             if (trimmedOrig.isEmpty() || trimmedOrig.startsWith("[ILLUST:") || trimmedOrig.startsWith("[PDF_PAGE:")) {
                 trimmedOrig

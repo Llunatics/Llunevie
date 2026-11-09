@@ -1,6 +1,7 @@
 package com.llunaticsys.llunevie
 
 import com.llunaticsys.llunevie.data.remote.TranslationRepository
+import com.llunaticsys.llunevie.model.extractCleanPageParagraphs
 import com.llunaticsys.llunevie.model.isPageTranslationComplete
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -142,5 +143,54 @@ class TranslationAndPaginationRegressionUnitTest {
         // Empty list is not complete
         assertFalse(isPageTranslationComplete(emptyList()))
         assertFalse(isPageTranslationComplete(null))
+    }
+
+    @Test
+    fun testBatchTranslationWithParaSplitAllowedWhenInSource() {
+        val batchSrc = "Paragraf satu.\n[[PARA_SPLIT]]\nParagraf dua."
+        val batchTrans = "第一段。\n[[PARA_SPLIT]]\n第二段。"
+
+        // When source contains PARA_SPLIT and translation preserves it, it must be allowed
+        assertFalse(TranslationRepository.isInvalidOrUnchangedTranslation(batchSrc, batchTrans, "zh-CN"))
+
+        // When source does NOT contain PARA_SPLIT, translation containing delimiter tokens must be rejected
+        val singleSrc = "Paragraf tunggal tanpa pembatas."
+        val leftoverDelimiter = "第一段。[[PARA_SPLIT]] sisa."
+        assertTrue(TranslationRepository.isInvalidOrUnchangedTranslation(singleSrc, leftoverDelimiter, "zh-CN"))
+    }
+
+    @Test
+    fun testQuoteNormalizedAndScriptAwareTranslationValidation() {
+        val src = "\"Kamu mondar-mandiri saja, Mas... pura-pura harus ambil sesuatu,\" Ibu mendorongku."
+        val trIndoCurly = "“Kamu mondar-mandiri saja, Mas... pura-pura harus ambil sesuatu,” Ibu mendorongku."
+
+        // Untranslated Indonesian dialogue with curly quotes vs straight quotes must be rejected
+        assertTrue(TranslationRepository.isInvalidOrUnchangedTranslation(src, trIndoCurly, "zh-CN"))
+        assertTrue(TranslationRepository.isInvalidOrUnchangedTranslation(src, trIndoCurly))
+
+        // Legitimate translation to Chinese Hanzi script must be accepted
+        val validZh = "“你就在这儿来回走走，假装要拿什么东西，”妈妈推着我说。"
+        assertFalse(TranslationRepository.isInvalidOrUnchangedTranslation(src, validZh, "zh-CN"))
+    }
+
+    @Test
+    fun testOrphanStubBuRejectedForNonLatinTarget() {
+        // "BU" on short source (< 35 chars) must be rejected for non-Latin targets like zh-CN
+        assertTrue(TranslationRepository.isInvalidOrUnchangedTranslation("Bu!", "BU", "zh-CN"))
+        assertTrue(TranslationRepository.isInvalidOrUnchangedTranslation("BU", "BU", "zh-CN"))
+        assertTrue(TranslationRepository.isInvalidOrUnchangedTranslation("Ibu", "BU", "zh-CN"))
+    }
+
+    @Test
+    fun testExtractCleanPageParagraphsStripsOrphanFragmentsAndPreservesRomanNumerals() {
+        // Multi-paragraph text with standalone 2-letter orphan fragment like "BU"
+        val pageWithBu = "Bab Satu\n\nBU\n\nIni adalah isi paragraf pertama buku ini."
+        val cleaned = extractCleanPageParagraphs(pageWithBu)
+        assertEquals(listOf("Bab Satu", "Ini adalah isi paragraf pertama buku ini."), cleaned)
+
+        // Legitimate Roman numerals chapter headings must be preserved
+        val romanNumerals = "I\n\nBab Pertama\n\nII\n\nBab Kedua\n\nIV\n\nBab Keempat"
+        val cleanedRomans = extractCleanPageParagraphs(romanNumerals)
+        assertEquals(listOf("I", "Bab Pertama", "II", "Bab Kedua", "IV", "Bab Keempat"), cleanedRomans)
     }
 }

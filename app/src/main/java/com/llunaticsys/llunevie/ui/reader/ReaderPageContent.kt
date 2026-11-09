@@ -90,7 +90,10 @@ import com.llunaticsys.llunevie.data.local.HighlightNoteEntity
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.data.parser.EpubNativeParser
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
 import com.llunaticsys.llunevie.model.HighlightColorKey
+import com.llunaticsys.llunevie.model.extractCleanPageParagraphs
+import com.llunaticsys.llunevie.model.isOrphanParagraphFragment
 import com.llunaticsys.llunevie.model.isPageTranslationComplete
 import com.llunaticsys.llunevie.ui.components.sanitizeBookOrChapterText
 import com.llunaticsys.llunevie.ui.theme.LocalLluneviePalette
@@ -214,9 +217,8 @@ internal fun InteractiveTextPageContent(
     val clipboardManager = LocalClipboardManager.current
 
     val rawParagraphs = remember(pageText) {
-        pageText.split("\n\n")
-            .map { it.trim() }
-            .filter { it.isNotBlank() && !it.startsWith("[PDF_PAGE:") }
+        extractCleanPageParagraphs(pageText)
+            .filter { !it.startsWith("[PDF_PAGE:") }
     }
 
     val isCover = isCoverPage || (
@@ -279,20 +281,21 @@ internal fun InteractiveTextPageContent(
         if (pairs.isNullOrEmpty()) return false
         return pairs.any { (orig, trans) ->
             !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+                (pairs.size <= 1 || !isOrphanParagraphFragment(orig)) &&
+                !trans.isNullOrBlank() && !TranslationRepository.isInvalidOrUnchangedTranslation(orig, trans, targetLang)
         }
     }
 
     var currentTranslatedParas by remember(
-        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, translatedParagraphs, transRev
+        bookId, displayPageIndex, pageText, isTrans, transMode, targetLang
     ) {
         mutableStateOf(
             if (isTrans && displayPageIndex >= 0) {
                 val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
                 when {
-                    isPageTranslationComplete(cached) -> cached
+                    isPageTranslationComplete(cached, targetLang) -> cached
                     hasValidTranslatedPairs(cached) -> cached
-                    isPageTranslationComplete(translatedParagraphs) -> translatedParagraphs
+                    isPageTranslationComplete(translatedParagraphs, targetLang) -> translatedParagraphs
                     hasValidTranslatedPairs(translatedParagraphs) -> translatedParagraphs
                     else -> null
                 }
@@ -300,34 +303,43 @@ internal fun InteractiveTextPageContent(
         )
     }
 
-    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev) {
+    LaunchedEffect(bookId, displayPageIndex, pageText, isTrans, transMode, targetLang, transRev, translatedParagraphs) {
         if (isTrans && displayPageIndex >= 0 && !pageText.startsWith("[PDF_PAGE:")) {
+            if (isPageTranslationComplete(currentTranslatedParas, targetLang)) {
+                return@LaunchedEffect
+            }
             val cached = viewModel?.getCachedTranslatedParagraphs(bookId, displayPageIndex, targetLang, pageText.hashCode())
-            if (isPageTranslationComplete(cached)) {
+            if (isPageTranslationComplete(cached, targetLang)) {
                 currentTranslatedParas = cached
-            } else if (!isPageTranslationComplete(currentTranslatedParas)) {
-                if (hasValidTranslatedPairs(cached) && currentTranslatedParas == null) {
-                    currentTranslatedParas = cached
-                }
-                val res = runCatching {
-                    withContext(Dispatchers.IO) {
-                        if (viewModel != null) {
-                            viewModel.loadOrTranslatePageParagraphs(
-                                bookId = bookId,
-                                pageIndex = displayPageIndex,
-                                pageRaw = pageText,
-                                targetLang = targetLang
-                            )
-                        } else {
-                            com.llunaticsys.llunevie.data.remote.TranslationRepository.getInstance(context)
-                                .translatePageParagraphs(pageText, prefs, context, targetLang)
-                                .getOrNull()
-                        }
+                return@LaunchedEffect
+            }
+            if (isPageTranslationComplete(translatedParagraphs, targetLang)) {
+                currentTranslatedParas = translatedParagraphs
+                return@LaunchedEffect
+            }
+            if (hasValidTranslatedPairs(cached) && currentTranslatedParas == null) {
+                currentTranslatedParas = cached
+            } else if (hasValidTranslatedPairs(translatedParagraphs) && currentTranslatedParas == null) {
+                currentTranslatedParas = translatedParagraphs
+            }
+            val res = runCatching {
+                withContext(Dispatchers.IO) {
+                    if (viewModel != null) {
+                        viewModel.loadOrTranslatePageParagraphs(
+                            bookId = bookId,
+                            pageIndex = displayPageIndex,
+                            pageRaw = pageText,
+                            targetLang = targetLang
+                        )
+                    } else {
+                        TranslationRepository.getInstance(context)
+                            .translatePageParagraphs(pageText, prefs, context, targetLang)
+                            .getOrNull()
                     }
-                }.getOrNull()
-                if (hasValidTranslatedPairs(res)) {
-                    currentTranslatedParas = res
                 }
+            }.getOrNull()
+            if (hasValidTranslatedPairs(res)) {
+                currentTranslatedParas = res
             }
         }
     }
@@ -345,10 +357,12 @@ internal fun InteractiveTextPageContent(
 
     val effectiveParagraphs = remember(textParagraphs, isReplace, activeTranslatedParagraphs) {
         if (isReplace && !activeTranslatedParagraphs.isNullOrEmpty()) {
-            activeTranslatedParagraphs.map { (orig, trans) ->
-                val cleanTrans = trans?.trim()
-                if (!cleanTrans.isNullOrBlank()) cleanTrans else orig
-            }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
+            activeTranslatedParagraphs
+                .filter { (orig, _) -> !isOrphanParagraphFragment(orig) }
+                .map { (orig, trans) ->
+                    val cleanTrans = trans?.trim()
+                    if (!cleanTrans.isNullOrBlank()) cleanTrans else orig
+                }.filter { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
         } else {
             textParagraphs
         }
@@ -541,7 +555,8 @@ internal fun InteractiveTextPageContent(
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 if (isBilingual) {
-                    val bilingualPairs = activeTranslatedParagraphs ?: textParagraphs.map { it to null }
+                    val bilingualPairs = (activeTranslatedParagraphs ?: textParagraphs.map { it to null })
+                        .filterNot { isOrphanParagraphFragment(it.first) }
                     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
                         bilingualPairs.forEach { (origPara, transPara) ->
                             val cleanOrig = sanitizeBookOrChapterText(origPara).trim()

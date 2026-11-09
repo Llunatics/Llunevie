@@ -96,8 +96,8 @@ data class GlobalPageMetrics(
 fun normalizeTranslationLangCode(rawLang: String): String =
     com.llunaticsys.llunevie.model.normalizeTranslationLangCode(rawLang)
 
-fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?): Boolean =
-    com.llunaticsys.llunevie.model.isPageTranslationComplete(pairs)
+fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?, targetLang: String = ""): Boolean =
+    com.llunaticsys.llunevie.model.isPageTranslationComplete(pairs, targetLang)
 
 data class LlunevieUiState(
     val activeTab: MainNavTab = MainNavTab.HOME,
@@ -323,7 +323,7 @@ class LlunevieViewModel(
     fun getCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int): List<Pair<String, String?>>? {
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         val cached = translatedTextCache.get(key) ?: return null
-        if (!isPageTranslationComplete(cached)) {
+        if (!isPageTranslationComplete(cached, targetLang)) {
             translatedTextCache.remove(key)
             return null
         }
@@ -331,7 +331,7 @@ class LlunevieViewModel(
     }
 
     fun putCachedTranslatedParagraphs(bookId: String, pageIndex: Int, targetLang: String, sourceHash: Int, paragraphs: List<Pair<String, String?>>) {
-        if (!isPageTranslationComplete(paragraphs)) return
+        if (!isPageTranslationComplete(paragraphs, targetLang)) return
         val key = buildTranslatedTextCacheKey(bookId, pageIndex, targetLang, sourceHash)
         translatedTextCache.put(key, paragraphs)
     }
@@ -574,14 +574,25 @@ class LlunevieViewModel(
                 }
 
                 val transList = res.getOrNull() ?: return@async null
-                putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
+                val isComplete = isPageTranslationComplete(transList, normLang)
+                if (isComplete) {
+                    putCachedTranslatedParagraphs(bookId, pageIndex, normLang, sourceHash, transList)
+                }
 
                 if (normalizeTranslationLangCode(_uiState.value.translationTargetLang) == normLang) {
-                    _uiState.update {
-                        it.copy(
-                            isTranslatingPage = false,
-                            translationRevision = it.translationRevision + 1
-                        )
+                    if (isComplete) {
+                        _uiState.update {
+                            it.copy(
+                                isTranslatingPage = false,
+                                translationRevision = it.translationRevision + 1
+                            )
+                        }
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                isTranslatingPage = false
+                            )
+                        }
                     }
                 }
 

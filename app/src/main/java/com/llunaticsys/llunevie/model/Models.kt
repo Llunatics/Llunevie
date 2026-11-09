@@ -1,5 +1,7 @@
 package com.llunaticsys.llunevie.model
 
+import com.llunaticsys.llunevie.data.remote.TranslationRepository
+
 /**
  * Single Source of Truth for the 4 Reading Flow Modes (Section 1 & Section 8).
  * Used identically in both SettingsScreen and ReaderScreen (Tab ALUR / FLOW).
@@ -216,14 +218,40 @@ fun normalizeTranslationLangCode(rawLang: String): String {
     }
 }
 
-fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?): Boolean {
+private val ROMAN_NUMERAL_REGEX = Regex("^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)$")
+
+fun isOrphanParagraphFragment(para: String): Boolean {
+    val t = para.trim()
+    if (t.isEmpty()) return true
+    if (t.startsWith("[ILLUST:") || t.startsWith("[PDF_PAGE:")) return false
+    // A bare 1-2 character pure ASCII letter token with no punctuation (e.g. "BU", "b")
+    // that is not a Roman numeral chapter heading is an OCR/pagination split artifact
+    if (t.length in 1..2 && t.all { it in 'A'..'Z' || it in 'a'..'z' } && !ROMAN_NUMERAL_REGEX.matches(t)) {
+        return true
+    }
+    return false
+}
+
+fun extractCleanPageParagraphs(pageText: String): List<String> {
+    val raw = pageText.split(Regex("\n\\s*\n"))
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    if (raw.size <= 1) return raw
+    val filtered = raw.filterNot { isOrphanParagraphFragment(it) }
+    return filtered.ifEmpty { raw }
+}
+
+fun isPageTranslationComplete(pairs: List<Pair<String, String?>>?, targetLang: String = ""): Boolean {
     if (pairs.isNullOrEmpty()) return false
     val translatable = pairs.filter { (orig, _) ->
-        !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") && orig.any { it.isLetter() }
+        !orig.startsWith("[ILLUST:") &&
+            !orig.startsWith("[PDF_PAGE:") &&
+            orig.any { it.isLetter() } &&
+            (pairs.size <= 1 || !isOrphanParagraphFragment(orig))
     }
     if (translatable.isEmpty()) return false
     return translatable.all { (orig, trans) ->
-        !trans.isNullOrBlank() && !trans.trim().equals(orig.trim(), ignoreCase = true)
+        !trans.isNullOrBlank() && !TranslationRepository.isInvalidOrUnchangedTranslation(orig, trans, targetLang)
     }
 }
 

@@ -5,6 +5,8 @@ import android.util.LruCache
 import com.llunaticsys.llunevie.data.local.DEFAULT_AI_TRANSLATOR_PROMPT
 import com.llunaticsys.llunevie.data.local.UserPreferencesState
 import com.llunaticsys.llunevie.data.parser.PdfNativeRenderer
+import com.llunaticsys.llunevie.model.extractCleanPageParagraphs
+import com.llunaticsys.llunevie.model.isOrphanParagraphFragment
 import com.llunaticsys.llunevie.normalizeTranslationLangCode
 import com.llunaticsys.llunevie.ui.components.targetLanguageDisplayName
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -41,7 +43,13 @@ class TranslationRepository private constructor() {
 
         fun getInstance(context: Context): TranslationRepository = getInstance()
 
-        internal fun isInvalidOrUnchangedTranslation(sourceText: String, translatedText: String): Boolean {
+        private val PUNCT_STRIP_SET = setOf('"', '\'', '“', '”', '‘', '’', '.', ',', '!', '?', '…', ';', ':', '-', '–', '—', '(', ')')
+        private val ID_LEAK_PATTERN = Regex(
+            "\\b(kamu|saja|pura-pura|harus|ambil|sesuatu|mendorongku|mereka|tidak|dengan|untuk|dalam|adalah|sebagai|karena|ketika|seperti|tetapi|namun|sudah|belum|bisa|masih)\\b",
+            RegexOption.IGNORE_CASE
+        )
+
+        internal fun isInvalidOrUnchangedTranslation(sourceText: String, translatedText: String, targetLang: String = ""): Boolean {
             val src = sourceText.trim()
             val tr = translatedText.trim()
             if (tr.isEmpty()) return true
@@ -52,24 +60,81 @@ class TranslationRepository private constructor() {
                 return true
             }
             // Reject leftover delimiter tokens
-            if (tr.contains("PARA_SPLIT", ignoreCase = true) ||
-                tr.contains("PARA SPLIT", ignoreCase = true) ||
-                tr.contains("[[") || tr.contains("]]") ||
-                tr.contains("［［") || tr.contains("］］") ||
-                tr.contains("【PARA", ignoreCase = true)
+            val sourceHasSplitToken = src.contains("PARA_SPLIT", ignoreCase = true)
+            if (!sourceHasSplitToken && (
+                    tr.contains("PARA_SPLIT", ignoreCase = true) ||
+                        tr.contains("PARA SPLIT", ignoreCase = true) ||
+                        tr.contains("[[") || tr.contains("]]") ||
+                        tr.contains("［［") || tr.contains("］］") ||
+                        tr.contains("【PARA", ignoreCase = true)
+                )
             ) {
                 return true
             }
-            // Reject truncated stubs
-            if (src.length >= 35 && tr.length <= 4) {
-                return true
-            }
-            if (src.length >= 80 && tr.length < (src.length * 0.12).toInt()) {
+
+            // Normalize quotes, punctuation, and whitespace when comparing src and tr
+            val normSrc = src.filterNot { it in PUNCT_STRIP_SET }.replace(Regex("\\s+"), " ").trim()
+            val normTr = tr.filterNot { it in PUNCT_STRIP_SET }.replace(Regex("\\s+"), " ").trim()
+            if (normSrc.length >= 2 && normSrc.any { it.isLetter() } && normTr.equals(normSrc, ignoreCase = true)) {
                 return true
             }
             if (src.length >= 10 && src.any { it.isLetter() } && tr.equals(src, ignoreCase = true)) {
                 return true
             }
+
+            // Reject truncated stubs
+            if (src.length >= 15 && tr.length <= 4) {
+                return true
+            }
+            if (src.length >= 80 && tr.length < (src.length * 0.12).toInt()) {
+                return true
+            }
+
+            // Indonesian stopword leakage check
+            if (!sourceHasSplitToken && src.length >= 20 && targetLang.isNotBlank()) {
+                val normTarget = normalizeTranslationLangCode(targetLang)
+                if (normTarget !in setOf("id", "ms")) {
+                    val idHits = ID_LEAK_PATTERN.findAll(tr).count()
+                    if (idHits >= 2) {
+                        return true
+                    }
+                }
+            }
+
+            // Target-Script Verification when targetLang is provided
+            if (targetLang.isNotBlank() && !sourceHasSplitToken) {
+                val normTarget = normalizeTranslationLangCode(targetLang)
+                if (src.count { it.isLetter() } >= 2) {
+                    when {
+                        normTarget in setOf("zh-CN", "zh-TW", "ja") -> {
+                            if (tr.none { c -> c.code in 0x3040..0x30FF || c.code in 0x3400..0x4DBF || c.code in 0x4E00..0x9FFF || c.code in 0xF900..0xFAFF }) {
+                                return true
+                            }
+                        }
+                        normTarget == "ko" -> {
+                            if (tr.none { c -> c.code in 0xAC00..0xD7AF || c.code in 0x1100..0x11FF || c.code in 0x3130..0x318F || c.code in 0x4E00..0x9FFF }) {
+                                return true
+                            }
+                        }
+                        normTarget == "ru" -> {
+                            if (tr.none { c -> c.code in 0x0400..0x04FF }) {
+                                return true
+                            }
+                        }
+                        normTarget == "ar" -> {
+                            if (tr.none { c -> c.code in 0x0600..0x06FF }) {
+                                return true
+                            }
+                        }
+                        normTarget == "th" -> {
+                            if (tr.none { c -> c.code in 0x0E00..0x0E7F }) {
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+
             return false
         }
 
@@ -150,7 +215,7 @@ class TranslationRepository private constructor() {
         sourceText: String
     ): String {
         val modelPart = if (engine == "free") "gtx" else model.trim()
-        val raw = "$engine|$modelPart|$targetLang|${systemPrompt.hashCode()}|${sourceText.trim()}"
+        val raw = "v3|$engine|$modelPart|$targetLang|${systemPrompt.hashCode()}|${sourceText.trim()}"
         val md = MessageDigest.getInstance("SHA-256")
         val digest = md.digest(raw.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }
@@ -167,7 +232,7 @@ class TranslationRepository private constructor() {
         val key = computeCacheKey(engine, model, targetLang, systemPrompt, sourceText)
         val ramVal = memoryCache.get(key)
         if (ramVal != null) {
-            if (!isInvalidOrUnchangedTranslation(sourceText, ramVal)) {
+            if (!isInvalidOrUnchangedTranslation(sourceText, ramVal, targetLang)) {
                 return ramVal
             } else {
                 memoryCache.remove(key)
@@ -178,7 +243,7 @@ class TranslationRepository private constructor() {
         if (diskFile.exists() && diskFile.isFile) {
             val content = runCatching { diskFile.readText(Charsets.UTF_8) }.getOrNull()
             if (!content.isNullOrBlank()) {
-                if (!isInvalidOrUnchangedTranslation(sourceText, content)) {
+                if (!isInvalidOrUnchangedTranslation(sourceText, content, targetLang)) {
                     memoryCache.put(key, content)
                     return content
                 } else {
@@ -198,7 +263,7 @@ class TranslationRepository private constructor() {
         sourceText: String,
         translatedText: String
     ) {
-        if (isInvalidOrUnchangedTranslation(sourceText, translatedText)) return
+        if (isInvalidOrUnchangedTranslation(sourceText, translatedText, targetLang)) return
         val key = computeCacheKey(engine, model, targetLang, systemPrompt, sourceText)
         memoryCache.put(key, translatedText)
         runCatching {
@@ -250,11 +315,11 @@ class TranslationRepository private constructor() {
             else -> translateFree(cleanText, targetLang)
         }
 
-        val result = if (primaryResult.isSuccess && !isInvalidOrUnchangedTranslation(cleanText, primaryResult.getOrNull().orEmpty())) {
+        val result = if (primaryResult.isSuccess && !isInvalidOrUnchangedTranslation(cleanText, primaryResult.getOrNull().orEmpty(), targetLang)) {
             primaryResult
         } else if (engine != "free") {
             val fallbackFree = translateFree(cleanText, targetLang)
-            if (fallbackFree.isSuccess && !isInvalidOrUnchangedTranslation(cleanText, fallbackFree.getOrNull().orEmpty())) {
+            if (fallbackFree.isSuccess && !isInvalidOrUnchangedTranslation(cleanText, fallbackFree.getOrNull().orEmpty(), targetLang)) {
                 fallbackFree
             } else {
                 primaryResult
@@ -264,7 +329,7 @@ class TranslationRepository private constructor() {
         }
 
         result.onSuccess { translated ->
-            if (!isInvalidOrUnchangedTranslation(cleanText, translated)) {
+            if (!isInvalidOrUnchangedTranslation(cleanText, translated, targetLang)) {
                 putInCache(context, engine, model, targetLang, systemPrompt, cleanText, translated)
             }
         }
@@ -314,55 +379,68 @@ class TranslationRepository private constructor() {
         return Result.success(results.joinToString("\n"))
     }
 
+    private suspend fun requestGoogleGtx(chunk: String, sourceLang: String, targetLang: String): Result<String> = runCatching {
+        val encodedText = URLEncoder.encode(chunk, "UTF-8")
+        val encodedSource = URLEncoder.encode(sourceLang, "UTF-8")
+        val encodedTarget = URLEncoder.encode(targetLang, "UTF-8")
+        val url = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=$encodedSource&tl=$encodedTarget&dt=t&q=$encodedText")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8000
+            readTimeout = 8000
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
+            setRequestProperty("Accept", "*/*")
+        }
+        withCancellableConn(conn) {
+            if (conn.responseCode in 200..299) {
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val rootArr = runCatching { JSONArray(body) }.getOrNull()
+                val segments = rootArr?.optJSONArray(0)
+                if (segments != null && segments.length() > 0) {
+                    val sb = StringBuilder()
+                    for (i in 0 until segments.length()) {
+                        val seg = segments.optJSONArray(i)
+                        if (seg != null) {
+                            val part = seg.optString(0, "")
+                            if (part.isNotEmpty()) sb.append(part)
+                        }
+                    }
+                    val full = sb.toString().trim()
+                    if (full.isNotEmpty() && !isInvalidOrUnchangedTranslation(chunk, full, targetLang)) {
+                        return@withCancellableConn full
+                    }
+                }
+            }
+            error("GTX translation empty or returned code ${conn.responseCode}")
+        }
+    }
+
     private suspend fun translateFreeSingleChunk(text: String, targetLang: String): Result<String> = freeTranslateMutex.withLock {
         val clean = text.trim()
         if (clean.isEmpty()) return@withLock Result.success("")
         val chunkToTranslate = clean
 
-        // Primary: Google GTX
-        val gtxResult = runCatching {
-            val encodedText = URLEncoder.encode(chunkToTranslate, "UTF-8")
-            val encodedLang = URLEncoder.encode(targetLang, "UTF-8")
-            val url = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$encodedLang&dt=t&q=$encodedText")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 8000
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36")
-                setRequestProperty("Accept", "*/*")
-            }
-            withCancellableConn(conn) {
-                if (conn.responseCode in 200..299) {
-                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    val rootArr = runCatching { JSONArray(body) }.getOrNull()
-                    val segments = rootArr?.optJSONArray(0)
-                    if (segments != null && segments.length() > 0) {
-                        val sb = StringBuilder()
-                        for (i in 0 until segments.length()) {
-                            val seg = segments.optJSONArray(i)
-                            if (seg != null) {
-                                val part = seg.optString(0, "")
-                                if (part.isNotEmpty()) sb.append(part)
-                            }
-                        }
-                        val full = sb.toString().trim()
-                        if (full.isNotEmpty() && !isInvalidOrUnchangedTranslation(chunkToTranslate, full)) {
-                            return@withCancellableConn full
-                        }
-                    }
-                }
-                error("GTX translation empty or returned code ${conn.responseCode}")
-            }
+        // 1. Primary: Google GTX with sl=auto
+        val gtxAuto = requestGoogleGtx(chunkToTranslate, "auto", targetLang)
+        if (gtxAuto.isSuccess) {
+            return@withLock gtxAuto
         }
 
-        if (gtxResult.isSuccess) {
-            return@withLock gtxResult
+        // 2. Retry with explicit source language if auto failed
+        val guessedSrc = guessSourceLangForFallback(chunkToTranslate, targetLang)
+        val gtxExplicit = if (guessedSrc.isNotBlank() && guessedSrc != "auto") {
+            requestGoogleGtx(chunkToTranslate, guessedSrc, targetLang)
+        } else {
+            gtxAuto
+        }
+        if (gtxExplicit.isSuccess) {
+            return@withLock gtxExplicit
         }
 
         // If the input contains PARA_SPLIT (a multi-paragraph batch) and Google GTX fails,
         // do NOT pass the [[PARA_SPLIT]] block to MyMemory; fail immediately so caller translates individually
         if (chunkToTranslate.contains("PARA_SPLIT", ignoreCase = true)) {
-            return@withLock Result.failure(gtxResult.exceptionOrNull() ?: Exception("GTX batch translation failed; skipping MyMemory for batch"))
+            return@withLock Result.failure(gtxExplicit.exceptionOrNull() ?: gtxAuto.exceptionOrNull() ?: Exception("GTX batch translation failed; skipping MyMemory for batch"))
         }
 
         // Fallback: MyMemory (requires explicit source language ISO code, never 'autodetect')
@@ -378,14 +456,14 @@ class TranslationRepository private constructor() {
             if (pRes.isSuccess) {
                 translatedPieces.add(pRes.getOrNull().orEmpty())
             } else {
-                return@withLock Result.failure(pRes.exceptionOrNull() ?: gtxResult.exceptionOrNull() ?: Exception("MyMemory fallback failed"))
+                return@withLock Result.failure(pRes.exceptionOrNull() ?: gtxExplicit.exceptionOrNull() ?: gtxAuto.exceptionOrNull() ?: Exception("MyMemory fallback failed"))
             }
         }
         val fullMyMemory = translatedPieces.joinToString(" ").trim()
-        if (fullMyMemory.isNotEmpty() && !isInvalidOrUnchangedTranslation(chunkToTranslate, fullMyMemory)) {
+        if (fullMyMemory.isNotEmpty() && !isInvalidOrUnchangedTranslation(chunkToTranslate, fullMyMemory, targetLang)) {
             Result.success(fullMyMemory)
         } else {
-            Result.failure(gtxResult.exceptionOrNull() ?: Exception("Translation failed"))
+            Result.failure(gtxExplicit.exceptionOrNull() ?: gtxAuto.exceptionOrNull() ?: Exception("Translation failed"))
         }
     }
 
@@ -406,7 +484,7 @@ class TranslationRepository private constructor() {
                 val json = runCatching { JSONObject(body) }.getOrNull()
                 val status = json?.optInt("responseStatus", 200) ?: 200
                 val trans = json?.optJSONObject("responseData")?.optString("translatedText")?.trim()
-                if (status in 200..299 && !trans.isNullOrEmpty() && !isInvalidOrUnchangedTranslation(piece, trans)) {
+                if (status in 200..299 && !trans.isNullOrEmpty() && !isInvalidOrUnchangedTranslation(piece, trans, targetLang)) {
                     return@withCancellableConn trans
                 }
             }
@@ -572,7 +650,12 @@ class TranslationRepository private constructor() {
         context: Context,
         explicitTargetLang: String? = null
     ): Result<List<Pair<String, String?>>> = withContext(Dispatchers.IO) {
-        val rawParagraphs = paragraphs.map { it.trim() }.filter { it.isNotBlank() }
+        val filteredParas = if (paragraphs.size > 1) {
+            paragraphs.filterNot { isOrphanParagraphFragment(it) }
+        } else {
+            paragraphs
+        }
+        val rawParagraphs = filteredParas.map { it.trim() }.filter { it.isNotBlank() }
         if (rawParagraphs.isEmpty()) {
             return@withContext Result.success(emptyList())
         }
@@ -628,7 +711,7 @@ class TranslationRepository private constructor() {
             if (batch.size == 1) {
                 val text = batch[0]
                 val tr = runCatching { translate(text, prefs, context, targetLang).getOrNull()?.trim() }.getOrNull()
-                listOf(if (!tr.isNullOrBlank() && !isInvalidOrUnchangedTranslation(text, tr)) tr else null)
+                listOf(if (!tr.isNullOrBlank() && !isInvalidOrUnchangedTranslation(text, tr, targetLang)) tr else null)
             } else {
                 val joined = batch.joinToString("\n[[PARA_SPLIT]]\n")
                 val trResult = runCatching { translate(joined, prefs, context, targetLang) }.getOrElse { Result.failure(it) }
@@ -644,12 +727,12 @@ class TranslationRepository private constructor() {
                     if (splits.size == batch.size) {
                         splits.mapIndexed { i, splitText ->
                             val cleanedSplit = splitText.replace(paraSplitRegex, "").trim()
-                            if (cleanedSplit.isNotBlank() && !isInvalidOrUnchangedTranslation(batch[i], cleanedSplit)) {
+                            if (cleanedSplit.isNotBlank() && !isInvalidOrUnchangedTranslation(batch[i], cleanedSplit, targetLang)) {
                                 putInCache(context, engine, model, targetLang, systemPrompt, batch[i], cleanedSplit)
                                 cleanedSplit
                             } else {
                                 val single = runCatching { translate(batch[i], prefs, context, targetLang).getOrNull()?.trim() }.getOrNull()
-                                if (!single.isNullOrBlank() && !isInvalidOrUnchangedTranslation(batch[i], single)) {
+                                if (!single.isNullOrBlank() && !isInvalidOrUnchangedTranslation(batch[i], single, targetLang)) {
                                     putInCache(context, engine, model, targetLang, systemPrompt, batch[i], single)
                                     single
                                 } else {
@@ -660,7 +743,7 @@ class TranslationRepository private constructor() {
                     } else {
                         batch.map { text ->
                             val single = runCatching { translate(text, prefs, context, targetLang).getOrNull()?.trim() }.getOrNull()
-                            if (!single.isNullOrBlank() && !isInvalidOrUnchangedTranslation(text, single)) {
+                            if (!single.isNullOrBlank() && !isInvalidOrUnchangedTranslation(text, single, targetLang)) {
                                 putInCache(context, engine, model, targetLang, systemPrompt, text, single)
                                 single
                             } else {
@@ -671,7 +754,7 @@ class TranslationRepository private constructor() {
                 } else {
                     batch.map { text ->
                         val single = runCatching { translate(text, prefs, context, targetLang).getOrNull()?.trim() }.getOrNull()
-                        if (!single.isNullOrBlank() && !isInvalidOrUnchangedTranslation(text, single)) {
+                        if (!single.isNullOrBlank() && !isInvalidOrUnchangedTranslation(text, single, targetLang)) {
                             putInCache(context, engine, model, targetLang, systemPrompt, text, single)
                             single
                         } else {
@@ -686,7 +769,7 @@ class TranslationRepository private constructor() {
         uncachedIndices.forEachIndexed { i, originalIdx ->
             val srcPara = rawParagraphs[originalIdx]
             val transText = translatedUncached.getOrNull(i)?.trim()
-            if (!transText.isNullOrBlank() && !isInvalidOrUnchangedTranslation(srcPara, transText)) {
+            if (!transText.isNullOrBlank() && !isInvalidOrUnchangedTranslation(srcPara, transText, targetLang)) {
                 resultList[originalIdx] = Pair(srcPara, transText)
                 putInCache(context, engine, model, targetLang, systemPrompt, srcPara, transText)
             }
@@ -698,7 +781,7 @@ class TranslationRepository private constructor() {
             if (trans.isNullOrBlank() && !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:")) {
                 delay(100L)
                 val retryRes = runCatching { translate(orig, prefs, context, targetLang).getOrNull()?.trim() }.getOrNull()
-                if (!retryRes.isNullOrBlank() && !isInvalidOrUnchangedTranslation(orig, retryRes)) {
+                if (!retryRes.isNullOrBlank() && !isInvalidOrUnchangedTranslation(orig, retryRes, targetLang)) {
                     resultList[idx] = Pair(orig, retryRes)
                     putInCache(context, engine, model, targetLang, systemPrompt, orig, retryRes)
                 }
@@ -708,7 +791,7 @@ class TranslationRepository private constructor() {
         val hasTranslatableParagraphs = rawParagraphs.any { !it.startsWith("[ILLUST:") && !it.startsWith("[PDF_PAGE:") }
         val hasAnyValidTranslation = resultList.any { (orig, trans) ->
             !orig.startsWith("[ILLUST:") && !orig.startsWith("[PDF_PAGE:") &&
-                !trans.isNullOrBlank() && !isInvalidOrUnchangedTranslation(orig, trans)
+                !trans.isNullOrBlank() && !isInvalidOrUnchangedTranslation(orig, trans, targetLang)
         }
         if (hasTranslatableParagraphs && !hasAnyValidTranslation) {
             return@withContext Result.failure(Exception("No valid translation produced for page"))
@@ -723,9 +806,7 @@ class TranslationRepository private constructor() {
         context: Context,
         explicitTargetLang: String? = null
     ): Result<List<Pair<String, String?>>> {
-        val rawParagraphs = pageRaw.split(Regex("\n\\s*\n"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+        val rawParagraphs = extractCleanPageParagraphs(pageRaw)
         return translateParagraphList(rawParagraphs, prefs, context, explicitTargetLang)
     }
 
